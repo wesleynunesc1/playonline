@@ -1,6 +1,6 @@
 /**
  * Sistema de áudio sintetizado com Web Audio API puro.
- * Sem arquivos externos, leve, responsivo e instantâneo.
+ * Sem arquivos externos, ultraleve, responsivo e instantâneo.
  */
 
 class SoundSystem {
@@ -128,6 +128,96 @@ class SoundSystem {
         osc.start(t + idx * 0.12);
         osc.stop(t + idx * 0.12 + 0.25);
       });
+    } catch {
+      // Ignorar
+    }
+  }
+
+  playSonar() {
+    if (!this.enabled) return;
+    try {
+      this.initCtx();
+      if (!this.ctx) return;
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, t);
+      gain.gain.setValueAtTime(0.06, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.35);
+    } catch {
+      // Ignorar
+    }
+  }
+
+  playTechUnlocked() {
+    if (!this.enabled) return;
+    try {
+      this.initCtx();
+      if (!this.ctx) return;
+      const t = this.ctx.currentTime;
+      [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((freq, i) => {
+        const osc = this.ctx!.createOscillator();
+        const gain = this.ctx!.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t + i * 0.06);
+        gain.gain.setValueAtTime(0.15, t + i * 0.06);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.06 + 0.25);
+        osc.connect(gain);
+        gain.connect(this.ctx!.destination);
+        osc.start(t + i * 0.06);
+        osc.stop(t + i * 0.06 + 0.28);
+      });
+    } catch {
+      // Ignorar
+    }
+  }
+
+  playCrisisAlert() {
+    if (!this.enabled) return;
+    try {
+      this.initCtx();
+      if (!this.ctx) return;
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(440, t);
+      osc.frequency.setValueAtTime(587.33, t + 0.1);
+      osc.frequency.setValueAtTime(440, t + 0.2);
+      osc.frequency.setValueAtTime(587.33, t + 0.3);
+      gain.gain.setValueAtTime(0.14, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.45);
+    } catch {
+      // Ignorar
+    }
+  }
+
+  playSabotage() {
+    if (!this.enabled) return;
+    try {
+      this.initCtx();
+      if (!this.ctx) return;
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(240, t);
+      osc.frequency.exponentialRampToValueAtTime(60, t + 0.2);
+      gain.gain.setValueAtTime(0.18, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.25);
     } catch {
       // Ignorar
     }

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useGameStore } from '../../stores/useGameStore';
 import { COUNTRIES_DATA, INITIAL_COUNTRY_IDS } from '../../data/countries';
-import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import { ZoomIn, ZoomOut, RotateCcw, Crosshair } from 'lucide-react';
 
 export const InteractiveMap: React.FC = () => {
   const countriesState = useGameStore((state) => state.countries);
@@ -38,7 +38,6 @@ export const InteractiveMap: React.FC = () => {
 
   // Mouse Drag
   const handleMouseDown = (e: React.MouseEvent) => {
-    // Apenas botão principal
     if (e.button !== 0) return;
     setIsDragging(true);
     dragStartRef.current = { x: e.clientX, y: e.clientY };
@@ -119,7 +118,7 @@ export const InteractiveMap: React.FC = () => {
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full overflow-hidden bg-[#070a10] cursor-grab active:cursor-grabbing select-none"
+      className="relative w-full h-full overflow-hidden bg-[#060911] cursor-grab active:cursor-grabbing select-none"
       onWheel={handleWheel}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -129,16 +128,26 @@ export const InteractiveMap: React.FC = () => {
       onTouchEnd={handleTouchEnd}
     >
       {/* Background tático estilo centro de comando com grade sutil */}
-      <div className="absolute inset-0 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px] opacity-30 pointer-events-none" />
+      <div className="absolute inset-0 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px] opacity-35 pointer-events-none" />
 
       {/* Linhas de grade geopolítica */}
-      <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-10 stroke-slate-500">
-        <line x1="0" y1="30%" x2="100%" y2="30%" strokeDasharray="4 8" />
+      <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-15 stroke-slate-500">
+        <line x1="0" y1="25%" x2="100%" y2="25%" strokeDasharray="4 8" />
         <line x1="0" y1="50%" x2="100%" y2="50%" strokeDasharray="4 8" />
-        <line x1="0" y1="70%" x2="100%" y2="70%" strokeDasharray="4 8" />
-        <line x1="33%" y1="0" x2="33%" y2="100%" strokeDasharray="4 8" />
-        <line x1="66%" y1="0" x2="66%" y2="100%" strokeDasharray="4 8" />
+        <line x1="0" y1="75%" x2="100%" y2="75%" strokeDasharray="4 8" />
+        <line x1="25%" y1="0" x2="25%" y2="100%" strokeDasharray="4 8" />
+        <line x1="50%" y1="0" x2="50%" y2="100%" strokeDasharray="4 8" />
+        <line x1="75%" y1="0" x2="75%" y2="100%" strokeDasharray="4 8" />
       </svg>
+
+      {/* Radar de Varredura Circular Animado */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] rounded-full border border-cyan-500/10 pointer-events-none flex items-center justify-center">
+        <div className="w-[500px] h-[500px] rounded-full border border-cyan-500/10" />
+        <div className="w-[300px] h-[300px] rounded-full border border-cyan-500/10" />
+        <div className="w-[120px] h-[120px] rounded-full border border-cyan-500/10" />
+        {/* Linha de varredura rotativa de sonar */}
+        <div className="absolute inset-0 rounded-full bg-[conic-gradient(from_0deg,transparent_0_310deg,rgba(56,189,248,0.12)_360deg)] animate-[spin_10s_linear_infinite]" />
+      </div>
 
       {/* SVG Canvas dos Países com transformação de Pan e Zoom */}
       <div
@@ -150,7 +159,7 @@ export const InteractiveMap: React.FC = () => {
       >
         <svg
           viewBox="0 0 1000 620"
-          className="w-full max-w-[1100px] h-auto drop-shadow-[0_20px_50px_rgba(0,0,0,0.8)]"
+          className="w-full max-w-[1100px] h-auto drop-shadow-[0_25px_60px_rgba(0,0,0,0.85)]"
         >
           <defs>
             {/* Gradiente para o Território Soberano do Jogador */}
@@ -182,13 +191,13 @@ export const InteractiveMap: React.FC = () => {
           </defs>
 
           {/* Oceanos & Rótulos Continentais */}
-          <text x="210" y="30" fill="#475569" fontSize="13" fontWeight="bold" letterSpacing="4" opacity="0.4">
+          <text x="210" y="30" fill="#475569" fontSize="13" fontWeight="bold" letterSpacing="4" opacity="0.35">
             AMÉRICA DO NORTE
           </text>
-          <text x="320" y="280" fill="#475569" fontSize="13" fontWeight="bold" letterSpacing="4" opacity="0.4">
+          <text x="320" y="280" fill="#475569" fontSize="13" fontWeight="bold" letterSpacing="4" opacity="0.35">
             AMÉRICA DO SUL
           </text>
-          <text x="730" y="120" fill="#475569" fontSize="13" fontWeight="bold" letterSpacing="4" opacity="0.4">
+          <text x="730" y="120" fill="#475569" fontSize="13" fontWeight="bold" letterSpacing="4" opacity="0.35">
             ÁSIA PACÍFICO
           </text>
 
@@ -199,6 +208,7 @@ export const InteractiveMap: React.FC = () => {
             const isPlayerOrigin = playerCountryId === id;
             const isConqueredByPlayer = state?.owner === 'player';
             const isSelected = selectedCountryId === id;
+            const isSabotaged = state?.sabotagedTurns && state.sabotagedTurns > 0;
 
             // Determinar cores
             let fill = 'url(#neutralTerritoryGrad)';
@@ -246,15 +256,23 @@ export const InteractiveMap: React.FC = () => {
                 <g transform={`translate(${base.svg.center[0]}, ${base.svg.center[1]})`} pointerEvents="none">
                   {/* Badge de fundo para legibilidade */}
                   <rect
-                    x="-32"
+                    x="-34"
                     y="-16"
-                    width="64"
-                    height="28"
+                    width="68"
+                    height="29"
                     rx="6"
                     fill="#090d16"
-                    fillOpacity="0.85"
-                    stroke={isSelected ? '#f59e0b' : isConqueredByPlayer ? '#3b82f6' : '#334155'}
-                    strokeWidth="1"
+                    fillOpacity="0.88"
+                    stroke={
+                      isSelected
+                        ? '#f59e0b'
+                        : isConqueredByPlayer
+                        ? '#3b82f6'
+                        : isSabotaged
+                        ? '#ef4444'
+                        : '#334155'
+                    }
+                    strokeWidth="1.2"
                   />
                   <text
                     x="0"
@@ -265,13 +283,13 @@ export const InteractiveMap: React.FC = () => {
                     fontWeight="700"
                     className="font-sans"
                   >
-                    {base.flag} {base.iso}
+                    {base.flag} {base.iso} {isSabotaged ? '💀' : ''}
                   </text>
                   <text
                     x="0"
                     y="8"
                     textAnchor="middle"
-                    fill={isConqueredByPlayer ? '#38bdf8' : '#94a3b8'}
+                    fill={isConqueredByPlayer ? '#38bdf8' : isSabotaged ? '#f87171' : '#94a3b8'}
                     fontSize="8.5"
                     fontWeight="600"
                     className="font-mono"
@@ -285,7 +303,7 @@ export const InteractiveMap: React.FC = () => {
         </svg>
       </div>
 
-      {/* Controles Flutuantes de Zoom e Centralização (Mobile & Desktop) */}
+      {/* Controles Flutuantes de Zoom e Centralização */}
       <div className="absolute bottom-5 right-4 z-20 flex flex-col gap-2">
         <button
           onClick={handleZoomIn}
@@ -310,19 +328,25 @@ export const InteractiveMap: React.FC = () => {
         </button>
       </div>
 
+      {/* Mira Tática / Coordenadas de Satélite */}
+      <div className="absolute top-16 left-4 z-20 hidden md:flex items-center gap-2 bg-slate-950/70 border border-slate-800/80 px-2.5 py-1 rounded-xl text-[10px] font-mono text-slate-400 pointer-events-none">
+        <Crosshair size={12} className="text-cyan-400" />
+        <span>RADAR TÁTICO ATIVO // ESCALA 1:1.000.000</span>
+      </div>
+
       {/* Legenda Tática Inferior Esquerda */}
-      <div className="absolute bottom-5 left-4 z-20 hidden sm:flex items-center gap-3 bg-slate-950/80 backdrop-blur-md border border-slate-800/90 px-3.5 py-2 rounded-xl text-[11px] text-slate-300 pointer-events-none">
+      <div className="absolute bottom-5 left-4 z-20 hidden sm:flex items-center gap-3 bg-slate-950/85 backdrop-blur-md border border-slate-800/90 px-3.5 py-2 rounded-xl text-[11px] text-slate-300 pointer-events-none">
         <div className="flex items-center gap-1.5">
           <span className="w-3 h-3 rounded-sm bg-blue-600 border border-blue-400" />
           <span>Seu Império</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="w-3 h-3 rounded-sm bg-slate-800 border border-slate-600" />
-          <span>Independente</span>
+          <span>Rival</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="w-3 h-3 rounded-sm border-2 border-amber-400" />
-          <span>Selecionado</span>
+          <span>Alvo</span>
         </div>
       </div>
     </div>

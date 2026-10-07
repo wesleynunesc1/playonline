@@ -5,8 +5,16 @@ import {
   ScreenType,
   BattleResult,
   OfflineProgressInfo,
+  TechNode,
+  GeopoliticalEvent,
+  GameSpeed,
+  NewsItem,
 } from '../types/game';
 import { COUNTRIES_DATA, INITIAL_COUNTRY_IDS } from '../data/countries';
+import { TECHNOLOGIES } from '../data/technologies';
+import { GEOPOLITICAL_EVENTS } from '../data/events';
+import { ACHIEVEMENTS } from '../data/achievements';
+import { generateRandomNews, generateConquestNews, generateTechNews } from '../data/newsFeed';
 import {
   calculateEconomyUpgradeCost,
   calculateIncomeForLevel,
@@ -23,6 +31,9 @@ export type ActiveModal =
   | 'offline_progress'
   | 'pause_menu'
   | 'debug'
+  | 'tech_tree'
+  | 'crisis_event'
+  | 'achievements'
   | null;
 
 export interface NotificationState {
@@ -42,6 +53,19 @@ interface GameStore {
   militaryPower: number;
   countries: Record<CountryId, CountryRuntimeState>;
   selectedCountryId: CountryId | null;
+  bonusIncomePerSecond: number;
+
+  // Tecnologias, Eventos e Conquistas
+  unlockedTechIds: string[];
+  unlockedAchievementIds: string[];
+  activeCrisisEvent: GeopoliticalEvent | null;
+  currentNews: NewsItem;
+
+  // Simulação e Tempo
+  gameSpeed: GameSpeed;
+  isPaused: boolean;
+  eventTimer: number;
+  newsTimer: number;
 
   // Modais e Diálogos
   activeModal: ActiveModal;
@@ -57,6 +81,8 @@ interface GameStore {
   // Getters / Cálculos derivados
   getTotalIncomePerSecond: () => number;
   getConqueredTerritoriesCount: () => number;
+  getUnlockedTechs: () => TechNode[];
+  isTechUnlocked: (techId: string) => boolean;
 
   // Ações Principais
   initFromStorage: () => void;
@@ -64,12 +90,19 @@ interface GameStore {
   continueSavedGame: () => boolean;
   gameTick: (deltaSeconds?: number) => void;
 
-  // Interação
+  // Interação e Gameplay
   selectCountry: (countryId: CountryId | null) => void;
   upgradeCountryEconomy: (countryId: CountryId) => boolean;
   recruitMilitary: (batchCount?: number) => boolean;
   attackCountry: (targetCountryId: CountryId) => BattleResult | null;
+  sabotageCountry: (targetCountryId: CountryId) => boolean;
   collectOfflineProgress: () => void;
+
+  // P&D e Eventos
+  unlockTech: (techId: string) => boolean;
+  resolveCrisisEvent: (choiceId: string) => void;
+  setGameSpeed: (speed: GameSpeed) => void;
+  togglePause: () => void;
 
   // Gerenciamento e Menu
   openModal: (modal: ActiveModal) => void;
@@ -85,14 +118,11 @@ interface GameStore {
   debugAddMilitary: (amount: number) => void;
   debugConquerCountry: (countryId: CountryId) => void;
   debugAdvanceTime: (seconds: number) => void;
+  debugTriggerEvent: () => void;
 }
 
-/**
- * Cria o estado inicial neutro de todos os países
- */
 function createInitialCountriesState(playerCountryId?: CountryId): Record<CountryId, CountryRuntimeState> {
   const result = {} as Record<CountryId, CountryRuntimeState>;
-  
   INITIAL_COUNTRY_IDS.forEach((id) => {
     const base = COUNTRIES_DATA[id];
     const isPlayer = playerCountryId === id;
@@ -106,9 +136,9 @@ function createInitialCountriesState(playerCountryId?: CountryId): Record<Countr
       defense: base.baseDefense,
       economyLevel: 1,
       owner: isPlayer ? 'player' : null,
+      sabotagedTurns: 0,
     };
   });
-
   return result;
 }
 
@@ -121,6 +151,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
   militaryPower: 100,
   countries: createInitialCountriesState(),
   selectedCountryId: null,
+  bonusIncomePerSecond: 0,
+
+  unlockedTechIds: [],
+  unlockedAchievementIds: [],
+  activeCrisisEvent: null,
+  currentNews: generateRandomNews(),
+
+  gameSpeed: 1,
+  isPaused: false,
+  eventTimer: 35, // Primeiro evento aos 35 segundos
+  newsTimer: 10,
 
   activeModal: null,
   lastBattleResult: null,
@@ -132,15 +173,33 @@ export const useGameStore = create<GameStore>((set, get) => ({
   totalPlayTimeSeconds: 0,
 
   getTotalIncomePerSecond: () => {
-    const { countries } = get();
-    return Object.values(countries)
+    const { countries, unlockedTechIds, bonusIncomePerSecond } = get();
+    const baseSum = Object.values(countries)
       .filter((c) => c.owner === 'player')
       .reduce((acc, c) => acc + c.income, 0);
+
+    let multiplier = 1;
+    TECHNOLOGIES.forEach((tech) => {
+      if (unlockedTechIds.includes(tech.id) && tech.effects.incomeMultiplier) {
+        multiplier += tech.effects.incomeMultiplier;
+      }
+    });
+
+    return Math.round(baseSum * multiplier) + bonusIncomePerSecond;
   },
 
   getConqueredTerritoriesCount: () => {
     const { countries } = get();
     return Object.values(countries).filter((c) => c.owner === 'player').length;
+  },
+
+  getUnlockedTechs: () => {
+    const { unlockedTechIds } = get();
+    return TECHNOLOGIES.filter((t) => unlockedTechIds.includes(t.id));
+  },
+
+  isTechUnlocked: (techId: string) => {
+    return get().unlockedTechIds.includes(techId);
   },
 
   initFromStorage: () => {
@@ -151,8 +210,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   startNewGame: (selectedId: CountryId) => {
     const base = COUNTRIES_DATA[selectedId];
     const initialCountries = createInitialCountriesState(selectedId);
-    
-    // Configura o país do jogador como nível 1 e dono player
+
     initialCountries[selectedId] = {
       ...initialCountries[selectedId],
       income: base.baseIncome,
@@ -169,6 +227,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
       militaryPower: base.initialMilitary,
       countries: initialCountries,
       selectedCountryId: selectedId,
+      bonusIncomePerSecond: 0,
+      unlockedTechIds: [],
+      unlockedAchievementIds: [],
+      activeCrisisEvent: null,
+      currentNews: generateRandomNews(),
+      gameSpeed: 1 as GameSpeed,
+      isPaused: false,
+      eventTimer: 40,
+      newsTimer: 10,
       activeModal: null,
       lastBattleResult: null,
       offlineProgress: null,
@@ -177,7 +244,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     set(newState);
 
-    // Salva imediatamente
     StorageService.saveGame({
       version: 1,
       playerCountryId: selectedId,
@@ -186,10 +252,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       countries: initialCountries,
       conqueredCount: 1,
       totalPlayTimeSeconds: 0,
+      unlockedTechIds: [],
+      unlockedAchievementIds: [],
+      gameSpeed: 1,
     });
 
     set({ hasSavedGame: true });
-    get().showNotification(`Bem-vindo, Comandante! Você lidera o ${base.name}.`, 'info');
+    sound.playSonar();
+    get().showNotification(`Comando Imperial Estabelecido: ${base.name}.`, 'info');
   },
 
   continueSavedGame: () => {
@@ -203,7 +273,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
       .filter((c) => c.owner === 'player')
       .reduce((acc, c) => acc + c.income, 0);
 
-    // Calcular progresso offline
     const offlineInfo = StorageService.calculateOfflineProgress(saved, currentIncome);
 
     set({
@@ -213,24 +282,95 @@ export const useGameStore = create<GameStore>((set, get) => ({
       militaryPower: saved.militaryPower,
       countries: saved.countries,
       selectedCountryId: saved.playerCountryId,
+      unlockedTechIds: saved.unlockedTechIds || [],
+      unlockedAchievementIds: saved.unlockedAchievementIds || [],
+      gameSpeed: saved.gameSpeed || 1,
+      isPaused: false,
       totalPlayTimeSeconds: saved.totalPlayTimeSeconds || 0,
       offlineProgress: offlineInfo,
       activeModal: offlineInfo ? 'offline_progress' : null,
+      currentNews: generateRandomNews(),
     });
 
+    sound.playSonar();
     return true;
   },
 
   gameTick: (deltaSeconds = 1) => {
-    const { screen, money, getTotalIncomePerSecond, totalPlayTimeSeconds } = get();
-    if (screen !== 'game') return;
+    const {
+      screen,
+      money,
+      getTotalIncomePerSecond,
+      totalPlayTimeSeconds,
+      gameSpeed,
+      isPaused,
+      eventTimer,
+      newsTimer,
+      unlockedAchievementIds,
+      unlockedTechIds,
+      militaryPower,
+      getConqueredTerritoriesCount,
+    } = get();
 
+    if (screen !== 'game' || isPaused) return;
+
+    const actualDelta = deltaSeconds * gameSpeed;
     const income = getTotalIncomePerSecond();
-    const newMoney = money + income * deltaSeconds;
+    const newMoney = money + income * actualDelta;
+
+    // Gerenciador de notícias dinâmicas a cada 15 segundos
+    let nextNewsTimer = newsTimer - actualDelta;
+    let nextNews = get().currentNews;
+    if (nextNewsTimer <= 0) {
+      nextNews = generateRandomNews();
+      nextNewsTimer = 15;
+    }
+
+    // Gerenciador de eventos geopolíticos a cada ~60 segundos
+    let nextEventTimer = eventTimer - actualDelta;
+    let nextEvent = get().activeCrisisEvent;
+    let nextModal = get().activeModal;
+
+    if (nextEventTimer <= 0 && !nextEvent && nextModal === null) {
+      const randomEvt = GEOPOLITICAL_EVENTS[Math.floor(Math.random() * GEOPOLITICAL_EVENTS.length)];
+      nextEvent = randomEvt;
+      nextModal = 'crisis_event';
+      nextEventTimer = 65; // Próximo evento em 65s
+      sound.playCrisisAlert();
+    }
+
+    // Verificação contínua de conquistas
+    const newUnlockedAchievements = [...unlockedAchievementIds];
+    ACHIEVEMENTS.forEach((ach) => {
+      if (!newUnlockedAchievements.includes(ach.id)) {
+        const completed = ach.isCompleted({
+          money: newMoney,
+          militaryPower,
+          conqueredCount: getConqueredTerritoriesCount(),
+          incomePerSecond: income,
+          unlockedTechsCount: unlockedTechIds.length,
+        });
+
+        if (completed) {
+          newUnlockedAchievements.push(ach.id);
+          sound.playTechUnlocked();
+          get().showNotification(
+            `🏆 CONQUISTA DESBLOQUEADA: ${ach.title}! (+${ach.rewardMoney ? `$${ach.rewardMoney}` : ''})`,
+            'success'
+          );
+        }
+      }
+    });
 
     set({
       money: newMoney,
-      totalPlayTimeSeconds: totalPlayTimeSeconds + deltaSeconds,
+      totalPlayTimeSeconds: totalPlayTimeSeconds + actualDelta,
+      newsTimer: nextNewsTimer,
+      currentNews: nextNews,
+      eventTimer: nextEventTimer,
+      activeCrisisEvent: nextEvent,
+      activeModal: nextModal,
+      unlockedAchievementIds: newUnlockedAchievements,
     });
   },
 
@@ -243,16 +383,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   upgradeCountryEconomy: (countryId: CountryId) => {
-    const { countries, money } = get();
+    const { countries, money, unlockedTechIds } = get();
     const target = countries[countryId];
     if (!target || target.owner !== 'player') return false;
 
+    // Desconto de tecnologia
+    let discount = 0;
+    TECHNOLOGIES.forEach((t) => {
+      if (unlockedTechIds.includes(t.id) && t.effects.upgradeCostDiscount) {
+        discount += t.effects.upgradeCostDiscount;
+      }
+    });
+
     const base = COUNTRIES_DATA[countryId];
-    const cost = calculateEconomyUpgradeCost(base.baseIncome, target.economyLevel);
+    const cost = calculateEconomyUpgradeCost(base.baseIncome, target.economyLevel, discount);
 
     if (money < cost) {
       sound.playDefeat();
-      get().showNotification('Fundos insuficientes para melhoria econômica.', 'danger');
+      get().showNotification('Fundos insuficientes para modernização.', 'danger');
       return false;
     }
 
@@ -278,20 +426,28 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     get().saveGame();
     get().showNotification(
-      `${target.name} expandiu a economia para Nível ${nextLevel}! (+$${nextIncome}/s)`,
+      `${target.name} expandiu complexo econômico para Nv. ${nextLevel}! (+$${nextIncome}/s)`,
       'success'
     );
     return true;
   },
 
   recruitMilitary: (batchCount = 1) => {
-    const { militaryPower, money } = get();
-    const cost = calculateRecruitCost(militaryPower, batchCount);
+    const { militaryPower, money, unlockedTechIds } = get();
+
+    let discount = 0;
+    TECHNOLOGIES.forEach((t) => {
+      if (unlockedTechIds.includes(t.id) && t.effects.recruitCostDiscount) {
+        discount += t.effects.recruitCostDiscount;
+      }
+    });
+
+    const cost = calculateRecruitCost(militaryPower, batchCount, discount);
     const troopsToAdd = BALANCE.RECRUIT_BATCH_SIZE * batchCount;
 
     if (money < cost) {
       sound.playDefeat();
-      get().showNotification('Fundos insuficientes para recrutar tropas.', 'danger');
+      get().showNotification('Tesouro insuficiente para mobilização militar.', 'danger');
       return false;
     }
 
@@ -306,22 +462,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
 
     get().saveGame();
-    get().showNotification(`+${troopsToAdd} Força Militar recrutada com sucesso!`, 'success');
+    get().showNotification(`+${troopsToAdd} Forças Militares incorporadas de prontidão!`, 'success');
     return true;
   },
 
   attackCountry: (targetCountryId: CountryId) => {
-    const { countries, militaryPower } = get();
+    const { countries, militaryPower, getUnlockedTechs, playerCountryId } = get();
     const target = countries[targetCountryId];
     if (!target || target.owner === 'player') return null;
 
     if (militaryPower < 10) {
       sound.playDefeat();
-      get().showNotification('Seu exército está muito fraco para iniciar um ataque!', 'danger');
+      get().showNotification('Efetivo insuficiente para coordenar ofensiva militar!', 'danger');
       return null;
     }
 
-    const battleResult = resolveBattle(militaryPower, target);
+    const battleResult = resolveBattle(militaryPower, target, getUnlockedTechs());
 
     let updatedCountries = { ...countries };
     let newMilitary = Math.max(10, militaryPower - battleResult.playerCasualties);
@@ -331,7 +487,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
       updatedCountries[targetCountryId] = {
         ...target,
         owner: 'player',
+        sabotagedTurns: 0,
       };
+
+      const playerName = playerCountryId ? COUNTRIES_DATA[playerCountryId].name : 'Seu Império';
+      set({ currentNews: generateConquestNews(targetCountryId, playerName) });
     } else {
       sound.playDefeat();
     }
@@ -345,6 +505,138 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     get().saveGame();
     return battleResult;
+  },
+
+  sabotageCountry: (targetCountryId: CountryId) => {
+    const { money, countries, isTechUnlocked } = get();
+    const target = countries[targetCountryId];
+    if (!target || target.owner === 'player') return false;
+
+    const sabotageCost = 800;
+    if (money < sabotageCost) {
+      sound.playDefeat();
+      get().showNotification('Fundos insuficientes para financiar operação encoberta ($800).', 'danger');
+      return false;
+    }
+
+    const bonusSuccess = isTechUnlocked('int_black_ops') ? 0.95 : 0.75;
+    const isSuccess = Math.random() < bonusSuccess;
+
+    const newMoney = money - sabotageCost;
+
+    if (isSuccess) {
+      sound.playSabotage();
+      const updatedCountries = {
+        ...countries,
+        [targetCountryId]: {
+          ...target,
+          sabotagedTurns: 3,
+        },
+      };
+      set({ money: newMoney, countries: updatedCountries });
+      get().showNotification(
+        `OPERAÇÃO BEM-SUCEDIDA: Defesas de ${target.name} foram sabotadas e reduzidas em 25%!`,
+        'success'
+      );
+      get().saveGame();
+      return true;
+    } else {
+      sound.playDefeat();
+      set({ money: newMoney });
+      get().showNotification(
+        `FALHA DE AGENTES: Infiltração em ${target.name} foi interceptada pelas defesas rivais.`,
+        'danger'
+      );
+      return false;
+    }
+  },
+
+  unlockTech: (techId: string) => {
+    const { money, unlockedTechIds, playerCountryId } = get();
+    const tech = TECHNOLOGIES.find((t) => t.id === techId);
+    if (!tech || unlockedTechIds.includes(techId)) return false;
+
+    if (tech.requiredTechId && !unlockedTechIds.includes(tech.requiredTechId)) {
+      get().showNotification('Requisitos de tecnologia anterior não atendidos.', 'danger');
+      return false;
+    }
+
+    if (money < tech.cost) {
+      sound.playDefeat();
+      get().showNotification('Orçamento insuficiente para pesquisa científica.', 'danger');
+      return false;
+    }
+
+    const newMoney = money - tech.cost;
+    const newUnlocked = [...unlockedTechIds, techId];
+    sound.playTechUnlocked();
+
+    const playerName = playerCountryId ? COUNTRIES_DATA[playerCountryId].name : 'Seu Império';
+
+    set({
+      money: newMoney,
+      unlockedTechIds: newUnlocked,
+      currentNews: generateTechNews(tech.name, playerName),
+    });
+
+    get().saveGame();
+    get().showNotification(`PESQUISA CONCLUÍDA: ${tech.name} mobilizada com sucesso!`, 'success');
+    return true;
+  },
+
+  resolveCrisisEvent: (choiceId: string) => {
+    const { activeCrisisEvent, money, militaryPower, bonusIncomePerSecond } = get();
+    if (!activeCrisisEvent) return;
+
+    const choice = activeCrisisEvent.choices.find((c) => c.id === choiceId);
+    if (!choice) return;
+
+    let newMoney = money;
+    let newMilitary = militaryPower;
+    let newBonusIncome = bonusIncomePerSecond;
+
+    if (choice.costMoney) {
+      if (newMoney < choice.costMoney) {
+        sound.playDefeat();
+        get().showNotification('Recursos financeiros insuficientes para esta opção.', 'danger');
+        return;
+      }
+      newMoney -= choice.costMoney;
+    }
+
+    if (choice.costMilitary) {
+      newMilitary = Math.max(10, newMilitary - choice.costMilitary);
+    }
+
+    if (choice.rewardMoney) newMoney += choice.rewardMoney;
+    if (choice.rewardMilitary) newMilitary += choice.rewardMilitary;
+    if (choice.rewardIncomeBonus) newBonusIncome += choice.rewardIncomeBonus;
+
+    if (choice.soundEffect === 'buy') sound.playBuy();
+    else if (choice.soundEffect === 'recruit') sound.playRecruit();
+    else if (choice.soundEffect === 'sabotage') sound.playSabotage();
+    else sound.playClick();
+
+    set({
+      money: newMoney,
+      militaryPower: newMilitary,
+      bonusIncomePerSecond: newBonusIncome,
+      activeCrisisEvent: null,
+      activeModal: null,
+    });
+
+    get().saveGame();
+    get().showNotification(`Decisão aplicada: ${choice.label}`, 'info');
+  },
+
+  setGameSpeed: (speed: GameSpeed) => {
+    sound.playClick();
+    set({ gameSpeed: speed, isPaused: false });
+  },
+
+  togglePause: () => {
+    sound.playClick();
+    set((s) => ({ isPaused: !s.isPaused }));
   },
 
   collectOfflineProgress: () => {
@@ -382,6 +674,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       countries,
       getConqueredTerritoriesCount,
       totalPlayTimeSeconds,
+      unlockedTechIds,
+      unlockedAchievementIds,
+      gameSpeed,
     } = get();
 
     if (!playerCountryId) return;
@@ -394,6 +689,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       countries,
       conqueredCount: getConqueredTerritoriesCount(),
       totalPlayTimeSeconds,
+      unlockedTechIds,
+      unlockedAchievementIds,
+      gameSpeed,
     });
     set({ hasSavedGame: true });
   },
@@ -405,6 +703,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       screen: 'country_select',
       activeModal: null,
       selectedCountryId: null,
+      unlockedTechIds: [],
+      unlockedAchievementIds: [],
+      bonusIncomePerSecond: 0,
+      activeCrisisEvent: null,
     });
   },
 
@@ -471,5 +773,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
       totalPlayTimeSeconds: totalPlayTimeSeconds + seconds,
     });
     get().showNotification(`[DEBUG] Avançou ${seconds}s (+${earned})`, 'info');
+  },
+
+  debugTriggerEvent: () => {
+    const randomEvt = GEOPOLITICAL_EVENTS[Math.floor(Math.random() * GEOPOLITICAL_EVENTS.length)];
+    set({
+      activeCrisisEvent: randomEvt,
+      activeModal: 'crisis_event',
+    });
+    sound.playCrisisAlert();
+    get().showNotification(`[DEBUG] Evento acionado!`, 'info');
   },
 }));
