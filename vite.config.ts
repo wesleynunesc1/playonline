@@ -6,7 +6,7 @@ const devApi = (): Plugin => ({
   name: 'dev-api',
   configureServer(server) {
     server.middlewares.use('/api', async (req, res, next) => {
-      const name = /^\/(lan|admin|ceara)$/.exec(req.url ?? '')?.[1];
+      const name = /^\/(lan|admin)$/.exec(req.url ?? '')?.[1];
       if (!name) return next();
       const chunks: Buffer[] = [];
       for await (const c of req) chunks.push(c as Buffer);

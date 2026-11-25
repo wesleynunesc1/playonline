@@ -37,7 +37,7 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, subtitle, 
 
   // Fora da árvore da tela, para nunca ficar atrás de barras
   return createPortal(
-    <div className="fixed inset-0 z-50 text-slate-100 flex items-end sm:items-center justify-center sm:p-4 bg-black/75 animate-in">
+    <div className="app-frame fixed inset-0 z-50 text-slate-100 flex items-end sm:items-center justify-center bg-black/75 animate-in">
       <div className="fixed inset-0 -z-10" onClick={onClose} aria-hidden="true" />
       <div
         role="dialog"
@@ -69,7 +69,7 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, subtitle, 
             )}
           </div>
         )}
-        <div className="p-4 sm:p-5 overflow-y-auto overscroll-contain space-y-3 safe-bottom">{children}</div>
+        <div className="p-4 sm:p-5 overflow-y-auto overscroll-contain space-y-3">{children}</div>
       </div>
     </div>,
     document.body

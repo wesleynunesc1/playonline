@@ -103,7 +103,7 @@ export const GameScreen: React.FC = () => {
           {!lan && <span className="flex gap-1.5"><Speed /><HelpButton className="glass-btn w-9 h-9 text-amber-300" /></span>}
         </div>
       </main>
-      <nav className="game-nav relative z-30 shrink-0 grid grid-cols-8 bg-slate-950 border-t border-slate-800 pb-[env(safe-area-inset-bottom)]">
+      <nav className="game-nav relative z-30 shrink-0 grid grid-cols-8 bg-slate-950 border-t border-slate-800">
         {NAV.map((n) => (
           <button key={n.id} onClick={() => setPanel(n.id)} className="relative flex flex-col items-center gap-0.5 py-2 text-[10px] xs:text-[11px] text-slate-300 hover:bg-slate-900 active:scale-95 transition min-w-0">
             <span className="text-lg leading-none">{n.icon}</span>
@@ -128,7 +128,7 @@ const Hud: React.FC = () => {
   const income = budget().total;
   const power = useAnimatedNumber(armyPower(g.army));
   return (
-    <header className="safe-top relative z-30 shrink-0 bg-slate-950 border-b border-slate-800">
+    <header className="relative z-30 shrink-0 bg-slate-950 border-b border-slate-800">
       <p key={g.news[0]?.id} className="news-in news-line px-3 py-1 text-[11px] text-slate-300 truncate border-b border-slate-900">📡 {g.news[0]?.text}</p>
       <div className="flex items-center justify-between gap-2 px-2 sm:px-4 py-1.5 text-xs font-mono overflow-x-auto no-scrollbar">
         <span className="shrink-0 font-bold">{COUNTRIES[g.capital].flag} {owned().length}</span>

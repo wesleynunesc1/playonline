@@ -4,7 +4,7 @@ import { sound } from './utils/audio';
 import { music, speak } from './utils/music';
 
 /** Estado só de interface (telas, painel aberto, país selecionado, avisos). */
-export type Screen = 'home' | 'country_select' | 'game' | 'snake' | 'lan' | 'ceara';
+export type Screen = 'home' | 'country_select' | 'game' | 'snake' | 'lan' | 'war';
 export type Panel = 'imperio' | 'exercito' | 'generais' | 'diplomacia' | 'ciencia' | 'missoes' | 'mundo' | 'menu' | null;
 
 interface App {
@@ -21,6 +21,11 @@ interface App {
   select: (id: string) => void;
   toggleSound: () => void;
 }
+
+// A antiga vila do Ceará deu lugar à guerra em sala
+try {
+  localStorage.removeItem('PLAY_ONLINE_CEARA');
+} catch { /* armazenamento indisponível */ }
 
 let toastTimer: ReturnType<typeof setTimeout>;
 

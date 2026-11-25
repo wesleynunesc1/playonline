@@ -25,14 +25,14 @@ export const LanScreen: React.FC = () => {
   };
   return (
     <div className="w-full h-full flex flex-col bg-[radial-gradient(ellipse_at_top,#10264d,#05070f_70%)] overflow-hidden">
-      <header className="safe-top flex items-center gap-3 px-4 py-3 border-b border-slate-800 shrink-0">
+      <header className="flex items-center gap-3 px-4 py-3 border-b border-slate-800 shrink-0">
         <button onClick={back} className="glass-btn h-11 px-3 gap-2 text-xs"><ArrowLeft size={16} /> Sair</button>
         <h2 className="font-black flex items-center gap-2"><Wifi size={18} /> Jogar no Wi-Fi</h2>
         <span className="ml-auto" />
         {L.phase === 'lobby' && <span className="font-mono font-bold text-amber-300 tracking-widest">{L.code}</span>}
         <HelpButton />
       </header>
-      <div className="flex-1 overflow-y-auto overscroll-contain p-4 safe-bottom">
+      <div className="flex-1 overflow-y-auto overscroll-contain p-4">
         <div className="max-w-3xl mx-auto space-y-4">{L.phase === 'lobby' ? <Lobby /> : <Finder />}</div>
       </div>
     </div>

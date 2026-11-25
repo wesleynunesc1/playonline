@@ -190,7 +190,7 @@ export const SnakeScreen: React.FC = () => {
   const ended = status === 'over' || status === 'won';
 
   return (
-    <div className="w-full h-full flex flex-col items-center gap-3 p-3 sm:p-5 safe-top overflow-y-auto bg-[radial-gradient(ellipse_at_top,#0f3b38,#050b0d_70%)]">
+    <div className="w-full h-full flex flex-col items-center gap-3 p-3 sm:p-5 overflow-y-auto bg-[radial-gradient(ellipse_at_top,#0f3b38,#050b0d_70%)]">
       <header className="w-full max-w-2xl flex items-center justify-between gap-2">
         <button onClick={() => setScreen('home')} className="glass-btn h-11 px-3 gap-2 text-sm">
           <ArrowLeft size={18} /> Menu
@@ -216,7 +216,7 @@ export const SnakeScreen: React.FC = () => {
       </header>
 
       <div
-        className="snake-board relative shrink-0 aspect-square w-[min(100%,calc(100dvh-17rem))] landscape:w-[min(100%,calc(100dvh-5.5rem))] sm:w-[min(100%,calc(100dvh-7rem))] min-w-[240px] max-w-3xl rounded-2xl overflow-hidden touch-none"
+        className="snake-board relative shrink-0 aspect-square w-[min(100%,calc(100dvh-19.5rem))] landscape:w-[min(100%,calc(100dvh-8rem))] sm:w-[min(100%,calc(100dvh-9.5rem))] min-w-[200px] max-w-3xl rounded-2xl overflow-hidden touch-none"
         onPointerDown={(e) => { swipe.current = { x: e.clientX, y: e.clientY }; }}
         onPointerMove={onPointerMove}
         onPointerUp={endSwipe}

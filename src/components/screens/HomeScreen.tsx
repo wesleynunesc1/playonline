@@ -61,7 +61,7 @@ export const HomeScreen: React.FC = () => {
     <div className="relative w-full h-full overflow-x-hidden overflow-y-auto bg-black">
       <Globe />
       <div className="menu-shade" />
-      <div className="relative z-10 min-h-full flex flex-col p-5 sm:p-10 safe-top">
+      <div className="relative z-10 min-h-full flex flex-col p-5 sm:p-10">
         <header className="flex items-center gap-2 sm:gap-3 text-xs">
           <div className="glass-panel rounded-2xl px-3 py-2 w-44 min-w-0">
             <p className="flex justify-between font-bold"><span className="truncate">{titleOf(level)}</span><span className="text-amber-300">{level}</span></p>
@@ -83,7 +83,7 @@ export const HomeScreen: React.FC = () => {
           <div className="mt-5 space-y-2">
             {saved && <Item i={0} hot icon={<RotateCcw size={20} />} title="CONTINUAR" text={`${COUNTRIES[saved.capital].name} • ${lands} países • ${formatDuration(saved.time)}`} onClick={() => { if (continueGame()) setScreen('game'); }} />}
             <Item i={1} hot={!saved} icon={<Globe2 size={20} />} title="PARTIDA LIVRE" text="172 países, 6 impérios rivais" onClick={() => choose('livre')} />
-            <Item i={2} icon={<Castle size={20} />} title="GUERRA NO CEARÁ 3D" text="Online: construa e ataque as 184 cidades" onClick={() => setScreen('ceara')} />
+            <Item i={2} icon={<Castle size={20} />} title="GUERRA CEARÁ 2026" text="Mundo aberto 3D, sozinho ou no Wi-Fi" onClick={() => setScreen('war')} />
             <Item i={2} icon={<Wifi size={20} />} title="JOGAR NO WI-FI" text="2 a 6 jogadores na mesma rede" onClick={() => setScreen('lan')} />
             <div className="grid grid-cols-1 xs:grid-cols-2 gap-2">
               <Item i={3} icon={<BookOpen size={20} />} title="CAMPANHA" text={`${M.campaign}/${CAMPAIGN.length} capítulos`} onClick={() => setList('campanha')} />

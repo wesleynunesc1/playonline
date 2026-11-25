@@ -130,7 +130,7 @@
 
 /* ===== Mod menu ===== */
 .mod-fab { position: fixed; z-index: 61; width: 46px; height: 46px; border-radius: 50%; font-size: 1.25rem; touch-action: none; background: radial-gradient(circle at 30% 30%, #6d1f7e, #1a0722); border: 1px solid #e879f9; box-shadow: 0 0 18px rgba(217, 70, 239, 0.55); }
-.mod-menu { position: fixed; z-index: 60; right: 0.75rem; top: 0.75rem; bottom: 0.75rem; width: min(400px, calc(100vw - 1.5rem)); display: flex; flex-direction: column; font-size: 0.8rem; color: #f5e9ff; background: rgba(12, 4, 20, 0.95); border: 1px solid #a21caf; border-radius: 1rem; box-shadow: 0 0 50px rgba(192, 38, 211, 0.35); overflow: hidden; animation: mod-in 0.25s ease-out; }
+.mod-menu { position: fixed; z-index: 60; right: 0.75rem; top: max(20px, env(safe-area-inset-top)); bottom: max(20px, env(safe-area-inset-bottom)); width: min(400px, calc(100vw - 1.5rem)); display: flex; flex-direction: column; font-size: 0.8rem; color: #f5e9ff; background: rgba(12, 4, 20, 0.95); border: 1px solid #a21caf; border-radius: 1rem; box-shadow: 0 0 50px rgba(192, 38, 211, 0.35); overflow: hidden; animation: mod-in 0.25s ease-out; }
 @keyframes mod-in { from { opacity: 0; transform: translateX(60px); } }
 .mod-head { display: flex; align-items: center; gap: 0.75rem; padding: 0.4rem 0.4rem 0.4rem 1rem; background: linear-gradient(90deg, #4a044e, #1e0528); border-bottom: 1px solid #a21caf; }
 .mod-logo { font-size: 1.05rem; letter-spacing: 0.2em; background: linear-gradient(90deg, #f0abfc, #22d3ee, #f0abfc); background-size: 200%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: mod-logo 3s linear infinite; }
@@ -161,9 +161,9 @@ button.mod-row:hover { border-color: #c026d3; background: rgba(192, 38, 211, 0.1
 /* ===== Celular ===== */
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
-.safe-top { padding-top: max(var(--safe-min, 0px), env(safe-area-inset-top)); }
-.safe-bottom { padding-bottom: calc(1rem + env(safe-area-inset-bottom)); }
-.sheet { max-height: 90dvh; }
+/* 20 px livres em cima e embaixo, para os ícones e a barra do celular */
+.app-frame { padding: max(20px, env(safe-area-inset-top)) env(safe-area-inset-right) max(20px, env(safe-area-inset-bottom)) env(safe-area-inset-left); }
+.sheet { max-height: calc(100dvh - 48px - env(safe-area-inset-top)); }
 input, select { font-size: 16px; }
 input[type='range'] { height: 32px; touch-action: pan-y; }
 input[type='range']::-webkit-slider-thumb { width: 26px; height: 26px; }
@@ -175,7 +175,6 @@ input[type='range']::-webkit-slider-thumb { width: 26px; height: 26px; }
 @media (max-height: 480px) {
   .game-nav button { flex-direction: row; justify-content: center; padding-block: 0.35rem; }
   .game-nav .nav-label, .news-line { display: none; }
-  .sheet { max-height: 98dvh; }
   .battlefield { max-height: 40dvh; }
 }
 .lite .cloud-layer, .lite .ocean-light { display: none; }
@@ -199,3 +198,43 @@ input[type='range']::-webkit-slider-thumb { width: 26px; height: 26px; }
 .snake-board { border: 2px solid rgba(45, 212, 191, 0.5); box-shadow: 0 0 45px rgba(45, 212, 191, 0.4); }
 .score-pop { animation: score-pop 0.3s ease-out; }
 @keyframes score-pop { from { transform: scale(1.7); } }
+
+/* ===== Guerra Ceará 2026 ===== */
+.war { font-size: 12px; background: #0a0d12; }
+.war-map { position: absolute; inset: 0; }
+.war-lobby { position: absolute; inset: auto 0 0; height: 58%; display: flex; flex-direction: column; background: #0b0f17; border-top: 1px solid #334155; }
+.war-in-lobby .war-map { bottom: 58%; }
+.war-hud { position: absolute; inset: 0.25rem 0.25rem auto; display: flex; flex-direction: column; gap: 0.25rem; pointer-events: none; }
+.war-hud > div { overflow-x: auto; scrollbar-width: none; pointer-events: auto; max-width: 100%; width: fit-content; }
+.war-chip { flex-shrink: 0; padding: 0.3rem 0.5rem; border-radius: 0.6rem; border: 1px solid #334155; background: rgba(8, 11, 17, 0.85); font-weight: 700; font-size: 11px; white-space: nowrap; }
+.war-chip i { font-style: normal; font-weight: 500; opacity: 0.75; }
+.war-log { position: absolute; top: 4.6rem; left: 50%; transform: translateX(-50%); width: min(60%, 24rem); display: flex; flex-direction: column; align-items: center; gap: 0.25rem; pointer-events: none; text-align: center; font-size: 11px; }
+.war-log > * { padding: 0.25rem 0.6rem; border-radius: 0.6rem; background: rgba(8, 11, 17, 0.72); }
+.war-left { position: absolute; left: 0.25rem; top: 4.6rem; display: flex; flex-direction: column; gap: 0.25rem; z-index: 10; }
+.war-tool { width: 3rem; height: 2.9rem; border-radius: 0.8rem; border: 1px solid #475569; background: rgba(8, 11, 17, 0.85); display: grid; place-items: center; align-content: center; font-size: 1.05rem; line-height: 1.1; }
+.war-tool small { font-size: 9px; }
+.war-tool.on { background: #b45309; border-color: #fcd34d; }
+.war-tool:active { transform: scale(0.93); }
+.war-bar { position: absolute; left: 50%; bottom: 0.25rem; transform: translateX(-50%); width: min(26rem, calc(100% - 0.5rem)); padding: 0.5rem; border-radius: 1rem; background: rgba(8, 11, 17, 0.9); border: 1px solid #475569; display: grid; gap: 0.4rem; z-index: 11; }
+.war-unit { flex-shrink: 0; min-width: 2.9rem; padding: 0.25rem 0.4rem; border-radius: 0.6rem; background: #1e293b; border: 1px solid #475569; text-align: center; font-size: 1rem; }
+.war-unit b { font-size: 11px; margin-left: 0.2rem; }
+.war-panel { position: absolute; inset: auto 0 0; max-height: 56%; overflow-y: auto; overscroll-behavior: contain; padding: 0.75rem; display: grid; gap: 0.5rem; align-content: start; background: rgba(9, 13, 20, 0.95); border-top: 1px solid #475569; border-radius: 1rem 1rem 0 0; z-index: 12; }
+.war-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.4rem, 1fr)); gap: 0.4rem; }
+.war-item { display: flex; flex-direction: column; align-items: center; gap: 0.1rem; padding: 0.5rem 0.3rem; border-radius: 0.8rem; background: #17202e; border: 1px solid #334155; text-align: center; }
+.war-item:disabled { opacity: 0.4; }
+.war-item:active:not(:disabled) { transform: scale(0.96); }
+.war-item small { color: #cbd5e1; font-size: 10px; line-height: 1.2; flex: 1; }
+.war-flash { position: absolute; inset: 0; background: #fff; pointer-events: none; z-index: 20; animation: war-flash 1.6s ease-out forwards; }
+@keyframes war-flash { to { opacity: 0; visibility: hidden; } }
+@media (orientation: landscape) {
+  .war-lobby { inset: 0 0 0 auto; width: 52%; height: auto; border-top: 0; border-left: 1px solid #334155; }
+  .war-in-lobby .war-map { bottom: 0; right: 52%; }
+  .war-panel { inset: 0 0 0 auto; width: min(22rem, 48%); max-height: none; border-radius: 1rem 0 0 1rem; border-top: 0; border-left: 1px solid #475569; }
+  .war-hud { flex-direction: row; flex-wrap: wrap; }
+}
+/* Celular deitado: botões em duas colunas */
+@media (orientation: landscape) and (max-height: 480px) {
+  .war-left { top: 4.1rem; display: grid; grid-template-columns: 1fr 1fr; }
+  .war-log { top: 4.1rem; width: 44%; }
+  .war-bar { width: 24rem; padding: 0.35rem; }
+}

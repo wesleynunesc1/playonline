@@ -15,7 +15,7 @@ async function api<T>(body: object): Promise<T> {
   if (!res.ok) throw new Error(data.error ?? 'Falha de conexão');
   return data as T;
 }
-export const listRooms = () => api<{ rooms: RoomInfo[] }>({ op: 'list' }).then((r) => r.rooms);
+export const listRooms = (kind = 'we') => api<{ rooms: RoomInfo[] }>({ op: 'list', kind }).then((r) => r.rooms);
 
 const token = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => (b % 36).toString(36)).join('');
 const LETTERS = 'ABCDEFGHJKLMNPRSTUVWXYZ';
@@ -86,7 +86,7 @@ function wire(pc: RTCPeerConnection, dc: RTCDataChannel, id: string, h: Handlers
 }
 
 /** Abre uma sala e atende quem chega. `info` descreve a sala a cada anúncio */
-export function hostRoom(info: () => Omit<RoomInfo, 'code'>, h: Handlers) {
+export function hostRoom(info: () => Omit<RoomInfo, 'code'>, h: Handlers, kind = 'we') {
   const code = newCode();
   const secret = token(32);
   const seen = new Set<string>();
@@ -104,7 +104,7 @@ export function hostRoom(info: () => Omit<RoomInfo, 'code'>, h: Handlers) {
   const loop = async () => {
     while (!closed) {
       try {
-        const { guests } = await api<{ guests: { id: string; nonce: string; sdp: string }[] }>({ op: 'announce', code, secret, ...info() });
+        const { guests } = await api<{ guests: { id: string; nonce: string; sdp: string }[] }>({ op: 'announce', code, secret, kind, ...info() });
         for (const g of guests) {
           if (seen.has(g.nonce)) continue;
           seen.add(g.nonce);

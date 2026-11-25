@@ -5,7 +5,7 @@ import { getCache } from '@vercel/functions';
  * Salas do modo Wi-Fi. Só apresenta os aparelhos uns aos outros: a partida em si é direta (WebRTC).
  * Tudo expira em segundos e o IP é guardado apenas embaralhado.
  */
-interface Room { code: string; name: string; players: number; started: boolean; secret: string; seen: number }
+interface Room { code: string; name: string; players: number; started: boolean; secret: string; seen: number; kind: string }
 interface Offer { sdp: string; at: number }
 
 const ROOM_TTL = 25;
@@ -41,7 +41,9 @@ export async function POST(req: Request): Promise<Response> {
     return json({ error: 'inválido' }, 400);
   }
   const ip = req.headers.get('x-real-ip') ?? req.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? '127.0.0.1';
-  const net = `net:${hash(networkOf(ip))}`;
+  // Cada jogo tem a sua lista de salas
+  const kind = text(body.kind, 4) || 'we';
+  const net = `net:${kind}:${hash(networkOf(ip))}`;
   const c = cache();
   const now = Date.now();
   const code = text(body.code, 4).toUpperCase();
@@ -68,7 +70,7 @@ export async function POST(req: Request): Promise<Response> {
       await c.set(`answer:${code}:${text(body.guest, 40)}:${text(body.nonce, 12)}`, text(body.sdp, MAX_SDP), { ttl: SIGNAL_TTL });
       return json({ ok: true });
     }
-    const next: Room = { code, name: text(body.name, 24) || 'Sala', players: Number(body.players) || 1, started: !!body.started, secret, seen: now };
+    const next: Room = { code, name: text(body.name, 24) || 'Sala', players: Number(body.players) || 1, started: !!body.started, secret, seen: now, kind };
     await c.set(roomKey, next, { ttl: ROOM_TTL });
     const codes = ((await c.get(net)) as string[] | null) ?? [];
     if (!codes.includes(code) || Math.random() < 0.2) await c.set(net, [code, ...codes.filter((x) => x !== code)].slice(0, MAX_ROOMS), { ttl: 600 });

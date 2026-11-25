@@ -12,7 +12,7 @@ export const UpdateBanner: React.FC = () => {
   const [hidden, setHidden] = useState(false);
   if (!available || hidden || screen !== 'home') return null;
   return (
-    <div role="status" className="fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-40 mx-auto max-w-md glass-panel !border-amber-400 rounded-2xl p-3 flex items-center gap-3 text-sm animate-in">
+    <div role="status" className="fixed inset-x-3 bottom-[calc(0.75rem+max(20px,env(safe-area-inset-bottom)))] z-40 mx-auto max-w-md glass-panel !border-amber-400 rounded-2xl p-3 flex items-center gap-3 text-sm animate-in">
       <RefreshCw size={20} className={`text-amber-300 shrink-0 ${busy ? 'animate-spin' : ''}`} />
       <span className="flex-1">Nova versão disponível!</span>
       <Button size="sm" variant="gold" disabled={busy} onClick={applyUpdate}>Atualizar</Button>

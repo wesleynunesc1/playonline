@@ -44,9 +44,9 @@ export const AdminLogin: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 };
 
 // ===== Catálogo do menu =====
-type Tab = 'jogador' | 'guerra' | 'mundo' | 'rivais' | 'wifi' | 'progresso' | 'visual' | 'ceara';
-const TABS: Record<Tab, string> = { jogador: '👤 Jogador', guerra: '⚔️ Guerra', mundo: '🌍 Mundo', rivais: '👹 Rivais', wifi: '📶 Wi-Fi', progresso: '🏆 Progresso', visual: '🎬 Efeitos', ceara: '🏰 Ceará' };
-const CearaMods = lazy(() => import('./CearaMods'));
+type Tab = 'jogador' | 'guerra' | 'mundo' | 'rivais' | 'wifi' | 'progresso' | 'visual' | 'war';
+const TABS: Record<Tab, string> = { jogador: '👤 Jogador', guerra: '⚔️ Guerra', mundo: '🌍 Mundo', rivais: '👹 Rivais', wifi: '📶 Wi-Fi', progresso: '🏆 Progresso', visual: '🎬 Efeitos', war: '🪖 Ceará' };
+const WarMods = lazy(() => import('./WarMods'));
 type Entry =
   | { tab: Tab; name: string; icon: string; toggle: keyof typeof cheat }
   | { tab: Tab; name: string; icon: string; run: () => void; game?: boolean; solo?: boolean }
@@ -246,7 +246,7 @@ export const AdminMenu: React.FC = () => {
 
   // Abre já na aba do jogo em que a pessoa está
   useEffect(() => {
-    if (screen === 'ceara') setTab('ceara');
+    if (screen === 'war') setTab('war');
     else if (screen === 'game') setTab('jogador');
   }, [screen]);
 
@@ -260,7 +260,7 @@ export const AdminMenu: React.FC = () => {
       {!open && <button
         aria-label="Mod menu"
         className="mod-fab"
-        style={{ left: x, top: Math.min(pos.y, window.innerHeight - 60) }}
+        style={{ left: x, top: Math.max(20, Math.min(pos.y, window.innerHeight - 70)) }}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
           drag.current = { dx: e.clientX - x, dy: e.clientY - pos.y, moved: false };
@@ -302,12 +302,12 @@ export const AdminMenu: React.FC = () => {
             </nav>
           )}
           <div className="flex-1 overflow-y-auto overscroll-contain px-3 pb-4 space-y-1.5">
-            {!query && tab === 'ceara' && <Suspense fallback={<p>Carregando...</p>}><CearaMods /></Suspense>}
-            {!G && !query && tab !== 'progresso' && tab !== 'ceara' && <p className="text-slate-400 py-2">Entre em uma partida para liberar o resto desta aba.</p>}
+            {!query && tab === 'war' && <Suspense fallback={<p>Carregando...</p>}><WarMods /></Suspense>}
+            {!G && !query && tab !== 'progresso' && tab !== 'war' && <p className="text-slate-400 py-2">Entre em uma partida para liberar o resto desta aba.</p>}
             {G && !query && tab === 'guerra' && <CountryEditor />}
             {G && !query && tab === 'rivais' && <RivalEditor />}
             {list.map((e) => <EntryRow key={e.tab + e.name} e={e} />)}
-            {!query && tab === 'progresso' && <Btn className="w-full" onClick={() => { for (const f of C.FLAGS) cheat[f.id] = false; cheat.speed = 1; useApp.setState({ admin: false }); import('../../ceara/mods').then(({ MODS, mod }) => MODS.forEach((m) => { mod[m.id] = false; })); setOpen(false); bump(); }}>🚪 Sair do modo administrador</Btn>}
+            {!query && tab === 'progresso' && <Btn className="w-full" onClick={() => { for (const f of C.FLAGS) cheat[f.id] = false; cheat.speed = 1; useApp.setState({ admin: false }); import('../../war/sim').then(({ mods }) => mods.clear()); setOpen(false); bump(); }}>🚪 Sair do modo administrador</Btn>}
           </div>
         </div>
       )}
