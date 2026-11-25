@@ -44,8 +44,8 @@ export const AdminLogin: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 };
 
 // ===== Catálogo do menu =====
-type Tab = 'jogador' | 'guerra' | 'mundo' | 'rivais' | 'wifi' | 'progresso' | 'visual' | 'war';
-const TABS: Record<Tab, string> = { jogador: '👤 Jogador', guerra: '⚔️ Guerra', mundo: '🌍 Mundo', rivais: '👹 Rivais', wifi: '📶 Wi-Fi', progresso: '🏆 Progresso', visual: '🎬 Efeitos', war: '🪖 Ceará' };
+type Tab = 'jogador' | 'guerra' | 'mundo' | 'rivais' | 'wifi' | 'progresso' | 'visual';
+const TABS: Record<Tab, string> = { jogador: '👤 Jogador', guerra: '⚔️ Guerra', mundo: '🌍 Mundo', rivais: '👹 Rivais', wifi: '📶 Wi-Fi', progresso: '🏆 Progresso', visual: '🎬 Efeitos' };
 const WarMods = lazy(() => import('./WarMods'));
 type Entry =
   | { tab: Tab; name: string; icon: string; toggle: keyof typeof cheat }
@@ -246,8 +246,7 @@ export const AdminMenu: React.FC = () => {
 
   // Abre já na aba do jogo em que a pessoa está
   useEffect(() => {
-    if (screen === 'war') setTab('war');
-    else if (screen === 'game') setTab('jogador');
+    if (screen === 'game') setTab('jogador');
   }, [screen]);
 
   if (!admin) return null;
@@ -286,10 +285,11 @@ export const AdminMenu: React.FC = () => {
       {open && (
         <div role="dialog" aria-label="Mod menu" className="mod-menu">
           <header className="mod-head">
-            <b className="mod-logo">MOD MENU</b>
-            <span className="text-[10px] text-fuchsia-300">{active} ativos • F2</span>
+            <b className="mod-logo">{screen === 'war' ? 'MOD CEARÁ 2026' : 'MOD MENU'}</b>
+            <span className="text-[10px] text-fuchsia-300">{screen === 'war' ? '' : `${active} ativos • `}F2</span>
             <button onClick={() => setOpen(false)} aria-label="Fechar mod menu" className="ml-auto w-10 h-10 grid place-items-center"><X size={18} /></button>
           </header>
+          {screen === 'war' ? <div className="flex-1 overflow-y-auto overscroll-contain p-3"><Suspense fallback={<p>Carregando...</p>}><WarMods /></Suspense></div> : <>
           <div className="grid grid-cols-4 gap-1.5 px-3 pt-2">
             {PRESETS.map((p) => (
               <Btn key={p.name} onClick={() => { for (const f of C.FLAGS) cheat[f.id] = p.on.includes(f.id); if (!p.on.length) cheat.speed = 1; bump(); }}>{p.icon} <span className="block text-[10px] leading-tight">{p.name}</span></Btn>
@@ -302,13 +302,12 @@ export const AdminMenu: React.FC = () => {
             </nav>
           )}
           <div className="flex-1 overflow-y-auto overscroll-contain px-3 pb-4 space-y-1.5">
-            {!query && tab === 'war' && <Suspense fallback={<p>Carregando...</p>}><WarMods /></Suspense>}
-            {!G && !query && tab !== 'progresso' && tab !== 'war' && <p className="text-slate-400 py-2">Entre em uma partida para liberar o resto desta aba.</p>}
+            {!G && !query && tab !== 'progresso' && <p className="text-slate-400 py-2">Entre em uma partida para liberar o resto desta aba.</p>}
             {G && !query && tab === 'guerra' && <CountryEditor />}
             {G && !query && tab === 'rivais' && <RivalEditor />}
             {list.map((e) => <EntryRow key={e.tab + e.name} e={e} />)}
             {!query && tab === 'progresso' && <Btn className="w-full" onClick={() => { for (const f of C.FLAGS) cheat[f.id] = false; cheat.speed = 1; useApp.setState({ admin: false }); import('../../war/sim').then(({ mods }) => mods.clear()); setOpen(false); bump(); }}>🚪 Sair do modo administrador</Btn>}
-          </div>
+          </div></>}
         </div>
       )}
     </>

@@ -72,7 +72,7 @@ export const unitCap = (cities: number) => Math.min(60, 22 + cities * 3);
 // ===== 17 construções =====
 export type WorksId =
   | 'comando' | 'mercado' | 'shopping' | 'refinaria' | 'solar' | 'eolica' | 'banco' | 'quartel' | 'fabrica' | 'drones' | 'aeroporto' | 'hospital'
-  | 'torre' | 'antiaerea' | 'obuseiro' | 'radar' | 'gerador' | 'silo' | 'vigia';
+  | 'torre' | 'antiaerea' | 'obuseiro' | 'radar' | 'gerador' | 'silo' | 'vigia' | 'domo';
 export interface WorksDef {
   name: string; icon: string; money: number; fuel: number; time: number; text: string; level: number; income?: number; fuelOut?: number;
   gun?: { dmg: [number, number, number]; every: number; range: number; splash?: number; shot: Shot };
@@ -97,7 +97,8 @@ export const WORKS: Record<WorksId, WorksDef> = {
   obuseiro: { name: 'Obuseiro', icon: '💣', money: 560, fuel: 80, time: 14, level: 3, text: 'Artilharia fixa de longo alcance.', gun: { dmg: [60, 50, 0], every: 3.6, range: 4, splash: 0.7, shot: 'canhao' } },
   radar: { name: 'Radar', icon: '📡', money: 320, fuel: 30, time: 9, level: 2, text: 'Grande visão em volta.' },
   gerador: { name: 'Defesa Reforçada', icon: '🛡️', money: 480, fuel: 60, time: 12, level: 3, text: 'A cidade aguenta o dobro.' },
-  silo: { name: 'Silo de Mísseis', icon: '🚀', money: 1500, fuel: 400, time: 26, level: 5, text: 'Libera o Míssil Balístico.' },
+  silo: { name: 'Silo de Mísseis', icon: '🚀', money: 1500, fuel: 400, time: 26, level: 5, text: 'Lança armas nucleares.' },
+  domo: { name: 'Domo Antimíssil', icon: '🔰', money: 900, fuel: 200, time: 20, level: 3, text: 'Derruba um míssil nuclear por minuto.' },
 };
 export const WORKS_IDS = (Object.keys(WORKS) as WorksId[]).filter((k) => k !== 'comando');
 export const slotsOf = (level: number) => 2 + level;
@@ -109,7 +110,15 @@ export const CAPTURE_RADIUS = 0.8;
 export const CAPTURE_S = 4;
 
 // ===== 8 apoios =====
-export type PowerId = 'barragem' | 'aereo' | 'fumaca' | 'emp' | 'paraquedas' | 'satelite' | 'reparo' | 'balistico';
+export type PowerId = 'barragem' | 'aereo' | 'fumaca' | 'emp' | 'paraquedas' | 'satelite' | 'reparo' | 'tatica' | 'balistico' | 'hidrogenio';
+/** Armas nucleares: nível do Programa Nuclear, segundos de voo, força e segundos de radiação */
+export const NUKES: Partial<Record<PowerId, { need: number; flight: number; dmg: number; rad: number; size: number }>> = {
+  tatica: { need: 1, flight: 4, dmg: 520, rad: 20, size: 0.6 },
+  balistico: { need: 2, flight: 6, dmg: 1000, rad: 40, size: 1 },
+  hidrogenio: { need: 3, flight: 9, dmg: 2200, rad: 75, size: 1.75 },
+};
+export const DOME_RADIUS = 3.2;
+export const DOME_COOL = 60;
 export const POWERS: Record<PowerId, { name: string; icon: string; money: number; cool: number; radius: number; text: string; color: string }> = {
   barragem: { name: 'Barragem', icon: '💥', money: 250, cool: 45, radius: 1.3, text: 'Chuva de artilharia por 4 segundos.', color: '#fb923c' },
   aereo: { name: 'Ataque Aéreo', icon: '🛩️', money: 400, cool: 70, radius: 1.5, text: 'Bombardeiros despejam tudo no alvo.', color: '#f87171' },
@@ -118,7 +127,9 @@ export const POWERS: Record<PowerId, { name: string; icon: string; money: number
   paraquedas: { name: 'Paraquedistas', icon: '🪂', money: 350, cool: 80, radius: 0.8, text: '5 soldados em qualquer lugar.', color: '#facc15' },
   satelite: { name: 'Satélite', icon: '🛰️', money: 120, cool: 50, radius: 8, text: 'Revela uma área enorme por 15s.', color: '#a78bfa' },
   reparo: { name: 'Reparo', icon: '🔧', money: 200, cool: 50, radius: 1.6, text: 'Recupera 45% da vida das suas tropas.', color: '#4ade80' },
-  balistico: { name: 'Míssil Balístico', icon: '☢️', money: 1200, cool: 150, radius: 2, text: 'Destruição enorme. Precisa de Silo.', color: '#ef4444' },
+  tatica: { name: 'Ogiva Tática', icon: '☢️', money: 900, cool: 110, radius: 1.3, text: 'Nuclear pequena e rápida. Deixa radiação.', color: '#facc15' },
+  balistico: { name: 'Bomba Atômica', icon: '🚀', money: 1800, cool: 170, radius: 2.1, text: 'Arrasa uma cidade inteira.', color: '#fb923c' },
+  hidrogenio: { name: 'Bomba de Hidrogênio', icon: '🌋', money: 4000, cool: 300, radius: 3.6, text: 'Apaga uma região do mapa.', color: '#ef4444' },
 };
 export const POWER_IDS = Object.keys(POWERS) as PowerId[];
 
@@ -135,6 +146,7 @@ export const RESEARCH: { id: string; name: string; icon: string; levels: [string
   { id: 'comando', name: 'Comando Integrado', icon: '🎧', levels: ['Rádio', 'Satélite', 'Nuvem de Guerra'], per: { power: 0.12 } },
   { id: 'medicina', name: 'Medicina de Combate', icon: '🧬', levels: ['Torniquete', 'Telecirurgia', 'Biogel'], per: { heal: 0.25 } },
 ];
+RESEARCH.push({ id: 'nuclear', name: 'Programa Nuclear', icon: '☢️', levels: ['Ogiva Tática', 'Bomba Atômica', 'Bomba de Hidrogênio'], per: {} });
 export const researchCost = (level: number) => [400, 1100, 2600][level] ?? 0;
 
 // ===== 17 cidades estratégicas =====
@@ -188,6 +200,7 @@ export const RULES: { id: string; name: string; icon: string; text: string }[] =
   { id: 'veloz', name: 'Guerra-relâmpago', icon: '⚡', text: 'Tropas 50% mais velozes' },
   { id: 'aberto', name: 'Mapa aberto', icon: '👁️', text: 'Todos enxergam tudo' },
   { id: 'semar', name: 'Sem aviação', icon: '🚫', text: 'Nada de caças e helicópteros' },
+  { id: 'semnuke', name: 'Paz nuclear', icon: '🕊️', text: 'Armas nucleares proibidas' },
   { id: 'semapoio', name: 'Sem apoios', icon: '🙅', text: 'Só tropas' },
   { id: 'drones', name: 'Guerra de drones', icon: '🛩️', text: 'Drones pela metade do preço' },
   { id: 'fraco', name: 'Cidades frágeis', icon: '🏚️', text: 'Cidades neutras com metade da defesa' },
@@ -197,14 +210,33 @@ export const RULES: { id: string; name: string; icon: string; text: string }[] =
   { id: 'exercito', name: 'Exército pronto', icon: '🪖', text: 'Começa com tropas extras' },
 ];
 
-// ===== 14 medalhas =====
-export type Stat = 'kills' | 'lost' | 'caps' | 'lostCities' | 'built' | 'trained' | 'spent' | 'powers' | 'tanks' | 'air' | 'drones' | 'research' | 'damage' | 'earned';
+// ===== 12 missões: guiam a partida e dão recursos =====
+export const QUESTS: { id: string; icon: string; text: string; stat: Stat | 'cities' | 'army'; n: number; money: number; fuel: number }[] = [
+  { id: 'tropa', icon: '🪖', text: 'Treine 3 tropas', stat: 'trained', n: 3, money: 150, fuel: 50 },
+  { id: 'obra', icon: '🏗️', text: 'Faça 2 construções', stat: 'built', n: 2, money: 200, fuel: 60 },
+  { id: 'cidade1', icon: '🚩', text: 'Tome sua primeira cidade', stat: 'caps', n: 1, money: 250, fuel: 80 },
+  { id: 'exercito', icon: '🎖️', text: 'Tenha 15 tropas', stat: 'army', n: 15, money: 300, fuel: 120 },
+  { id: 'cidade5', icon: '🏙️', text: 'Controle 5 cidades', stat: 'cities', n: 5, money: 400, fuel: 150 },
+  { id: 'abate', icon: '🎯', text: 'Destrua 10 inimigos', stat: 'kills', n: 10, money: 400, fuel: 150 },
+  { id: 'pesquisa', icon: '🔬', text: 'Faça 3 pesquisas', stat: 'research', n: 3, money: 500, fuel: 150 },
+  { id: 'apoio', icon: '💥', text: 'Use 3 apoios', stat: 'powers', n: 3, money: 500, fuel: 200 },
+  { id: 'cidade12', icon: '🗺️', text: 'Controle 12 cidades', stat: 'cities', n: 12, money: 800, fuel: 300 },
+  { id: 'drone', icon: '🛩️', text: 'Acerte 5 drones FPV', stat: 'drones', n: 5, money: 600, fuel: 200 },
+  { id: 'nuclear', icon: '☢️', text: 'Lance uma arma nuclear', stat: 'nukes', n: 1, money: 1000, fuel: 300 },
+  { id: 'cidade30', icon: '👑', text: 'Controle 30 cidades', stat: 'cities', n: 30, money: 2000, fuel: 800 },
+];
+/** Veteranos: abates para ganhar cada estrela; cada uma dá +12% de dano e vida */
+export const STARS = [3, 8, 16];
+export const STAR_BONUS = 0.12;
+
+// ===== 15 medalhas =====
+export type Stat = 'kills' | 'lost' | 'caps' | 'lostCities' | 'built' | 'trained' | 'spent' | 'powers' | 'tanks' | 'air' | 'drones' | 'research' | 'damage' | 'earned' | 'nukes';
 export const MEDALS: { name: string; icon: string; stat: Stat }[] = [
   { name: 'Ás do Combate', icon: '🎖️', stat: 'kills' }, { name: 'Libertador', icon: '🚩', stat: 'caps' }, { name: 'Construtor', icon: '🏗️', stat: 'built' },
   { name: 'Recrutador', icon: '🪖', stat: 'trained' }, { name: 'Gastador', icon: '💸', stat: 'spent' }, { name: 'Chuva de Fogo', icon: '💥', stat: 'powers' },
   { name: 'Coração de Aço', icon: '🚜', stat: 'tanks' }, { name: 'Dono do Céu', icon: '✈️', stat: 'air' }, { name: 'Mestre dos Drones', icon: '🛩️', stat: 'drones' },
   { name: 'Cientista', icon: '🔬', stat: 'research' }, { name: 'Devastador', icon: '☄️', stat: 'damage' }, { name: 'Magnata', icon: '💰', stat: 'earned' },
-  { name: 'Sacrifício', icon: '🕯️', stat: 'lost' }, { name: 'Resistente', icon: '🧱', stat: 'lostCities' },
+  { name: 'Senhor do Átomo', icon: '☢️', stat: 'nukes' }, { name: 'Sacrifício', icon: '🕯️', stat: 'lost' }, { name: 'Resistente', icon: '🧱', stat: 'lostCities' },
 ];
 export const PHRASES = ['Bora!', 'Trégua?', 'Vou te pegar', 'Ajuda aqui!', 'Boa!', 'Kkkkk', 'Recuar!', 'Avançar!', 'Traidor!', 'GG', 'Égua, macho!', 'Arretado! 🔥'];
 export const COLORS = ['#2f7bff', '#ff3b3b', '#22c55e', '#f5b301', '#b04bff', '#ff7a1a'];

@@ -118,7 +118,7 @@ export function worksParts(b: WorksId): { geo: THREE.BufferGeometry; mat: THREE.
   });
   return out;
 }
-const WORKS_SIZE: Partial<Record<WorksId, number>> = { comando: 4, shopping: 4, banco: 2, torre: 2, vigia: 2, antiaerea: 2, eolica: 2, gerador: 2, radar: 2 };
+const WORKS_SIZE: Partial<Record<WorksId, number>> = { comando: 4, shopping: 4, banco: 2, torre: 2, vigia: 2, antiaerea: 2, eolica: 2, gerador: 2, radar: 2, domo: 2 };
 
 type P = (geo: G, m: THREE.Material, pos: number[], scale: number[], rot?: number[], to?: THREE.Object3D) => THREE.Mesh;
 /** Prédio envidraçado com lajes e janelas acesas */
@@ -301,6 +301,11 @@ function modelBuilding(b: WorksId, level: number, size: number): THREE.Group {
       p(BOX, lamp('#facc15'), [-0.9, 0.65, 0.6], [0.14, 0.1, 0.14]);
       break;
     }
+    case 'domo':
+      p(CYL, mat(CONCRETE), [0, 0.3, 0], [1.3, 0.5, 1.3]);
+      for (const [x, z] of [[-0.3, -0.3], [0.3, -0.3], [-0.3, 0.3], [0.3, 0.3]]) p(CYL, mat(WHITE), [x, 0.85, z], [0.22, 0.9, 0.22], [0.25, 0, 0.25]);
+      p(BALL, lamp(CYAN), [0, 0.8, 0], [0.35, 0.35, 0.35]);
+      break;
     case 'gerador':
       p(CYL, mat(DARK), [0, 0.3, 0], [1.4, 0.5, 1.4]);
       for (let i = 0; i < 4; i++) p(BOX, steel(), [Math.cos(i * 1.57) * 0.55, 0.9, Math.sin(i * 1.57) * 0.55], [0.14, 1.1, 0.14], [0, 0, 0]);
@@ -505,9 +510,9 @@ export const fxTexture = (k: 'fire' | 'smoke' | 'glow') => {
 
 export function makeRenderer(canvas: HTMLCanvasElement) {
   const r = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  r.setPixelRatio(Math.min(window.innerWidth < 700 ? 1.5 : 1.75, window.devicePixelRatio || 1));
+  r.setPixelRatio(Math.min(window.innerWidth < 700 ? 1.75 : 2, window.devicePixelRatio || 1));
   r.shadowMap.enabled = true;
-  r.shadowMap.type = THREE.PCFSoftShadowMap;
+  r.shadowMap.type = THREE.PCFShadowMap;
   // Sombras só são refeitas quando algo muda de lugar
   r.shadowMap.autoUpdate = false;
   r.shadowMap.needsUpdate = true;
@@ -543,6 +548,6 @@ export function autoQuality(r: THREE.WebGLRenderer) {
     if (slow < 25) return;
     slow = 0;
     const p = r.getPixelRatio();
-    if (p > 0.65) r.setPixelRatio(p * 0.8);
+    if (p > 0.85) r.setPixelRatio(Math.max(0.85, p * 0.85));
   };
 }

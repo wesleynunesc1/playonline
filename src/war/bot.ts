@@ -1,5 +1,5 @@
 import { CITY, POWERS, PowerId, UNITS, UnitId, WORKS, WorksId, slotsOf } from './data';
-import { CityState, World, allied, armyCap, armySize, citiesOf, command, hasRule, worksPrice } from './sim';
+import { CityState, World, allied, armyCap, armySize, citiesOf, command, hasRule, needOf, worksPrice } from './sim';
 
 /** Robôs: constroem, treinam e atacam com o mesmo conjunto de ordens dos jogadores. `bot` 1 a 3 é a dificuldade */
 const pick = <T,>(l: T[]) => l[Math.floor(Math.random() * l.length)];
@@ -15,7 +15,7 @@ export function think(w: World, i: number) {
   build(w, i, mine);
   train(w, i, mine);
   attack(w, i, mine, skill);
-  if (skill >= 2 && Math.random() < 0.06) command(w, i, { c: 'research', id: pick(['ia', 'blindagem', 'fintech', 'verde', 'motor', 'optica', 'logistica', 'cidade']) });
+  if (skill >= 2 && Math.random() < 0.06) command(w, i, { c: 'research', id: pick(['ia', 'blindagem', 'fintech', 'verde', 'motor', 'optica', 'logistica', 'cidade', ...(skill > 2 || mine.length > 12 ? ['nuclear', 'nuclear'] : [])]) });
   if (skill >= 2 && Math.random() < 0.12) support(w, i);
 }
 
@@ -30,6 +30,8 @@ function build(w: World, i: number, mine: CityState[]) {
   if (has('fabrica') && !has('drones')) want.push('drones');
   if (mine.length > 4 && !has('aeroporto') && !hasRule(w, 'semar')) want.push('aeroporto');
   if (has('quartel') < 1 + mine.length / 4) want.push('quartel');
+  if (mine.length > 12 && (p.res.nuclear ?? 0) > 0 && !has('silo') && !hasRule(w, 'semnuke')) want.unshift('silo');
+  if (mine.length > 8 && !has('domo')) want.push('domo');
   want.push('banco', 'solar', 'shopping', 'hospital');
   for (const k of want) {
     const [m, f] = worksPrice(w, i, k);
@@ -103,6 +105,6 @@ function support(w: World, i: number) {
     }
   }
   if (!best) return;
-  const k = pick((['barragem', 'aereo', 'emp', 'balistico'] as PowerId[]).filter((x) => p.money > POWERS[x].money));
+  const k = pick((['barragem', 'aereo', 'emp', 'tatica', 'balistico', 'hidrogenio'] as PowerId[]).filter((x) => p.money > POWERS[x].money && !needOf(w, i, x) && !((p.cool[x] ?? 0) > 0)));
   if (k) command(w, i, { c: 'power', k, x: best.x, z: best.z });
 }

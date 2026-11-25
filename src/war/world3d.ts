@@ -1,37 +1,20 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { sound } from '../utils/audio';
-import { CAPTURE_S, CITIES, CITY, City, POWERS, PowerId, REGION_COLOR, ROADS, UNITS, UNIT_IDS, UnitId, WORKS_IDS, WorksId, wx, wz } from './data';
+import { CAPTURE_S, CITIES, CITY, City, NUKES, POWERS, PowerId, UNITS, UNIT_IDS, UnitId, WORKS_IDS, WorksId } from './data';
 import { W, fxQueue } from './match';
 import { Fx, Unit, World, allied, eyes, hasRule, mods } from './sim';
-import { BAKED, autoQuality, facade, fxTexture, light, makeRenderer, mat, relief, unitGeometry, worksParts } from './models';
+import { BAKED, autoQuality, fxTexture, light, makeRenderer, mat, unitGeometry, worksParts } from './models';
+import { BOUNDS, H, PHONE, Scenery, spread } from './scenery';
 
 /** Mundo aberto em 3D: terreno, cidades, tropas, efeitos e visão. Lê o estado da partida a cada quadro. */
-const H = 0.3;
-const PHONE = Math.min(window.innerWidth, window.innerHeight) < 700;
 export interface Tap { x: number; z: number; unit: Unit | null; city: City | null }
 interface Shown { x: number; z: number; dir: number; seen: boolean }
 interface Shell { k: 'bala' | 'canhao' | 'missil'; x1: number; y1: number; z1: number; x2: number; y2: number; z2: number; t: number; dur: number }
 interface Part { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; max: number; s0: number; s1: number; r: number; g: number; b: number; a: number }
 interface Later { at: number; run: () => void }
 
-const ringPoints = (enc: number[]) => {
-  const out: [number, number][] = [[enc[0], enc[1]]];
-  for (let i = 2; i < enc.length; i += 2) out.push([out[out.length - 1][0] + enc[i], out[out.length - 1][1] + enc[i + 1]]);
-  return out;
-};
-const RINGS = new Map(CITIES.map((c) => [c.id, c.rings.map((r) => ringPoints(r).map(([x, y]) => [wx(x), wz(y)] as const))]));
-const BOUNDS = (() => {
-  let [x0, x1, z0, z1] = [1e9, -1e9, 1e9, -1e9];
-  RINGS.forEach((l) => l.forEach((r) => r.forEach(([x, z]) => {
-    x0 = Math.min(x0, x);
-    x1 = Math.max(x1, x);
-    z0 = Math.min(z0, z);
-    z1 = Math.max(z1, z);
-  })));
-  return { x0: x0 - 1, x1: x1 + 1, z0: z0 - 1, z1: z1 + 1, w: x1 - x0 + 2, h: z1 - z0 + 2 };
-})();
+const BY_POP = CITIES.map((_, i) => i).sort((a, b) => CITIES[b].pop - CITIES[a].pop);
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const altitude = (k: UnitId) => (k === 'caca' ? 1.3 : k === 'heli' ? 0.85 : k === 'recon' ? 1 : k === 'fpv' ? 0.45 : 0);
 /** Infantaria aparece como um grupo de três */
@@ -56,7 +39,8 @@ class Particles {
     this.points = new THREE.Points(g, new THREE.ShaderMaterial({
       uniforms: { map: { value: tex }, scale: { value: 600 } }, transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
       vertexShader: 'attribute vec4 tint; attribute float size; uniform float scale; varying vec4 c; void main(){ c=tint; vec4 m=modelViewMatrix*vec4(position,1.); gl_PointSize=min(700.,size*scale/-m.z); gl_Position=projectionMatrix*m; }',
-      fragmentShader: 'uniform sampler2D map; varying vec4 c; void main(){ vec4 t=texture2D(map,gl_PointCoord); gl_FragColor=vec4(t.rgb*c.rgb,t.a*c.a); if(gl_FragColor.a<.01) discard; }',
+      // A fumaça usa só o desenho da textura; a cor vem da partícula
+      fragmentShader: `uniform sampler2D map; varying vec4 c; void main(){ vec4 t=texture2D(map,gl_PointCoord); gl_FragColor=vec4(${additive ? 't.rgb*c.rgb' : 'c.rgb*(.75+.7*t.r)'},t.a*c.a); if(gl_FragColor.a<.01) discard; }`,
     }));
     this.points.frustumCulled = false;
     this.points.renderOrder = 4;
@@ -93,9 +77,6 @@ export class World3D {
   private controls: MapControls;
   private sun: THREE.DirectionalLight;
   private raf = 0;
-  private ground!: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
-  private ranges = new Map<number, [number, number]>();
-  private painted = new Map<number, string>();
   private labels = new Map<number, { sprite: THREE.Sprite; text: string; h: number }>();
   private units = new Map<UnitId, THREE.InstancedMesh>();
   private works = new Map<WorksId, THREE.InstancedMesh[]>();
@@ -124,9 +105,10 @@ export class World3D {
   private goal: THREE.Vector3 | null = null;
   private shake = 0;
   private heard = 0;
-  private sea!: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
-  private mask!: HTMLCanvasElement;
-  private land!: (x: number, z: number) => boolean;
+  private scenery: Scenery;
+  private flashes: THREE.PointLight[] = [];
+  private rotors!: THREE.InstancedMesh;
+  private hot = new Map<string, THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>>();
   selected = new Set<number>();
   focus = 0;
   /** Apoio sendo mirado */
@@ -142,17 +124,20 @@ export class World3D {
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = makeRenderer(canvas);
     this.renderer.toneMappingExposure = 1.15;
-    const sky = new THREE.Color('#b9cbd6');
+    const sky = new THREE.Color('#cfd3cc');
     this.scene.background = sky;
-    this.scene.fog = new THREE.Fog(sky, 55, 170);
+    this.scene.fog = new THREE.Fog(sky, 60, 175);
     this.sun = light(this.scene, 42, '#ffe2b8', 2.9);
     this.scene.add(this.sun.target);
     this.camera.position.set(0, 74, 42);
     this.controls = new MapControls(this.camera, canvas);
     Object.assign(this.controls, { enableDamping: true, dampingFactor: 0.14, minDistance: 2.6, maxDistance: 90, maxPolarAngle: 1.22, zoomToCursor: true });
-    this.terrain();
-    this.towns();
-    this.nature();
+    this.scenery = new Scenery(this.scene);
+    for (let i = 0; i < 2; i++) {
+      const l = new THREE.PointLight('#ffb45a', 0, 9, 1.6);
+      this.flashes.push(l);
+      this.scene.add(l);
+    }
     this.pools();
     this.fogLayer();
     this.aimRing = new THREE.Mesh(new THREE.RingGeometry(0.94, 1, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#f87171', transparent: true, opacity: 0.9, depthTest: false }));
@@ -228,191 +213,11 @@ export class World3D {
     const off = this.camera.position.clone().sub(this.controls.target);
     if (distance && off.length() > distance) this.camera.position.copy(this.controls.target).add(off.setLength(distance));
   }
+  get mask() {
+    return this.scenery.mask;
+  }
   center() {
     return { x: this.controls.target.x, z: this.controls.target.z };
-  }
-
-  // ===== Cenário =====
-  private terrain() {
-    this.sea = new THREE.Mesh(new THREE.PlaneGeometry(420, 420), new THREE.MeshStandardMaterial({ color: '#2d6f92', roughness: 0.22, metalness: 0.2 }));
-    this.sea.rotation.x = -Math.PI / 2;
-    this.scene.add(this.sea);
-    const tile = (r: number) => {
-      const t = relief().clone();
-      t.repeat.set(r, r);
-      t.needsUpdate = true;
-      return t;
-    };
-    // Estados vizinhos, só como fundo
-    const pts = ([[-41.3, -2.95], [-43, -2.6], [-50, -2.2], [-60, -2], [-60, -25], [-25, -25], [-34.8, -8.2], [-34.85, -7], [-35.3, -5.1], [-36.2, -5.1], [-37.25, -4.85], [-38.6, -5.6], [-40, -5]] as const)
-      .map(([lon, lat]) => new THREE.Vector2(wx((lon + 42) * 100), -wz((lat + 8) * 100)));
-    const around = new THREE.Mesh(new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: 0.22, bevelEnabled: false }).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#8d8467', roughness: 1, map: tile(0.06) }));
-    around.position.y = -0.08;
-    this.scene.add(around);
-
-    const geos: THREE.BufferGeometry[] = [];
-    let at = 0;
-    for (const c of CITIES) {
-      const shapes = RINGS.get(c.id)!.map((r) => new THREE.Shape(r.map(([x, z]) => new THREE.Vector2(x, -z))));
-      const g = new THREE.ExtrudeGeometry(shapes, { depth: H, bevelEnabled: false }).rotateX(-Math.PI / 2);
-      const n = g.attributes.position.count;
-      g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3).fill(1), 3));
-      this.ranges.set(c.id, [at, n]);
-      at += n;
-      geos.push(g);
-    }
-    this.ground = new THREE.Mesh(mergeGeometries(geos)!, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, map: tile(0.22) }));
-    this.ground.receiveShadow = true;
-    this.scene.add(this.ground);
-    for (const c of CITIES) this.paint(c.id, '');
-
-    // Estradas, lavouras e limites em uma textura por cima
-    const px = PHONE ? 24 : 34;
-    const cv = document.createElement('canvas');
-    cv.width = Math.round(BOUNDS.w * px);
-    cv.height = Math.round(BOUNDS.h * px);
-    const ctx = cv.getContext('2d')!;
-    const X = (x: number) => (x - BOUNDS.x0) * px;
-    const Z = (z: number) => (z - BOUNDS.z0) * px;
-    const path = (r: readonly (readonly [number, number])[]) => r.forEach(([x, z], i) => (i ? ctx.lineTo(X(x), Z(z)) : ctx.moveTo(X(x), Z(z))));
-    ctx.beginPath();
-    RINGS.forEach((l) => l.forEach(path));
-    ctx.save();
-    ctx.clip();
-    for (let i = 0; i < 2600; i++) {
-      const s = rand(3, 13);
-      ctx.save();
-      ctx.translate(Math.random() * cv.width, Math.random() * cv.height);
-      ctx.rotate(Math.floor(rand(0, 4)) * 0.4);
-      ctx.fillStyle = ['rgba(70,90,40,.22)', 'rgba(150,125,60,.2)', 'rgba(95,75,45,.2)', 'rgba(185,165,95,.18)'][i % 4];
-      ctx.fillRect(0, 0, s * rand(1, 2.4), s);
-      ctx.restore();
-    }
-    for (let i = 0; i < 420; i++) {
-      const [x, y, r] = [Math.random() * cv.width, Math.random() * cv.height, rand(20, 90)];
-      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, i % 2 ? 'rgba(45,62,32,.22)' : 'rgba(120,98,66,.22)');
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(x - r, y - r, r * 2, r * 2);
-    }
-    const roads = (w: number, color: string, dash: number[] = []) => {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = w;
-      ctx.setLineDash(dash);
-      ctx.beginPath();
-      for (const [a, b] of ROADS) {
-        const bend = ((a.id + b.id) % 7 - 3) * 0.12;
-        ctx.moveTo(X(a.x), Z(a.z));
-        ctx.quadraticCurveTo(X((a.x + b.x) / 2 + (b.z - a.z) * bend), Z((a.z + b.z) / 2 - (b.x - a.x) * bend), X(b.x), Z(b.z));
-      }
-      ctx.stroke();
-    };
-    roads(px * 0.13, 'rgba(120,105,80,.55)');
-    roads(px * 0.08, '#3c4047');
-    roads(Math.max(1, px * 0.012), 'rgba(250,225,140,.4)', [px * 0.1, px * 0.1]);
-    ctx.setLineDash([]);
-    for (const c of CITIES) {
-      const r = this.spread(c) * px * 1.15;
-      const g = ctx.createRadialGradient(X(c.x), Z(c.z), 0, X(c.x), Z(c.z), r);
-      g.addColorStop(0, 'rgba(128,130,134,.95)');
-      g.addColorStop(0.7, 'rgba(128,126,122,.75)');
-      g.addColorStop(1, 'rgba(128,120,105,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(X(c.x) - r, Z(c.z) - r, r * 2, r * 2);
-    }
-    ctx.restore();
-    ctx.strokeStyle = 'rgba(30,26,18,.35)';
-    ctx.lineWidth = 1.3;
-    ctx.beginPath();
-    RINGS.forEach((l) => l.forEach(path));
-    ctx.stroke();
-    const tex = new THREE.CanvasTexture(cv);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 8;
-    this.scene.add(this.overlay(tex, 0.006, 1));
-
-    // Máscara de terra firme, para as árvores não caírem no mar
-    const mk = document.createElement('canvas');
-    mk.width = mk.height = 256;
-    const m = mk.getContext('2d', { willReadFrequently: true })!;
-    m.setTransform(256 / cv.width, 0, 0, 256 / cv.height, 0, 0);
-    m.beginPath();
-    RINGS.forEach((l) => l.forEach((r) => r.forEach(([x, z], i) => (i ? m.lineTo(X(x), Z(z)) : m.moveTo(X(x), Z(z))))));
-    m.fill();
-    this.mask = mk;
-    const data = m.getImageData(0, 0, 256, 256).data;
-    this.land = (x, z) => data[(Math.floor(((z - BOUNDS.z0) / BOUNDS.h) * 256) * 256 + Math.floor(((x - BOUNDS.x0) / BOUNDS.w) * 256)) * 4 + 3] > 200;
-  }
-  private overlay(map: THREE.Texture, y: number, order: number) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(BOUNDS.w, BOUNDS.h).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map, transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -order * 2, polygonOffsetUnits: -order * 8 }));
-    m.position.set((BOUNDS.x0 + BOUNDS.x1) / 2, H + y, (BOUNDS.z0 + BOUNDS.z1) / 2);
-    m.receiveShadow = true;
-    m.renderOrder = order;
-    return m;
-  }
-  private spread = (c: City) => Math.min(1.15, 0.26 + Math.sqrt(c.pop) / 1300);
-
-  private towns() {
-    const roof = new THREE.ConeGeometry(0.8, 0.45, 4).rotateY(Math.PI / 4).translate(0, 0.9, 0).toNonIndexed();
-    const house = mergeGeometries([new THREE.BoxGeometry(1, 0.7, 1).translate(0, 0.35, 0).toNonIndexed(), roof])!;
-    const tower = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
-    const lists = { house: [] as THREE.Matrix4[], tower: [] as THREE.Matrix4[] };
-    let seed = 11;
-    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    for (const c of CITIES) {
-      const n = Math.min(PHONE ? 60 : 90, 7 + Math.round(Math.sqrt(c.pop) / 16));
-      const spread = this.spread(c);
-      for (let i = 0; i < n; i++) {
-        // Quadras alinhadas, com ruas entre elas
-        const a = rnd() * 6.283;
-        const d = Math.sqrt(0.06 + rnd() * 0.94) * spread;
-        const x = Math.round((Math.cos(a) * d) / 0.085) * 0.085;
-        const z = Math.round((Math.sin(a) * d) / 0.085) * 0.085;
-        if (Math.hypot(x, z) < 0.14) continue;
-        const s = 0.046 + rnd() * 0.02;
-        const big = c.pop > 70_000 && rnd() < (d < spread * 0.6 ? 0.7 : 0.25);
-        const m = new THREE.Matrix4().setPosition(c.x + x, H, c.z + z);
-        m.scale(big ? new THREE.Vector3(s, s * (1.6 + rnd() * (c.pop > 1e6 ? 8 : 3.5)), s) : new THREE.Vector3(s, s, s));
-        lists[big ? 'tower' : 'house'].push(m);
-      }
-    }
-    const add = (geo: THREE.BufferGeometry, m: THREE.Material, list: THREE.Matrix4[], tints: string[]) => {
-      const mesh = new THREE.InstancedMesh(geo, m, list.length);
-      list.forEach((x, i) => {
-        mesh.setMatrixAt(i, x);
-        mesh.setColorAt(i, new THREE.Color(tints[i % tints.length]));
-      });
-      mesh.castShadow = mesh.receiveShadow = true;
-      mesh.frustumCulled = false;
-      this.scene.add(mesh);
-    };
-    add(house, new THREE.MeshStandardMaterial({ roughness: 0.9 }), lists.house, ['#c9b79c', '#d8cdb8', '#b39a80', '#a5674c', '#cfc8bd']);
-    add(tower, new THREE.MeshStandardMaterial({ roughness: 0.35, metalness: 0.25, emissiveMap: facade(), emissive: '#ffdf9a', emissiveIntensity: 0.35 }), lists.tower, ['#c8d2da', '#93a4b3', '#dfe3e6', '#b5a894', '#7f95a8']);
-  }
-  private nature() {
-    const geo = mergeGeometries([new THREE.CylinderGeometry(0.012, 0.018, 0.08, 4).translate(0, 0.04, 0).toNonIndexed(), new THREE.IcosahedronGeometry(0.06, 0).translate(0, 0.11, 0)].map((g) => {
-      const n = g.toNonIndexed ? (g.index ? g.toNonIndexed() : g) : g;
-      n.deleteAttribute('uv');
-      return n;
-    }))!;
-    const list: THREE.Matrix4[] = [];
-    const want = PHONE ? 1100 : 2400;
-    for (let i = 0; i < want * 4 && list.length < want; i++) {
-      const x = rand(BOUNDS.x0, BOUNDS.x1);
-      const z = rand(BOUNDS.z0, BOUNDS.z1);
-      if (!this.land(x, z) || CITIES.some((c) => Math.hypot(c.x - x, c.z - z) < 1.1)) continue;
-      const s = rand(0.7, 1.5);
-      list.push(new THREE.Matrix4().makeRotationY(rand(0, 6)).setPosition(x, H, z).scale(new THREE.Vector3(s, s, s)));
-    }
-    const mesh = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ roughness: 1 }), list.length);
-    list.forEach((m, i) => {
-      mesh.setMatrixAt(i, m);
-      mesh.setColorAt(i, new THREE.Color(['#4f6333', '#5f6f3a', '#3f5530', '#75743f'][i % 4]));
-    });
-    mesh.castShadow = true;
-    mesh.frustumCulled = false;
-    this.scene.add(mesh);
   }
 
   private pools() {
@@ -444,6 +249,7 @@ export class World3D {
     this.discs = inst(flat(new THREE.RingGeometry(0.8, 1, 24)), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.95, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -8, polygonOffsetUnits: -30 }), 400, 3);
     this.discs.setColorAt(0, new THREE.Color());
     const quad = new THREE.PlaneGeometry(1, 1);
+    this.rotors = inst(flat(new THREE.CircleGeometry(1, 20)), new THREE.MeshBasicMaterial({ color: '#1f2937', transparent: true, opacity: 0.28, depthWrite: false }), 260, 3);
     this.barBack = inst(quad, new THREE.MeshBasicMaterial({ color: '#0a0d12', depthTest: false, transparent: true, opacity: 0.8 }), 600, 6);
     this.barFill = inst(quad, new THREE.MeshBasicMaterial({ depthTest: false, transparent: true }), 600, 7);
     this.barFill.setColorAt(0, new THREE.Color());
@@ -483,7 +289,7 @@ export class World3D {
     const s = width / BOUNDS.w;
     x.globalCompositeOperation = 'source-over';
     x.clearRect(0, 0, width, height);
-    x.fillStyle = 'rgba(8,11,18,.58)';
+    x.fillStyle = 'rgba(8,12,20,.46)';
     x.fillRect(0, 0, width, height);
     x.globalCompositeOperation = 'destination-out';
     for (const [px, pz, r] of this.seeing) {
@@ -495,7 +301,7 @@ export class World3D {
       x.fillRect(cx - cr, cy - cr, cr * 2, cr * 2);
     }
     x.globalCompositeOperation = 'destination-in';
-    x.drawImage(this.mask, 0, 0, width, height);
+    x.drawImage(this.scenery.mask, 0, 0, width, height);
     this.fogTex.needsUpdate = true;
   }
   private sees(w: World, x: number, z: number) {
@@ -504,7 +310,8 @@ export class World3D {
 
   // ===== Quadro =====
   private draw(dt: number, now: number) {
-    this.sea.position.y = -0.1 + Math.sin(now / 1500) * 0.03;
+    this.scenery.update(dt, this.dist < 26);
+    for (const l of this.flashes) l.intensity *= Math.max(0, 1 - dt * 5);
     const w = W.world;
     if (w) {
       this.updateFog(w, now);
@@ -518,7 +325,7 @@ export class World3D {
       for (const m of this.units.values()) m.count = 0;
       this.works.forEach((l) => l.forEach((m) => { m.count = 0; }));
       this.worksSig = '';
-      this.discs.count = this.barBack.count = this.barFill.count = 0;
+      this.rotors.count = this.discs.count = this.barBack.count = this.barFill.count = 0;
     }
     this.drawLabels(w);
     this.drawMarks(now);
@@ -535,7 +342,7 @@ export class World3D {
       r.t += dt;
       const k = Math.min(1, r.t / r.dur);
       r.m.scale.setScalar(0.05 + r.r * Math.sqrt(k));
-      r.m.material.opacity = (1 - k) * 0.9;
+      r.m.material.opacity = (1 - k) * 0.6;
       if (k < 1) return true;
       this.scene.remove(r.m);
       r.m.geometry.dispose();
@@ -569,6 +376,7 @@ export class World3D {
     const zoom = this.zoom;
     const s = 0.125 * zoom;
     let discs = 0;
+    let rotors = 0;
     let bars = 0;
     const alive = new Set<number>();
     const far = this.dist * 1.6 + 4;
@@ -604,6 +412,12 @@ export class World3D {
         mesh.setMatrixAt(count[u.k], m.compose(pos, q, size.setScalar(s)));
         mesh.setColorAt(count[u.k]++, tint);
       }
+      if ((u.k === 'heli' || u.k === 'recon' || u.k === 'fpv') && u.off <= 0 && rotors < 260) {
+        pos.set(v.x, H + alt + (u.k === 'heli' ? 0.085 : 0.02) * zoom, v.z);
+        this.rotors.setMatrixAt(rotors++, m.compose(pos, q.identity(), size.setScalar((u.k === 'heli' ? 0.15 : 0.06) * zoom * (0.94 + Math.random() * 0.08))));
+      }
+      // Estrelas de veterano
+      if (u.star && this.dist < 14 && Math.random() < dt * u.star * 2) this.fire.add(v.x, H + alt + 0.16, v.z, { life: 0.7, s0: 0.05, s1: 0.02, vy: 0.2, g: 0.85, b: 0.3 });
       // Poeira dos veículos
       if (moving && UNITS[u.k].cls === 'vei' && this.dist < 22 && Math.random() < dt * 5) this.smoke.add(v.x - Math.cos(v.dir) * 0.1, H + 0.02, v.z - Math.sin(v.dir) * 0.1, { life: 0.9, s0: 0.06, s1: 0.28, vy: 0.08, r: 0.72, g: 0.62, b: 0.48, a: 0.4 });
       const picked = this.selected.has(u.i);
@@ -628,7 +442,7 @@ export class World3D {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
-    for (const [x, n] of [[this.discs, discs], [this.barBack, bars], [this.barFill, bars]] as const) {
+    for (const [x, n] of [[this.discs, discs], [this.rotors, rotors], [this.barBack, bars], [this.barFill, bars]] as const) {
       x.count = n;
       x.instanceMatrix.needsUpdate = true;
       if (x.instanceColor) x.instanceColor.needsUpdate = true;
@@ -670,8 +484,10 @@ export class World3D {
   private slot(city: number, i: number, k: WorksId) {
     const c = CITY[city];
     if (k === 'comando') return { x: c.x, z: c.z };
-    const a = i * 2.4 + (city % 10);
-    const r = this.spread(c) * 0.75 + 0.28;
+    const r = spread(c) * 0.75 + 0.28;
+    let a = i * 2.4 + (city % 10);
+    // Nunca dentro do mar
+    for (let k = 0; k < 8 && !this.scenery.land(c.x + Math.cos(a) * r, c.z + Math.sin(a) * r); k++) a += 0.75;
     return { x: c.x + Math.cos(a) * r, z: c.z + Math.sin(a) * r };
   }
   /** Fumaça de zonas e cidades atingidas */
@@ -679,9 +495,37 @@ export class World3D {
     for (const z of w.zones) {
       if (z.k === 'fumaca' && Math.random() < dt * 22) this.smoke.add(z.x + rand(-1, 1), H + 0.1, z.z + rand(-1, 1), { life: 2.6, s0: 0.5, s1: 1.5, vy: 0.12, r: 0.85, g: 0.87, b: 0.9, a: 0.7 });
     }
+    const live = new Set<string>();
+    const disc = (key: string, x: number, z: number, radius: number, color: string, opacity: number) => {
+      live.add(key);
+      let m = this.hot.get(key);
+      if (!m) {
+        m = new THREE.Mesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: fxTexture('glow'), transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending }));
+        m.renderOrder = 3;
+        this.scene.add(m);
+        this.hot.set(key, m);
+      }
+      m.position.set(x, H + 0.03, z);
+      m.scale.setScalar(radius);
+      m.material.color.set(color);
+      m.material.opacity = opacity;
+    };
+    const beat = 0.55 + Math.sin(performance.now() / 110) * 0.35;
+    for (const z of w.zones) if (NUKES[z.k] && z.tick < 90) disc(`n${z.x},${z.z}`, z.x, z.z, POWERS[z.k].radius * 1.25, '#ff2a1a', beat);
+    for (const a of w.rads) {
+      disc(`r${a.x},${a.z}`, a.x, a.z, a.r * 1.35, '#7dff3a', Math.min(0.5, a.left / 20) * (0.75 + beat * 0.3));
+      if (Math.random() < dt * 9) this.smoke.add(a.x + rand(-a.r, a.r), H + 0.1, a.z + rand(-a.r, a.r), { life: 3, s0: 0.2, s1: 0.9, vy: 0.16, r: 0.45, g: 0.6, b: 0.25, a: 0.35 });
+    }
+    for (const [k, m] of this.hot) {
+      if (live.has(k)) continue;
+      this.scene.remove(m);
+      m.geometry.dispose();
+      m.material.dispose();
+      this.hot.delete(k);
+    }
     for (const c of w.cities) {
       if (c.hp > c.max * 0.6 || Math.random() > dt * 5) continue;
-      const r = this.spread(CITY[c.id]) * 0.8;
+      const r = spread(CITY[c.id]) * 0.8;
       const [x, z] = [c.x + rand(-r, r), c.z + rand(-r, r)];
       if (Math.random() < 0.5) this.fire.add(x, H + 0.06, z, { life: 0.6, s0: 0.12, s1: 0.3, vy: 0.3 });
       this.smoke.add(x, H + 0.15, z, { life: 2.4, s0: 0.14, s1: 0.75, vy: 0.42, vx: 0.12, r: 0.16, g: 0.16, b: 0.17, a: 0.65 });
@@ -689,31 +533,29 @@ export class World3D {
   }
 
   // ===== Nomes e cores =====
-  private paint(id: number, color: string) {
-    if (this.painted.get(id) === color) return;
-    this.painted.set(id, color);
-    const [at, n] = this.ranges.get(id)!;
-    const base = new THREE.Color(REGION_COLOR[CITY[id].region]);
-    const k = 0.94 + ((id * 13) % 13) / 100;
-    base.multiplyScalar(k).lerp(new THREE.Color('#8a8674'), 0.35);
-    if (color) base.lerp(new THREE.Color(color), 0.3);
-    const attr = this.ground.geometry.attributes.color as THREE.BufferAttribute;
-    for (let i = at; i < at + n; i++) attr.setXYZ(i, base.r, base.g, base.b);
-    attr.needsUpdate = true;
-  }
   private drawLabels(w: World | null) {
     const d = this.dist;
-    const min = d > 55 ? 150_000 : d > 38 ? 70_000 : d > 25 ? 30_000 : d > 17 ? 15_000 : 0;
+    const min = d > 55 ? 150_000 : d > 38 ? 70_000 : d > 25 ? 45_000 : d > 15 ? 25_000 : d > 10 ? 14_000 : 0;
     const t = this.controls.target;
-    for (let i = 0; i < CITIES.length; i++) {
+    const taken: [number, number][] = [];
+    const at = new THREE.Vector3();
+    const gap = this.canvas.clientWidth || 400;
+    for (const i of BY_POP) {
       const c = CITIES[i];
       const s = w?.cities[i];
       const seat = w ? null : W.seats.find((x) => x.start === c.id);
       const owner = s && s.owner >= 0 ? w!.players[s.owner] : null;
       const color = owner?.color ?? (seat ? (seat.id === W.seat ? '#f5b301' : '#ff3b3b') : '');
-      this.paint(c.id, color);
+      this.scenery.paint(c.id, color);
       const key = !!color || c.id === this.focus;
-      const show = (c.pop >= min || key) && Math.hypot(c.x - t.x, c.z - t.z) < d * 1.5 + 4;
+      let show = (c.pop >= min || key) && Math.hypot(c.x - t.x, c.z - t.z) < d * 1.5 + 4;
+      if (show) {
+        // Nomes não se sobrepõem: o da maior cidade fica
+        at.set(c.x, H + 0.95, c.z).project(this.camera);
+        const [x, y] = [(at.x * gap) / 2, (at.y * this.canvas.clientHeight) / 2];
+        show = key || !taken.some(([a, b]) => Math.abs(a - x) < 110 && Math.abs(b - y) < 24);
+        if (show) taken.push([x, y]);
+      }
       const old = this.labels.get(c.id);
       if (!show) {
         if (old) old.sprite.visible = false;
@@ -758,7 +600,7 @@ export class World3D {
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, sizeAttenuation: false, fog: false }));
-    const k = PHONE ? 0.034 : 0.026;
+    const k = PHONE ? 0.026 : 0.023;
     s.scale.set((w / 46) * k, k, 1);
     s.renderOrder = 8;
     return s;
@@ -813,10 +655,29 @@ export class World3D {
       this.ring(x2, z2, 2, '#ffffff', 1);
       for (let i = 0; i < 16; i++) this.fire.add(x2, H + 0.4, z2, { life: 1.2, s0: 0.1, s1: 0.03, vy: rand(0.4, 1.2), vx: rand(-0.8, 0.8), vz: rand(-0.8, 0.8) });
       this.play(x2, z2, 400, () => sound.playRecruit());
-    } else this.power(k as PowerId | 'nuclear', x2, z2, now);
+    } else if (k === 'estrela') {
+      if (near) this.ring(x2, z2, 0.4, '#facc15', 0.8);
+    } else if (k === 'interceptado') {
+      // Antimíssil sobe e encontra a ogiva no céu
+      const g = this.body(new THREE.ConeGeometry(0.04, 0.3, 8), '#7dd3fc');
+      this.actors.push({ o: g, t: 0, dur: 0.7, move: (t) => {
+        g.position.set(x1 + (x2 - x1) * t, H + 4 * t, z1 + (z2 - z1) * t);
+        this.smoke.add(g.position.x, g.position.y, g.position.z, { life: 1, s0: 0.1, s1: 0.4, a: 0.6 });
+      } });
+      this.later.push({ at: now + 700, run: () => {
+        for (let i = 0; i < 3; i++) this.boom(x2 + rand(-0.3, 0.3), H + 4 + rand(-0.3, 0.3), z2 + rand(-0.3, 0.3), 1.6);
+        this.ring(x2, z2, 2.5, '#7dd3fc', 1);
+      } });
+    } else if (k === 'nuclear') this.nuke(x2, z2, now, x1);
+    else if (POWERS[k as PowerId]) this.power(k as PowerId, x1, z1, x2, z2, now);
   }
-  private power(k: PowerId | 'nuclear', x: number, z: number, now: number) {
-    if (k === 'nuclear') return this.nuke(x, z, now);
+  private body(geo: THREE.BufferGeometry, color: string) {
+    const m = new THREE.Mesh(geo, mat(color, { metal: 0.4, rough: 0.4 }));
+    m.castShadow = true;
+    this.scene.add(m);
+    return m;
+  }
+  private power(k: PowerId, x1: number, z1: number, x: number, z: number, now: number) {
     this.ring(x, z, POWERS[k].radius, POWERS[k].color, 1.2);
     if (k === 'emp') {
       for (let i = 0; i < 4; i++) this.later.push({ at: now + i * 130, run: () => this.ring(x, z, POWERS.emp.radius, '#7dd3fc', 0.6) });
@@ -830,14 +691,21 @@ export class World3D {
     } else if (k === 'paraquedas') {
       for (let i = 0; i < 5; i++) this.chute(x + rand(-0.5, 0.5), z + rand(-0.5, 0.5));
       this.flyby(x, z, rand(0, 6.28), 0);
-    } else if (k === 'balistico') {
+    } else if (NUKES[k]) {
+      // Sirene, lançamento do silo e voo até o alvo, para todos
       sound.playSiren();
-      const g = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.6, 8).rotateX(Math.PI), mat('#d1d5db'));
-      this.scene.add(g);
-      this.actors.push({ o: g, t: 0, dur: 3.4, move: (t) => {
-        const y = t < 0.55 ? 60 : 60 - ((t - 0.55) / 0.45) * 60;
-        g.position.set(x, H + y, z);
-        if (t > 0.55) this.fire.add(x, H + y + 0.4, z, { life: 0.5, s0: 0.3, s1: 0.1 });
+      sound.playLaunch();
+      const big = NUKES[k]!.size;
+      const g = this.body(new THREE.CylinderGeometry(0.02, 0.06, 0.55, 10).scale(big + 0.4, big + 0.4, big + 0.4), '#e5e7eb');
+      const top = 7 + Math.hypot(x - x1, z - z1) * 0.35;
+      const at = (t: number) => new THREE.Vector3(x1 + (x - x1) * t, H + Math.sin(t * Math.PI) * top, z1 + (z - z1) * t);
+      for (let i = 0; i < 14; i++) this.smoke.add(x1 + rand(-0.2, 0.2), H + 0.1, z1 + rand(-0.2, 0.2), { life: 2.6, s0: 0.2, s1: 1, vx: rand(-0.5, 0.5), vz: rand(-0.5, 0.5), vy: 0.1, a: 0.7 });
+      this.actors.push({ o: g, t: 0, dur: NUKES[k]!.flight, move: (t) => {
+        const p = at(t);
+        g.position.copy(p);
+        g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), at(Math.min(1, t + 0.01)).sub(at(Math.max(0, t - 0.01))).normalize());
+        this.fire.add(p.x, p.y, p.z, { life: 0.35, s0: 0.35 * (big + 0.4), s1: 0.1 });
+        this.smoke.add(p.x, p.y, p.z, { life: 2.8, s0: 0.12, s1: 0.5, a: 0.5 });
       } });
     } else if (k === 'satelite') sound.playSonar();
     else this.play(x, z, 300, () => sound.playLaunch());
@@ -860,7 +728,7 @@ export class World3D {
     this.actors.push({ o: m, t: 0, dur: 1.6, move: (k) => m.position.set(x + Math.sin(k * 5) * 0.06, H + 2.2 * (1 - k) + 0.1, z) });
   }
   private ring(x: number, z: number, r: number, color: string, dur: number) {
-    const m = new THREE.Mesh(new THREE.RingGeometry(0.88, 1, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false, depthTest: false }));
+    const m = new THREE.Mesh(new THREE.RingGeometry(0.95, 1, 64).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false, depthTest: false }));
     m.position.set(x, H + 0.04, z);
     m.renderOrder = 4;
     this.scene.add(m);
@@ -871,6 +739,11 @@ export class World3D {
     for (let i = 0; i < 5; i++) this.smoke.add(x + rand(-0.12, 0.12) * s, y, z + rand(-0.12, 0.12) * s, { life: rand(1, 2), s0: 0.2 * s, s1: 0.9 * s, vy: rand(0.25, 0.6), r: 0.22, g: 0.2, b: 0.18, a: 0.7 });
     for (let i = 0; i < 5; i++) this.fire.add(x, y, z, { life: 0.6, s0: 0.06, s1: 0.02, vy: rand(0.5, 1.4), vx: rand(-1, 1), vz: rand(-1, 1) });
     this.mark(x, z, 0.22 * s);
+    const l = this.flashes[1];
+    if (l.intensity < 6) {
+      l.position.set(x, y + 0.5, z);
+      l.intensity = 14 * s;
+    }
     this.play(x, z, 160, () => sound.playImpact());
     if (Math.hypot(x - this.controls.target.x, z - this.controls.target.z) < 4 && this.dist < 14) this.shake = Math.max(this.shake, 0.25 * s);
   }
@@ -880,22 +753,35 @@ export class World3D {
     this.scorch.count = Math.min(90, this.scorchN);
     this.scorch.instanceMatrix.needsUpdate = true;
   }
-  private nuke(x: number, z: number, now: number) {
+  /** Clarão, onda de choque, bola de fogo e cogumelo */
+  private nuke(x: number, z: number, now: number, s: number) {
     this.onFlash();
     sound.playNuke();
-    this.shake = 1.4;
-    this.mark(x, z, 1.9);
-    for (let i = 0; i < 3; i++) this.later.push({ at: now + i * 220, run: () => this.ring(x, z, 4.5 + i, '#ffd9a0', 1.6) });
-    for (let i = 0; i < 36; i++) this.fire.add(x + rand(-0.5, 0.5), H + 0.2, z + rand(-0.5, 0.5), { life: rand(0.8, 1.8), s0: 0.8, s1: 2.4, vy: rand(0.2, 1.4), vx: rand(-0.8, 0.8), vz: rand(-0.8, 0.8) });
-    // Tronco e chapéu do cogumelo
-    for (let i = 0; i < 40; i++) {
+    this.shake = 1 + s * 0.6;
+    this.mark(x, z, 1.7 * s);
+    const l = this.flashes[0];
+    l.position.set(x, H + 3 * s, z);
+    l.distance = 30 * s;
+    l.intensity = 900 * s;
+    for (let i = 0; i < 4; i++) this.later.push({ at: now + i * 200, run: () => this.ring(x, z, (3.5 + i) * s, '#ffe3b5', 1.8) });
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 14, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#fff1cf', transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending }));
+    dome.position.set(x, H, z);
+    this.scene.add(dome);
+    this.actors.push({ o: dome, t: 0, dur: 1.5, move: (t) => {
+      dome.scale.setScalar(0.2 + 3 * s * Math.sqrt(t));
+      (dome.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - t) ** 2;
+    } });
+    for (let i = 0; i < 40; i++) this.fire.add(x + rand(-0.5, 0.5) * s, H + 0.2, z + rand(-0.5, 0.5) * s, { life: rand(0.9, 2), s0: 0.8 * s, s1: 2.2 * s, vy: rand(0.2, 1.6) * s, vx: rand(-0.8, 0.8) * s, vz: rand(-0.8, 0.8) * s });
+    for (let i = 0; i < 46; i++) {
       this.later.push({ at: now + i * 60, run: () => {
         const a = rand(0, 6.28);
-        this.smoke.add(x + rand(-0.2, 0.2), H + 0.2, z + rand(-0.2, 0.2), { life: 4, s0: 0.5, s1: 1.1, vy: 0.95, r: 0.42, g: 0.34, b: 0.28, a: 0.8 });
-        if (i > 8) {
-          this.smoke.add(x + Math.cos(a) * 0.5, H + 2.6 + rand(0, 0.4), z + Math.sin(a) * 0.5, { life: 4.5, s0: 0.8, s1: 2.2, vy: 0.22, vx: Math.cos(a) * 0.9, vz: Math.sin(a) * 0.9, r: 0.5, g: 0.38, b: 0.3, a: 0.75 });
-          if (i < 26) this.fire.add(x + Math.cos(a) * 0.5, H + 2.5, z + Math.sin(a) * 0.5, { life: 1.4, s0: 0.5, s1: 1.2, vy: 0.2, vx: Math.cos(a) * 0.6, vz: Math.sin(a) * 0.6 });
-        }
+        const up = Math.min(1, i / 14);
+        // Saia de poeira, tronco e chapéu
+        this.smoke.add(x + Math.cos(a) * s, H + 0.1, z + Math.sin(a) * s, { life: 3.4, s0: 0.4 * s, s1: 1.3 * s, vx: Math.cos(a) * s, vz: Math.sin(a) * s, vy: 0.08, r: 0.55, g: 0.46, b: 0.36, a: 0.55 });
+        this.smoke.add(x + rand(-0.18, 0.18) * s, H + 0.2 + up * 1.6 * s, z + rand(-0.18, 0.18) * s, { life: 4, s0: 0.5 * s, s1: 0.95 * s, vy: 0.7 * s, r: 0.46, g: 0.36, b: 0.29, a: 0.85 });
+        if (i < 7) return;
+        this.smoke.add(x + Math.cos(a) * 0.5 * s, H + (2.7 + rand(0, 0.5)) * s, z + Math.sin(a) * 0.5 * s, { life: 5, s0: 0.8 * s, s1: 2.1 * s, vy: 0.2 * s, vx: Math.cos(a) * 0.85 * s, vz: Math.sin(a) * 0.85 * s, r: 0.54, g: 0.41, b: 0.32, a: 0.8 });
+        if (i < 28) this.fire.add(x + Math.cos(a) * 0.45 * s, H + 2.6 * s, z + Math.sin(a) * 0.45 * s, { life: 1.5, s0: 0.5 * s, s1: 1.2 * s, vy: 0.2 * s, vx: Math.cos(a) * 0.6 * s, vz: Math.sin(a) * 0.6 * s });
       } });
     }
   }

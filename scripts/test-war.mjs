@@ -14,7 +14,7 @@ const B = await server.ssrLoadModule('/src/war/bot.ts');
 assert.equal(D.CITIES.length, 184);
 assert.equal(D.CITIES.reduce((s, c) => s + c.pop, 0), 8794957);
 for (const u of D.UNIT_IDS) assert.ok(D.WORKS[D.UNITS[u].from], u);
-const total = D.UNIT_IDS.length + D.WORKS_IDS.length + D.POWER_IDS.length + D.RESEARCH.length * 3 + Object.keys(D.LANDMARKS).length + Object.keys(D.REGION_BONUS).length + D.EVENTS.length + D.MODES.length + D.RULES.length + D.MEDALS.length + D.PHRASES.length;
+const total = D.UNIT_IDS.length + D.WORKS_IDS.length + D.POWER_IDS.length + D.RESEARCH.length * 3 + Object.keys(D.LANDMARKS).length + Object.keys(D.REGION_BONUS).length + D.EVENTS.length + D.MODES.length + D.RULES.length + D.MEDALS.length + D.PHRASES.length + D.QUESTS.length;
 assert.ok(total >= 150, `${total} ideias`);
 console.log(`✔ 184 cidades, ${D.ROADS.length} estradas, ${total} itens de conteúdo`);
 
@@ -23,6 +23,7 @@ const run = (w, s) => { for (let i = 0; i < s / S.STEP; i++) { w.fx = []; S.step
 
 // Regras
 let w = S.createWorld(setup(2), 'dominio', 15, []);
+w.nextEvent = 1e9; // sem eventos aleatórios no teste de regras
 const p = w.players[0];
 const home = S.cityAt(w, p.start);
 assert.ok(home.owner === 0 && S.armySize(w, 0) === 6);
@@ -36,7 +37,10 @@ assert.equal(S.command(w, 0, { c: 'cancel', city: home.id }), '');
 run(w, 60);
 assert.equal(w.units.filter((u) => u.o === 0 && u.k === 'tanque').length, 4);
 assert.notEqual(S.command(w, 0, { c: 'build', city: S.cityAt(w, w.players[1].start).id, k: 'torre' }), '', 'cidade alheia');
-assert.notEqual(S.command(w, 0, { c: 'power', k: 'balistico', x: 0, z: 0 }), '', 'precisa de silo');
+assert.notEqual(S.command(w, 0, { c: 'power', k: 'balistico', x: 0, z: 0 }), '', 'precisa de silo e pesquisa');
+assert.equal(S.needOf(w, 0, 'balistico'), 'Pesquise Programa Nuclear nível 2.');
+p.res.nuclear = 3;
+assert.equal(S.needOf(w, 0, 'balistico'), 'Construa um Silo de Mísseis.');
 assert.equal(S.command(w, 0, { c: 'research', id: 'ia' }), '');
 // Conquista de cidade neutra vizinha
 const near = w.cities.filter((c) => c.owner < 0).sort((a, b) => Math.hypot(a.x - home.x, a.z - home.z) - Math.hypot(b.x - home.x, b.z - home.z))[0];
@@ -54,8 +58,9 @@ home.works.push({ k: 'silo', left: 0, cool: 0 });
 const foe = S.cityAt(w, w.players[1].start);
 for (const k of D.POWER_IDS) assert.equal(S.command(w, 0, { c: 'power', k, x: foe.x, z: foe.z }), '', k);
 const before = foe.hp;
-run(w, 6);
+run(w, 10);
 assert.ok(foe.hp < before * 0.3 && S.armySize(w, 1) < 6, 'míssil balístico');
+assert.ok(w.rads.length >= 2, 'radiação');
 assert.ok(S.eyes(w, 0).length > 3);
 // Rede: estado recomposto igual
 const copy = S.createWorld(setup(2), 'dominio', 15, []);
@@ -64,6 +69,32 @@ S.unpack(copy, pk);
 assert.equal(copy.units.length, w.units.length);
 copy.cities.forEach((c, i) => assert.ok(c.owner === w.cities[i].owner && c.works.length === w.cities[i].works.length));
 assert.ok(JSON.stringify(pk).length < 60000, `${JSON.stringify(pk).length} bytes`);
+// Antimíssil, missões e produção contínua
+{
+  const g = S.createWorld(setup(2), 'dominio', 15, []);
+  g.nextEvent = 1e9;
+  const t = S.cityAt(g, g.players[1].start);
+  const h = S.cityAt(g, g.players[0].start);
+  Object.assign(g.players[0], { money: 1e5, fuel: 1e5, res: { nuclear: 3 } });
+  h.works.push({ k: 'silo', left: 0, cool: 0 });
+  t.works.push({ k: 'domo', left: 0, cool: 0 });
+  assert.equal(S.command(g, 0, { c: 'power', k: 'tatica', x: t.x, z: t.z }), '');
+  run(g, 8);
+  assert.ok(t.hp > t.max * 0.95 && g.rads.length === 0, 'domo interceptou');
+  assert.equal(S.command(g, 0, { c: 'power', k: 'balistico', x: t.x, z: t.z }), '');
+  run(g, 9);
+  assert.ok(t.hp < t.max * 0.5 && g.rads.length === 1, 'domo recarregando');
+  assert.equal(S.command(g, 0, { c: 'loop', city: h.id, k: 'soldado' }), '');
+  const n = S.armySize(g, 0);
+  run(g, 30);
+  assert.ok(S.armySize(g, 0) > n + 3, 'produção contínua');
+  assert.ok(g.players[0].quests.length > 0, 'missões cumpridas');
+  const ban = S.createWorld(setup(2), 'dominio', 15, ['semnuke']);
+  assert.match(S.command(ban, 0, { c: 'power', k: 'tatica', x: 0, z: 0 }), /proibidas/);
+  // Muitos tiros no mesmo pacote nunca cortam uma explosão nuclear
+  g.fx = [['nuclear', 1, 0, 0, 0], ...Array.from({ length: 900 }, () => ['bala', 0, 0, 0, 0])];
+  assert.ok(S.pack(g, false).fx.some((x) => x[0] === 'nuclear'));
+}
 console.log('✔ Regras, conquista, apoios e rede');
 
 // Partidas completas só de robôs, em todos os modos

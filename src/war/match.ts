@@ -12,11 +12,11 @@ export interface Bubble { i: number; text: string; at: number }
 interface Options { mode: ModeId; minutes: number; rules: string[]; bots: number; skill: number }
 interface State extends Options {
   phase: 'menu' | 'joining' | 'lobby' | 'play'; host: boolean; solo: boolean; code: string; seats: Seat[]; seat: string; me: number; world: World | null;
-  error: string; paused: boolean; lost: boolean; pings: { i: number; x: number; z: number; at: number }[]; chat: Bubble[];
+  error: string; paused: boolean; frozen: boolean; speed: number; lost: boolean; pings: { i: number; x: number; z: number; at: number }[]; chat: Bubble[];
 }
 const FORTALEZA = 2304400;
 export const W: State = {
-  phase: 'menu', host: false, solo: false, code: '', seats: [], seat: '', me: 0, world: null, error: '', paused: false, lost: false, pings: [], chat: [],
+  phase: 'menu', host: false, solo: false, code: '', seats: [], seat: '', me: 0, world: null, error: '', paused: false, frozen: false, speed: 1, lost: false, pings: [], chat: [],
   mode: 'dominio', minutes: 25, rules: [], bots: 3, skill: 2,
 };
 /** Efeitos à espera da cena 3D */
@@ -266,7 +266,7 @@ export function startWar() {
   }
   W.seats = seats;
   W.world = createWorld(setups, W.mode, W.minutes, W.rules);
-  Object.assign(W, { me: W.seats.findIndex((s) => s.id === W.seat), phase: 'play', paused: false, chat: [], pings: [] });
+  Object.assign(W, { me: W.seats.findIndex((s) => s.id === W.seat), phase: 'play', paused: false, frozen: false, speed: 1, chat: [], pings: [] });
   mods.clear();
   fxQueue.length = 0;
   broadcast(startMessage());
@@ -312,7 +312,7 @@ function runLoop() {
     if (!w) return;
     const now = performance.now();
     // Aba em segundo plano roda a cada segundo: recupera o atraso
-    acc = Math.min(acc + (now - last) / 1000, 2.5);
+    acc = Math.min(acc + ((now - last) / 1000) * W.speed, 2.5 * W.speed);
     last = now;
     if (W.solo && (W.paused || document.hidden)) acc = 0;
     let moved = false;
@@ -322,7 +322,7 @@ function runLoop() {
       step(w);
       moved = true;
       ticks++;
-      for (const p of w.players) if ((p.bot || !p.online) && (ticks + p.i * 3) % 15 === 0) think(w, p.i);
+      for (const p of w.players) if ((p.bot || !p.online) && !W.frozen && (ticks + p.i * 3) % 15 === 0) think(w, p.i);
       queue(w.fx);
       if (guests.size) net.push(...w.fx);
     }

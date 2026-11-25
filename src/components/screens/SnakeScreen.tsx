@@ -226,7 +226,7 @@ export const SnakeScreen: React.FC = () => {
         <canvas ref={canvasRef} className="block w-full h-full" aria-label="Tabuleiro do jogo da cobra" />
         {status !== 'playing' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 bg-black/60 text-center animate-in">
-            <h1 className="title-glow text-3xl sm:text-5xl font-black text-white">{TITLES[status]}</h1>
+            <h1 className="title-glow text-3xl landscape:text-2xl lg:!text-5xl font-black text-white">{TITLES[status]}</h1>
             {ended && (
               <p className="text-slate-200">
                 {score} pontos{isRecord && <strong className="block text-amber-300">🏆 Novo recorde!</strong>}
@@ -240,7 +240,7 @@ export const SnakeScreen: React.FC = () => {
                 Paredes: {walls ? 'ligadas' : 'desligadas (atravessa)'}
               </button>
             )}
-            <p className="text-xs text-slate-300">Setas, WASD ou deslize o dedo • Espaço pausa</p>
+            <p className="text-xs text-slate-300 landscape:hidden lg:!block">Setas, WASD ou deslize o dedo • Espaço pausa</p>
           </div>
         )}
       </div>
