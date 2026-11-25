@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Atom, Building2, Clock, Cloud, Coins, Fuel, Handshake, Home, LogOut, Menu as MenuIcon, MessageCircle, Microscope, Pause, Plane, Play, Radiation, Rocket, Satellite, Settings, Share2, Sparkles, SquareDashed, Target, Trophy, Users, Wrench, X, Zap } from 'lucide-react';
+import { ArrowLeft, Atom, Building2, Clock, Cloud, Coins, Eye, Fuel, Handshake, Home, LogOut, Menu as MenuIcon, MessageCircle, Microscope, Pause, Plane, Play, Radiation, Rocket, Satellite, Settings, Share2, Sparkles, SquareDashed, Star, Target, Trophy, Users, Wrench, X, Zap } from 'lucide-react';
 import { useApp } from '../../ui';
 import { hooks } from '../../engine/state';
 import { myEmblem, myName, saveProfile } from '../../lan/match';
@@ -16,6 +16,7 @@ import { allied, annexBlock, hostile, armyCap, armySize, citiesOf, cityAt, incom
 import { Quality, World3D, savedQuality } from '../../war/world3d';
 import { BOUNDS } from '../../war/terrain';
 import { thumbs } from '../../war/thumbs';
+import { Ico, Rich } from '../../war/icons';
 import { HelpButton } from '../panels/HelpModal';
 import { Button } from '../common/Button';
 import { Action, Bar, Card } from '../common/Kit';
@@ -37,7 +38,7 @@ export const WarScreen: React.FC = () => {
   useWar();
   useWakeLock();
   useEffect(() => quitWar, []);
-  return W.phase === 'lobby' || W.phase === 'play' ? <Field /> : <Finder />;
+  return <Field />;
 };
 
 // ===== Menu =====
@@ -63,13 +64,13 @@ const Finder: React.FC = () => {
   const busy = W.phase === 'joining';
   const c = career();
   return (
-    <div className="w-full h-full flex flex-col bg-[radial-gradient(ellipse_at_top,#3a2f22,#07080a_70%)] overflow-hidden">
-      <header className="flex items-center gap-3 px-4 py-2 border-b border-slate-800 shrink-0">
+    <div className="war-menu">
+      <header className="flex items-center gap-3 px-4 py-2 shrink-0">
         <button onClick={() => setScreen('home')} className="glass-btn h-11 px-3 gap-2 text-xs"><ArrowLeft size={16} /> Menu</button>
-        <h2 className="font-black">🪖 Guerra Ceará 2026</h2>
-        <span className="ml-auto"><HelpButton /></span>
+                <span className="ml-auto"><HelpButton /></span>
       </header>
-      <div className="flex-1 overflow-y-auto overscroll-contain p-4">
+      <div className="flex-1 overflow-y-auto overscroll-contain px-4 pb-4">
+        <div className="war-hero"><small>MUNDO ABERTO</small><h1>CEARÁ <br />2026</h1><p>Construa, negocie ou conquiste as 184 cidades.</p></div>
         <div className="max-w-4xl mx-auto grid gap-3 landscape:grid-cols-2 md:grid-cols-2 items-start">
           <div className="space-y-3">
             {W.error && <p className="rounded-xl border border-rose-500 bg-rose-950/60 p-3 text-sm text-rose-200">{W.error}</p>}
@@ -78,11 +79,11 @@ const Finder: React.FC = () => {
               <div className="grid grid-cols-8 gap-1">
                 {EMBLEMS.map((e) => <button key={e} onClick={() => setEmblem(e)} aria-label={`Emblema ${e}`} className={`h-10 rounded-xl text-xl ${e === emblem ? 'bg-amber-600' : 'bg-slate-800'}`}>{e}</button>)}
               </div>
-              {c.played > 0 && <p className="text-slate-400">{c.wins} vitórias em {c.played} partidas • {c.caps} cidades tomadas • {c.kills} abates</p>}
+              {c.played > 0 && <p className="text-slate-400">Vitórias: {c.wins} de {c.played} • {c.caps} cidades tomadas • {c.kills} abates</p>}
             </Card>
             <div className="grid grid-cols-2 gap-2">
-              <Button size="lg" disabled={busy} onClick={() => go(createWar)}>📶 Criar sala</Button>
-              <Button size="lg" variant="gold" disabled={busy} onClick={() => go(createSolo)}>🤖 Jogar sozinho</Button>
+              <Button size="lg" disabled={busy} onClick={() => go(createWar)} icon={<Users size={18} />}>Criar sala</Button>
+              <Button size="lg" variant="gold" disabled={busy} onClick={() => go(createSolo)} icon={<Play size={18} />}>Jogar solo</Button>
             </div>
           </div>
           <div className="space-y-3">
@@ -90,7 +91,7 @@ const Finder: React.FC = () => {
               {offline && <p className="text-amber-300">Sem conexão com a internet.</p>}
               {rooms?.length === 0 && <p className="text-slate-400">Nenhuma sala ainda. Crie uma e peça para entrarem neste mesmo site.</p>}
               {rooms?.map((r) => (
-                <Action key={r.code} icon="🪖" title={r.name} text={`${r.code} • ${r.players}/${MAX_PLAYERS}${r.started ? ' • em andamento' : ''}`} button={busy ? '...' : r.started ? 'Voltar' : 'Entrar'} variant="primary"
+                <Action key={r.code} icon={<Users size={20} />} title={r.name} text={`${r.code} • ${r.players}/${MAX_PLAYERS}${r.started ? ' • em andamento' : ''}`} button={busy ? '...' : r.started ? 'Voltar' : 'Entrar'} variant="primary"
                   disabled={busy || (!r.started && r.players >= MAX_PLAYERS)} onClick={() => go(() => enterWar(r.code))} />
               ))}
             </Card>
@@ -115,6 +116,7 @@ const Field: React.FC = () => {
   const [rect, setRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [flash, setFlash] = useState(0);
   const [failed, setFailed] = useState(false);
+  const [, setReady3d] = useState(false);
   const live = useRef(ui);
   live.current = ui;
   const patch = (p: Partial<typeof initial>) => setUi((u) => ({ ...u, ...p }));
@@ -129,6 +131,7 @@ const Field: React.FC = () => {
       return;
     }
     world.current = w;
+    setReady3d(true);
     w.onFlash = () => setFlash((n) => n + 1);
     w.onRect = setRect;
     w.onBox = (sel) => patch({ sel, box: false, city: 0 });
@@ -177,6 +180,10 @@ const Field: React.FC = () => {
     if (W.replay && W.best) world.current?.go(W.best.x, W.best.z, 10);
   }, [W.replay]);
   useEffect(() => {
+    if (phase === 'lobby') {
+      const c = CITY[mySeat()?.start ?? 0];
+      if (c) world.current?.overview(c.x, c.z);
+    }
     if (phase !== 'play' || !W.world) return setUi(initial);
     const h = myHome();
     world.current?.go(h.x, h.z, 11);
@@ -188,13 +195,16 @@ const Field: React.FC = () => {
     w3.boxing = ui.box;
     w3.focus = ui.city;
   }
+  const menu = phase !== 'lobby' && phase !== 'play';
+  if (w3) w3.orbit = menu;
+  if (failed && menu) return <Finder />;
   if (failed) return <p className="m-auto p-6 text-center">Este aparelho não conseguiu abrir o mapa 3D.<br /><Button className="mt-4" onClick={quitWar}>Voltar</Button></p>;
   return (
-    <div className={`war relative w-full h-full overflow-hidden ${phase === 'lobby' ? 'war-in-lobby' : ''}`}>
+    <div className={`war relative w-full h-full overflow-hidden ${phase === 'lobby' ? 'war-in-lobby' : menu ? 'war-in-menu' : ''}`}>
       <div className="war-map"><canvas ref={canvas} className="absolute inset-0 w-full h-full touch-none" aria-label="Mapa 3D do Ceará" /></div>
       {flash > 0 && <div key={flash} className="war-flash" />}
       {rect && <div className="fixed z-40 border-2 border-emerald-300 bg-emerald-300/15 pointer-events-none" style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }} />}
-      {phase === 'lobby' ? <Lobby goTo={(id) => w3?.go(CITY[id].x, CITY[id].z, 26)} /> : W.world && <Battle ui={ui} patch={patch} w3={w3} />}
+      {menu ? <Finder /> : phase === 'lobby' ? <Lobby goTo={(id) => w3?.go(CITY[id].x, CITY[id].z, 26)} /> : W.world && <Battle ui={ui} patch={patch} w3={w3} />}
     </div>
   );
 };
@@ -222,10 +232,10 @@ const Lobby: React.FC<{ goTo: (city: number) => void }> = ({ goTo }) => {
       <button onClick={quitWar} className="absolute left-2 top-1 z-10 glass-btn h-11 px-3 gap-2 text-xs"><ArrowLeft size={16} /> Sair</button>
       <div className="war-lobby">
         <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 space-y-3">
-          <Card title={<span className="flex justify-between gap-2"><span>Sua cidade: {start.name}</span><span className="text-amber-300">{'★'.repeat(start.level)}</span></span>}>
-            <p className="text-slate-300">Toque em uma cidade no mapa ou busque. {formatNumber(start.pop)} habitantes • {start.region}{LANDMARKS[start.id] && ` • ${LANDMARKS[start.id].icon} ${bonusText(LANDMARKS[start.id].bonus)}`}</p>
+          <Card title={<span className="flex justify-between gap-2"><span>Sua cidade: {start.name}</span><span className="text-amber-300 text-xs">tamanho {start.level}</span></span>}>
+            <p className="text-slate-300">Toque em uma cidade no mapa ou busque. {formatNumber(start.pop)} habitantes • {start.region}{LANDMARKS[start.id] && ` • ${bonusText(LANDMARKS[start.id].bonus)}`}</p>
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar entre as 184 cidades" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 outline-none" />
-            {found.length > 0 && <div className="flex flex-wrap gap-1.5">{found.map((c) => <button key={c.id} className={chip(c.id === me.start)} onClick={() => { setSeat({ start: c.id }); goTo(c.id); setQuery(''); }}>{c.name} {c.level}★</button>)}</div>}
+            {found.length > 0 && <div className="flex flex-wrap gap-1.5">{found.map((c) => <button key={c.id} className={chip(c.id === me.start)} onClick={() => { setSeat({ start: c.id }); goTo(c.id); setQuery(''); }}>{c.name}</button>)}</div>}
           </Card>
           <Card title={W.solo ? 'Exércitos' : `Jogadores ${W.seats.length}/${MAX_PLAYERS}`}>
             {W.seats.map((p, i) => (
@@ -246,14 +256,14 @@ const Lobby: React.FC<{ goTo: (city: number) => void }> = ({ goTo }) => {
           <Card title="Modo e tempo">
             <div className="grid grid-cols-1 xs:grid-cols-2 gap-1.5">
               {MODES.map((m) => (
-                <button key={m.id} disabled={!W.host} onClick={() => setOptions({ mode: m.id })} className={`text-left rounded-xl border p-2 ${W.mode === m.id ? 'border-amber-400 bg-amber-950/40' : 'border-slate-800 bg-slate-900/60'} ${!W.host && W.mode !== m.id ? 'hidden' : ''}`}><b>{m.icon} {m.name}</b><span className="block text-slate-300">{m.text}</span></button>
+                <button key={m.id} disabled={!W.host} onClick={() => setOptions({ mode: m.id })} className={`text-left rounded-xl border p-2 ${W.mode === m.id ? 'border-amber-400 bg-amber-950/40' : 'border-slate-800 bg-slate-900/60'} ${!W.host && W.mode !== m.id ? 'hidden' : ''}`}><b className="flex items-center gap-1.5"><Ico e={m.icon} /> {m.name}</b><span className="block text-slate-300">{m.text}</span></button>
               ))}
             </div>
             <div className="flex flex-wrap gap-1.5">{MINUTES.map((n) => <button key={n} disabled={!W.host} className={chip(W.minutes === n)} onClick={() => setOptions({ minutes: n })}>{n ? `${n} min` : 'Sem limite'}</button>)}</div>
           </Card>
           <Card title={`Regras extras ${W.rules.length ? `(${W.rules.length})` : ''}`}>
             <div className="flex flex-wrap gap-1.5">
-              {RULES.filter((r) => W.host || W.rules.includes(r.id)).map((r) => <button key={r.id} disabled={!W.host} title={r.text} className={chip(W.rules.includes(r.id))} onClick={() => toggleRule(r.id)}>{r.icon} {r.name}{W.rules.includes(r.id) && <span className="block text-[10px]">{r.text}</span>}</button>)}
+              {RULES.filter((r) => W.host || W.rules.includes(r.id)).map((r) => <button key={r.id} disabled={!W.host} title={r.text} className={chip(W.rules.includes(r.id))} onClick={() => toggleRule(r.id)}><Ico e={r.icon} size={14} /> {r.name}{W.rules.includes(r.id) && <span className="block text-[10px]">{r.text}</span>}</button>)}
               {!W.host && !W.rules.length && <span className="text-slate-400">Nenhuma</span>}
             </div>
           </Card>
@@ -282,7 +292,7 @@ const Battle: React.FC<BattleProps> = ({ ui, patch, w3 }) => {
   const attacked = mine.find((c) => c.hit > 0);
   const rank = [...w.players].sort((a, b) => Number(b.alive) - Number(a.alive) || scoreOf(w, b.i) - scoreOf(w, a.i));
   const close = () => patch({ strike: 0, sel: [], city: 0, power: null, rally: 0, box: false, menu: '' });
-  const hint = ui.power ? `${POWERS[ui.power].icon} Toque onde quer usar` : ui.rally ? 'Toque onde as tropas novas devem ir' : ui.box ? 'Arraste para desenhar a área' : '';
+  const hint = ui.power ? `${POWERS[ui.power].name}: toque no alvo` : ui.rally ? 'Toque onde as tropas novas devem ir' : ui.box ? 'Arraste para desenhar a área' : '';
   const kinds = UNIT_IDS.map((k) => [k, sel.filter((u) => u.k === k)] as const).filter(([, l]) => l.length);
   const chatNow = W.chat.filter((b) => Date.now() - b.at < 5000);
   const quest = QUESTS.find((q) => !me.quests.includes(q.id));
@@ -291,7 +301,7 @@ const Battle: React.FC<BattleProps> = ({ ui, patch, w3 }) => {
   useEffect(() => {
     if (me.quests.length > done.current) {
       const q = QUESTS.find((x) => x.id === me.quests[me.quests.length - 1]);
-      if (q) hooks.toast(`${q.icon} ${q.text}: +${q.money} 💰 +${q.fuel} ⛽`, 'success');
+      if (q) hooks.toast(`Missão cumprida: ${q.text}`, 'success');
       sound.playTechUnlocked();
     }
     done.current = me.quests.length;
@@ -305,7 +315,7 @@ const Battle: React.FC<BattleProps> = ({ ui, patch, w3 }) => {
     <>
       <div className="war-hud">
         <div className="flex gap-1 items-center">
-          <button className={`war-chip ${canEra ? 'war-glow' : ''}`} onClick={() => patch({ menu: 'era', city: 0 })}>{ERAS[me.era - 1].icon} {me.era}</button>
+          <button className={`war-chip ${canEra ? 'war-glow' : ''}`} onClick={() => patch({ menu: 'era', city: 0 })}><Ico e={ERAS[me.era - 1].icon} size={14} /> {me.era}</button>
           <span className="war-chip text-amber-200"><Coins size={13} /> {formatNumber(me.money)} <i>+{Math.round(m)}</i></span>
           <span className="war-chip text-orange-200"><Fuel size={13} /> {formatNumber(me.fuel)} <i>+{Math.round(f)}</i></span>
           <span className="war-chip"><Users size={13} /> {army.length}/{armyCap(w, W.me)}</span>
@@ -314,24 +324,24 @@ const Battle: React.FC<BattleProps> = ({ ui, patch, w3 }) => {
         </div>
         <div className="flex gap-1 items-center">
           {rank.map((p) => (
-            <button key={p.i} className={`war-chip ${p.alive ? '' : 'opacity-40 line-through'}`} style={{ borderColor: p.color }} onClick={() => patch({ menu: 'diplomacia', city: 0 })}>{p.i !== W.me && relOf(w, W.me, p.i) === REL.guerra ? '⚔️' : p.emblem} {p.i === W.me ? 'Você' : p.name.split(' ').pop()} <i>{w.mode === 'capital' ? `${scoreOf(w, p.i)}s` : formatNumber(scoreOf(w, p.i))}</i></button>
+            <button key={p.i} className={`war-chip ${p.alive ? '' : 'opacity-40 line-through'}`} style={{ borderColor: p.color }} onClick={() => patch({ menu: 'diplomacia', city: 0 })}>{p.i !== W.me && relOf(w, W.me, p.i) === REL.guerra ? <Ico e="⚔️" size={13} className="text-rose-400" /> : p.emblem} {p.i === W.me ? 'Você' : p.name.split(' ').pop()} <i>{w.mode === 'capital' ? `${scoreOf(w, p.i)}s` : formatNumber(scoreOf(w, p.i))}</i></button>
           ))}
-          {w.event && <span className="war-chip text-sky-200">{EVENTS[w.event.i].icon} {EVENTS[w.event.i].name} <i>{Math.ceil(w.event.left)}s</i></span>}
+          {w.event && <span className="war-chip text-sky-200"><Ico e={EVENTS[w.event.i].icon} size={13} /> {EVENTS[w.event.i].name} <i>{Math.ceil(w.event.left)}s</i></span>}
         </div>
       </div>
       <div className="war-log" aria-live="polite">
-        {nukes.map((z, i) => <button key={i} className="war-nuke pointer-events-auto" onClick={() => { w3?.go(z.x, z.z, 18); w3?.chase(); }}>☢️ {POWERS[z.k].name} caindo em {nearest(z.x, z.z)} • {Math.max(0, Math.ceil(z.left - 0.5))}s • Ver</button>)}
-        {threats.map((u) => <button key={u.a} className="war-nuke pointer-events-auto" onClick={() => patch({ menu: 'diplomacia', city: 0 })}>⚔️ {w.players[u.a].name} vai declarar guerra em {Math.ceil(u.left)}s</button>)}
+        {nukes.map((z, i) => <button key={i} className="war-nuke pointer-events-auto" onClick={() => { w3?.go(z.x, z.z, 18); w3?.chase(); }}><Ico e="☢️" /> {POWERS[z.k].name} caindo em {nearest(z.x, z.z)} • {Math.max(0, Math.ceil(z.left - 0.5))}s • Ver</button>)}
+        {threats.map((u) => <button key={u.a} className="war-nuke pointer-events-auto" onClick={() => patch({ menu: 'diplomacia', city: 0 })}><Ico e="⚔️" /> {w.players[u.a].name} vai declarar guerra em {Math.ceil(u.left)}s</button>)}
         {offers.map((o) => (
-          <div key={o.a} className="war-offer pointer-events-auto"><span>{w.players[o.a].emblem} {w.players[o.a].name} propõe: <b>{REL_NAME[o.k]}</b></span><span className="flex gap-1.5"><button onClick={() => order({ c: 'answer', from: o.a, yes: true })}>Aceitar</button><button onClick={() => order({ c: 'answer', from: o.a, yes: false })}>Recusar</button></span></div>
+          <div key={o.a} className="war-offer pointer-events-auto"><span>{w.players[o.a].emblem} {w.players[o.a].name} propõe: <b><Rich t={REL_NAME[o.k]} /></b></span><span className="flex gap-1.5"><button onClick={() => order({ c: 'answer', from: o.a, yes: true })}>Aceitar</button><button onClick={() => order({ c: 'answer', from: o.a, yes: false })}>Recusar</button></span></div>
         ))}
-        {quest && !nukes.length && <button className="pointer-events-auto text-amber-100" onClick={() => patch({ menu: 'missoes', city: 0 })}>{quest.icon} {quest.text} <b>{Math.min(quest.n, Math.floor(questValue(w, W.me, quest.stat)))}/{quest.n}</b></button>}
+        {quest && !nukes.length && <button className="pointer-events-auto text-amber-100" onClick={() => patch({ menu: 'missoes', city: 0 })}><Ico e={quest.icon} size={14} /> {quest.text} <b>{Math.min(quest.n, Math.floor(questValue(w, W.me, quest.stat)))}/{quest.n}</b></button>}
         {W.lost && <p className="!bg-rose-900/80">Conexão caiu. Reconectando...</p>}
-        {W.paused && <p>⏸ Pausado</p>}
+        {W.paused && <p>Pausado</p>}
         {!me.alive && !w.over && <p className="!bg-rose-900/80">Você foi eliminado. Assista ao fim da guerra.</p>}
-        {w.log.slice(0, 2).map((l, i) => <p key={l.t + i} className={l.k === 'alert' ? 'text-rose-200' : l.k === 'event' ? 'text-sky-200' : ''}>{l.t}</p>)}
+        {w.log.slice(0, 2).map((l, i) => <p key={l.t + i} className={l.k === 'alert' ? 'text-rose-200' : l.k === 'event' ? 'text-sky-200' : ''}><Rich t={l.t} /></p>)}
         {chatNow.map((b) => <p key={b.i} className="speech" style={{ borderLeft: `4px solid ${w.players[b.i]?.color}` }}>{w.players[b.i]?.name}: {b.text}</p>)}
-        {attacked && <button className="!bg-rose-800/90 pointer-events-auto animate-pulse" onClick={() => w3?.go(attacked.x, attacked.z, 10)}>⚠️ {CITY[attacked.id].name} sob ataque! Ver</button>}
+        {attacked && <button className="!bg-rose-800/90 pointer-events-auto animate-pulse" onClick={() => w3?.go(attacked.x, attacked.z, 10)}><Ico e="⚠️" /> {CITY[attacked.id].name} sob ataque! Ver</button>}
       </div>
 
       {W.replay && <div className="war-replay"><b>● REPLAY</b><button onClick={stopReplay}>Sair</button></div>}
@@ -354,10 +364,10 @@ const Battle: React.FC<BattleProps> = ({ ui, patch, w3 }) => {
                 {kinds.map(([k, l]) => <button key={k} className="war-unit" title={`Só ${UNITS[k].name}`} onClick={() => patch({ sel: l.map((u) => u.i) })}><Pic k={k} e={UNITS[k].icon} /><b>{l.length}</b><Bar value={l.reduce((s, u) => s + u.hp / u.max, 0) / l.length} color="bg-emerald-500" /></button>)}
               </div>
               <div className="flex gap-1.5">
-                <Button size="sm" variant="secondary" className="flex-1" onClick={() => order({ c: 'stop', u: ids })}>✋ Parar</Button>
-                <Button size="sm" variant="secondary" className="flex-1" onClick={() => { const c = [...mine].sort((a, b) => Math.hypot(a.x - sel[0].x, a.z - sel[0].z) - Math.hypot(b.x - sel[0].x, b.z - sel[0].z))[0]; if (c) order({ c: 'move', u: ids, x: c.x, z: c.z, hold: true }); }}>↩ Recuar</Button>
-                <Button size="sm" variant="secondary" onClick={() => w3?.go(sel[0].x, sel[0].z, 9)}>👁</Button>
-                <Button size="sm" variant="danger" onClick={close}>✕</Button>
+                <Button size="sm" variant="secondary" className="flex-1" onClick={() => order({ c: 'stop', u: ids })}>Parar</Button>
+                <Button size="sm" variant="secondary" className="flex-1" onClick={() => { const c = [...mine].sort((a, b) => Math.hypot(a.x - sel[0].x, a.z - sel[0].z) - Math.hypot(b.x - sel[0].x, b.z - sel[0].z))[0]; if (c) order({ c: 'move', u: ids, x: c.x, z: c.z, hold: true }); }}>Recuar</Button>
+                <Button size="sm" variant="secondary" onClick={() => w3?.go(sel[0].x, sel[0].z, 9)}><Eye size={16} /></Button>
+                <Button size="sm" variant="danger" onClick={close}><X size={16} /></Button>
               </div>
             </>}
         </div>
@@ -381,8 +391,8 @@ const Battle: React.FC<BattleProps> = ({ ui, patch, w3 }) => {
           {ui.menu === 'diplomacia' && <Diplomacy />}
           {ui.menu === 'era' && (
             <>
-              <h3 className="font-bold pr-12">{ERAS[me.era - 1].icon} Era {me.era}: {ERAS[me.era - 1].name}</h3>
-              {ERAS.map((e, i) => <div key={e.name} className={`rounded-xl border p-2 ${i + 1 === me.era ? 'border-amber-400' : 'border-slate-700'} ${i + 1 < me.era ? 'opacity-50' : ''}`}><b>{e.icon} {i + 1}. {e.name}</b><span className="block text-slate-300">{e.text}</span>{i === me.era && <span className="block text-amber-200">Precisa: {e.cities} cidades ({mine.length}), {formatNumber(e.money)} de dinheiro, {formatNumber(e.fuel)} de combustível</span>}</div>)}
+              <h3 className="font-bold pr-12"><Ico e={ERAS[me.era - 1].icon} /> Era {me.era}: {ERAS[me.era - 1].name}</h3>
+              {ERAS.map((e, i) => <div key={e.name} className={`rounded-xl border p-2 ${i + 1 === me.era ? 'border-amber-400' : 'border-slate-700'} ${i + 1 < me.era ? 'opacity-50' : ''}`}><b className="flex items-center gap-1.5"><Ico e={e.icon} /> {i + 1}. {e.name}</b><span className="block text-slate-300">{e.text}</span>{i === me.era && <span className="block text-amber-200">Precisa: {e.cities} cidades ({mine.length}), {formatNumber(e.money)} de dinheiro, {formatNumber(e.fuel)} de combustível</span>}</div>)}
               {next && <Button variant="gold" fullWidth disabled={!canEra} onClick={() => order({ c: 'era' })}>Avançar para {next.name}</Button>}
             </>
           )}
@@ -395,7 +405,7 @@ const Battle: React.FC<BattleProps> = ({ ui, patch, w3 }) => {
           )}
           {ui.menu === 'mais' && (
             <>
-              <h3 className="font-bold pr-12">☰ Comando</h3>
+              <h3 className="font-bold pr-12">Comando</h3>
               <div className="war-grid">
                 {([['era', <Sparkles />, 'Era'], ['pesquisa', <Microscope />, 'Pesquisa'], ['missoes', <Target />, 'Missões'], ['placar', <Trophy />, 'Placar'], ['fala', <MessageCircle />, 'Falar'], ['video', <Settings />, 'Imagem'], ['sair', <LogOut />, 'Sair']] as ['era' | 'pesquisa' | 'missoes' | 'placar' | 'fala' | 'video' | 'sair', React.ReactNode, string][]).map(([id, icon, name]) => <button key={id} className="war-item" onClick={() => patch({ menu: id })}>{icon}<b>{name}</b></button>)}
                 {W.solo && <button className="war-item" onClick={() => { W.paused = !W.paused; touch(); close(); }}>{W.paused ? <Play /> : <Pause />}<b>{W.paused ? 'Continuar' : 'Pausar'}</b></button>}
@@ -404,8 +414,8 @@ const Battle: React.FC<BattleProps> = ({ ui, patch, w3 }) => {
           )}
           {ui.menu === 'missoes' && (
             <>
-              <h3 className="font-bold pr-12">🎯 Missões {me.quests.length}/{QUESTS.length}</h3>
-              {QUESTS.map((q) => { const ok = me.quests.includes(q.id); return <div key={q.id} className={`rounded-xl border border-slate-700 p-2 ${ok ? 'opacity-50' : ''}`}><p className="flex justify-between gap-2"><b>{ok ? '✅' : q.icon} {q.text}</b><span className="text-amber-200 shrink-0">💰{q.money} ⛽{q.fuel}</span></p>{!ok && <Bar value={questValue(w, W.me, q.stat) / q.n} color="bg-amber-500" />}</div>; })}
+              <h3 className="font-bold pr-12">Missões {me.quests.length}/{QUESTS.length}</h3>
+              {QUESTS.map((q) => { const ok = me.quests.includes(q.id); return <div key={q.id} className={`rounded-xl border border-slate-700 p-2 ${ok ? 'opacity-50' : ''}`}><p className="flex justify-between gap-2"><b className="flex items-center gap-1.5"><Ico e={ok ? '✅' : q.icon} /> {q.text}</b><span className="text-amber-200 shrink-0"><Coins size={12} className="ico" /> {q.money} <Fuel size={12} className="ico" /> {q.fuel}</span></p>{!ok && <Bar value={questValue(w, W.me, q.stat) / q.n} color="bg-amber-500" />}</div>; })}
             </>
           )}
           {ui.menu === 'apoios' && <Supports patch={patch} />}
@@ -413,9 +423,9 @@ const Battle: React.FC<BattleProps> = ({ ui, patch, w3 }) => {
           {ui.menu === 'placar' && <Score />}
           {ui.menu === 'fala' && (
             <>
-              <h3 className="font-bold pr-12">💬 Falar com todos</h3>
+              <h3 className="font-bold pr-12">Falar com todos</h3>
               <div className="grid grid-cols-2 gap-1.5">{PHRASES.map((p, i) => <Button key={p} size="sm" variant="secondary" onClick={() => { sayPhrase(i); close(); }}>{p}</Button>)}</div>
-              <Button size="sm" variant="gold" fullWidth onClick={() => { const c = w3?.center(); if (c) sendPing(c.x, c.z); close(); }}>📍 Marcar o centro da tela no mapa</Button>
+              <Button size="sm" variant="gold" fullWidth onClick={() => { const c = w3?.center(); if (c) sendPing(c.x, c.z); close(); }}>Marcar o centro da tela no mapa</Button>
             </>
           )}
         </div>
@@ -433,7 +443,7 @@ const Tool: React.FC<{ icon: React.ReactNode; name: string; on?: boolean; onClic
 );
 const Cost: React.FC<{ v: [number, number] }> = ({ v: [m, f] }) => {
   const p = myPlayer();
-  return <span className="text-[10px]"><span className={p.money < m ? 'text-rose-300' : 'text-amber-200'}>💰{m}</span>{f > 0 && <span className={p.fuel < f ? 'text-rose-300' : 'text-orange-200'}> ⛽{f}</span>}</span>;
+  return <span className="text-[10px]"><span className={p.money < m ? 'text-rose-300' : 'text-amber-200'}><Coins size={11} className="ico" /> {m}</span>{f > 0 && <span className={p.fuel < f ? 'text-rose-300' : 'text-orange-200'}> <Fuel size={11} className="ico" /> {f}</span>}</span>;
 };
 
 const CityPanel: React.FC<{ id: number; patch: BattleProps['patch']; w3: World3D | null }> = ({ id, patch, w3 }) => {
@@ -452,20 +462,21 @@ const CityPanel: React.FC<{ id: number; patch: BattleProps['patch']; w3: World3D
   return (
     <>
       <div className="pr-12">
-        <h3 className="font-bold text-base">{LANDMARKS[id]?.icon ?? '🏙️'} {c.name} <span className="text-amber-300">{c.level}★</span></h3>
-        <p className="text-slate-300">{owner ? <span style={{ color: owner.color }}>{owner.emblem} {own ? 'Sua cidade' : owner.name}</span> : 'Neutra'} • {formatNumber(c.pop)} hab. • +{Math.round(cityIncome(c.level) * 10) / 10} 💰/s +{Math.round(cityFuel(c.level) * 10) / 10} ⛽/s</p>
-        {irradiated(w, c.x, c.z) && <p className="text-lime-300">☢️ Contaminada: não produz e fere as tropas.</p>}
+        <h3 className="font-bold text-base"><Ico e={LANDMARKS[id]?.icon ?? '🏙️'} size={18} /> {c.name}</h3>
+        <p className="text-slate-300">{owner ? <span style={{ color: owner.color }}>{owner.emblem} {own ? 'Sua cidade' : owner.name}</span> : 'Neutra'} • {formatNumber(c.pop)} hab. • tamanho {c.level}</p>
+        <p className="text-slate-300 flex gap-3"><span><Coins size={12} className="ico text-amber-300" /> +{(cityIncome(c.level) * (1 + s.dev * 0.5)).toFixed(1)}/s</span><span><Fuel size={12} className="ico text-orange-300" /> +{(cityFuel(c.level) * (1 + s.dev * 0.4)).toFixed(1)}/s</span><span>{[0, 1, 2].map((n) => <Star key={n} size={12} className={`ico ${s.dev > n ? 'text-amber-300 fill-amber-300' : 'text-slate-600'}`} />)}</span></p>
+        {irradiated(w, c.x, c.z) && <p className="text-lime-300"><Ico e="☢️" size={13} /> Contaminada: não produz e fere as tropas.</p>}
         {LANDMARKS[id] && <p className="text-sky-200">{LANDMARKS[id].name}: {bonusText(LANDMARKS[id].bonus)}</p>}
       </div>
       <Bar value={s.hp / s.max} color={s.hp / s.max < 0.35 ? 'bg-rose-500' : 'bg-emerald-500'} />
-      {s.ruin > 0.15 && <p className="text-orange-300">🏚️ {Math.round(s.ruin * 100)}% em ruínas. Reconstrói sozinha em paz.</p>}
+      {s.ruin > 0.15 && <p className="text-orange-300"><Ico e="🏚️" size={13} /> {Math.round(s.ruin * 100)}% em ruínas. Reconstrói sozinha em paz.</p>}
       {!own && !owner && (s.deal
-        ? <p className="text-sky-200">🤝 {w.players[s.deal.by].name} negocia: {Math.ceil(s.deal.left)}s</p>
+        ? <p className="text-sky-200"><Ico e="🤝" size={13} /> {w.players[s.deal.by].name} negocia: {Math.ceil(s.deal.left)}s</p>
         : <Button variant="gold" fullWidth disabled={!!block || me.money < am} onClick={() => order({ c: 'annex', city: id })}>{block || `Trazer por acordo: ${am} (${annexTime(c.level)}s)`}</Button>)}
       {!own && !owner && <p className="text-slate-300">Ou escolha tropas e toque na cidade para tomar à força: zere a defesa e deixe infantaria ou blindados no centro.</p>}
-      {!own && owner && <p className="text-slate-300">Vocês estão em <b style={{ color: REL_COLOR[relOf(w, W.me, s.owner)] }}>{REL_NAME[relOf(w, W.me, s.owner)]}</b>. Só dá para atacar em guerra.</p>}
+      {!own && owner && <p className="text-slate-300">Vocês estão em <b style={{ color: REL_COLOR[relOf(w, W.me, s.owner)] }}><Rich t={REL_NAME[relOf(w, W.me, s.owner)]} /></b>. Só dá para atacar em guerra.</p>}
       {own && (s.devLeft > 0
-        ? <p className="text-emerald-300">🏗️ Evoluindo: {Math.ceil(s.devLeft)}s</p>
+        ? <p className="text-emerald-300"><Ico e="🏗️" size={13} /> Evoluindo: {Math.ceil(s.devLeft)}s</p>
         : s.dev < MAX_DEV && <Button variant="gold" size="sm" fullWidth disabled={me.era < s.dev + 1 || me.money < devCost(c.level, s.dev)[0] || me.fuel < devCost(c.level, s.dev)[1]} onClick={() => order({ c: 'dev', city: id })}>{me.era < s.dev + 1 ? `Evoluir (Era ${s.dev + 1})` : `Evoluir cidade ${s.dev}/${MAX_DEV}: ${devCost(c.level, s.dev).filter(Boolean).join(' + ')}`}</Button>)}
       {own && (
         <>
@@ -473,25 +484,25 @@ const CityPanel: React.FC<{ id: number; patch: BattleProps['patch']; w3: World3D
           <div className="grid grid-cols-3 gap-1">{(['treinar', 'construir', 'obras'] as const).map((t) => <button key={t} onClick={() => setTab(t)} className={`rounded-lg py-2 font-bold capitalize ${tab === t ? 'bg-amber-600' : 'bg-slate-800'}`}>{t === 'obras' ? `Obras ${s.works.length}/${slots}` : t}</button>)}</div>
           {tab === 'treinar' && (trainable.length === 0 ? <p className="text-amber-200">Construa um Quartel para treinar tropas aqui.</p> : (
             <>
-              <div className="grid grid-cols-3 gap-1">{[[1, '1 por toque'], [5, '5 por toque'], [0, '♾️ Sem parar']].map(([v, t]) => <button key={v} onClick={() => setN(v as number)} className={`rounded-lg py-1.5 ${n === v ? 'bg-sky-700' : 'bg-slate-800'}`}>{t}</button>)}</div>
+              <div className="grid grid-cols-3 gap-1">{[[1, '1 por toque'], [5, '5 por toque'], [0, 'Sem parar']].map(([v, t]) => <button key={v} onClick={() => setN(v as number)} className={`rounded-lg py-1.5 ${n === v ? 'bg-sky-700' : 'bg-slate-800'}`}>{t}</button>)}</div>
               <div className="war-grid">
                 {trainable.map((k: UnitId) => <button key={k} className="war-item" title={UNITS[k].text} onClick={() => order(n ? { c: 'train', city: id, k, n } : { c: 'loop', city: id, k })} data-on={s.loop === k}><Pic big k={k} e={UNITS[k].icon} /><b>{UNITS[k].name}</b><small>{UNITS[k].text}</small><Cost v={unitPrice(w, W.me, k)} /></button>)}
               </div>
               <div className="grid grid-cols-2 gap-1.5">
-                <Button size="sm" variant="secondary" onClick={() => patch({ rally: id, city: 0 })}>🚩 Ponto de encontro</Button>
-                <Button size="sm" variant="secondary" onClick={() => patch({ city: 0, sel: w.units.filter((u) => u.o === W.me && Math.hypot(u.x - s.x, u.z - s.z) < 2).map((u) => u.i) })}>🪖 Tropas daqui</Button>
+                <Button size="sm" variant="secondary" onClick={() => patch({ rally: id, city: 0 })}>Ponto de encontro</Button>
+                <Button size="sm" variant="secondary" onClick={() => patch({ city: 0, sel: w.units.filter((u) => u.o === W.me && Math.hypot(u.x - s.x, u.z - s.z) < 2).map((u) => u.i) })}>Tropas daqui</Button>
               </div>
             </>
           ))}
           {tab === 'construir' && (
             <div className="war-grid">
-              {WORKS_IDS.map((k: WorksId) => <button key={k} className="war-item" disabled={c.level < WORKS[k].level || s.works.length >= slots || me.era < WORKS_ERA[k]} onClick={() => order({ c: 'build', city: id, k })}><Pic big k={`w-${k}`} e={WORKS[k].icon} /><b>{WORKS[k].name}</b><small>{me.era < WORKS_ERA[k] ? `Era ${WORKS_ERA[k]}` : c.level < WORKS[k].level ? `Só em cidade ${WORKS[k].level}★` : WORKS[k].text}</small><Cost v={worksPrice(w, W.me, k)} /></button>)}
+              {WORKS_IDS.map((k: WorksId) => <button key={k} className="war-item" disabled={c.level < WORKS[k].level || s.works.length >= slots || me.era < WORKS_ERA[k]} onClick={() => order({ c: 'build', city: id, k })}><Pic big k={`w-${k}`} e={WORKS[k].icon} /><b>{WORKS[k].name}</b><small>{me.era < WORKS_ERA[k] ? `Era ${WORKS_ERA[k]}` : c.level < WORKS[k].level ? `Só em cidade tamanho ${WORKS[k].level}` : WORKS[k].text}</small><Cost v={worksPrice(w, W.me, k)} /></button>)}
             </div>
           )}
           {tab === 'obras' && (s.works.length ? s.works.map((k, n) => <Action key={n} icon={<Pic big k={`w-${k.k}`} e={WORKS[k.k].icon} />} title={WORKS[k.k].name} text={k.left > 0 ? `Em obras: ${Math.ceil(k.left)}s` : WORKS[k.k].text} button="Vender" disabled={k.k === 'comando'} onClick={() => order({ c: 'sell', city: id, n })} />) : <p className="text-slate-400">Nada construído.</p>)}
         </>
       )}
-      <Button size="sm" variant="outline" fullWidth onClick={() => w3?.go(c.x, c.z, 9)}>👁 Ver no mapa</Button>
+      <Button size="sm" variant="outline" fullWidth onClick={() => w3?.go(c.x, c.z, 9)}>Ver no mapa</Button>
     </>
   );
 };
@@ -506,10 +517,10 @@ const Supports: React.FC<{ patch: BattleProps['patch'] }> = ({ patch }) => {
   };
   return (
     <>
-      <h3 className="font-bold pr-12">☢️ Armas nucleares</h3>
+      <h3 className="font-bold pr-12">Armas nucleares</h3>
       <div className="war-grid">{POWER_IDS.filter((k) => NUKES[k]).map(item)}</div>
-      <p className="text-slate-300">1) Pesquise o Programa Nuclear. 2) Construa um Silo em cidade 5★. Construa o Domo Antimíssil para se proteger.</p>
-      <h3 className="font-bold">💥 Apoios</h3>
+      <p className="text-slate-300">1) Pesquise o Programa Nuclear. 2) Construa um Silo em cidade tamanho 5. Construa o Domo Antimíssil para se proteger.</p>
+      <h3 className="font-bold">Apoios</h3>
       <div className="war-grid">{POWER_IDS.filter((k) => !NUKES[k]).map(item)}</div>
     </>
   );
@@ -582,8 +593,8 @@ const Diplomacy: React.FC = () => {
         const sent = w.offers.some((o) => o.a === W.me && o.b === p.i);
         return (
           <div key={p.i} className={`rounded-xl border p-2 space-y-1.5 ${p.alive ? '' : 'opacity-40'}`} style={{ borderColor: p.color }}>
-            <p className="flex justify-between gap-2"><b>{p.emblem} {p.name}</b><b style={{ color: REL_COLOR[r] }}>{p.team === me.team ? 'Seu time' : ult ? `Guerra em ${Math.ceil(ult.left)}s` : REL_NAME[r]}</b></p>
-            <p className="text-slate-300">{ERAS[p.era - 1].icon} Era {p.era} • {citiesOf(w, p.i).length} cidades • {armySize(w, p.i)} tropas</p>
+            <p className="flex justify-between gap-2"><b>{p.emblem} {p.name}</b><b style={{ color: REL_COLOR[r] }}>{p.team === me.team ? 'Seu time' : ult ? `Guerra em ${Math.ceil(ult.left)}s` : <Rich t={REL_NAME[r]} />}</b></p>
+            <p className="text-slate-300"><Ico e={ERAS[p.era - 1].icon} size={13} /> Era {p.era} • Cidades: {citiesOf(w, p.i).length} • Tropas: {armySize(w, p.i)}</p>
             {p.alive && p.team !== me.team && (
               <div className="grid grid-cols-2 gap-1.5">
                 {r === REL.guerra ? <Button size="sm" variant="primary" disabled={sent} onClick={() => dip(p.i, 'paz', true)}>{sent ? 'Esperando...' : 'Propor paz'}</Button>
@@ -604,11 +615,11 @@ const Research: React.FC = () => {
   const p = myPlayer();
   return (
     <>
-      <h3 className="font-bold pr-12">🔬 Pesquisa</h3>
+      <h3 className="font-bold pr-12">Pesquisa</h3>
       <div className="war-grid">
         {RESEARCH.map((r) => {
           const lvl = p.res[r.id] ?? 0;
-          return <button key={r.id} className="war-item" disabled={lvl >= 3 || p.money < researchCost(lvl)} onClick={() => order({ c: 'research', id: r.id })}><span className="text-2xl">{r.icon}</span><b>{r.name} {lvl}/3</b><small>{lvl < 3 ? `${r.levels[lvl]}: ${bonusText(r.per)}` : 'Completa'}</small>{lvl < 3 && <Cost v={[researchCost(lvl), 0]} />}</button>;
+          return <button key={r.id} className="war-item" disabled={lvl >= 3 || p.money < researchCost(lvl)} onClick={() => order({ c: 'research', id: r.id })}><Ico e={r.icon} size={26} className="text-sky-300" /><b>{r.name} {lvl}/3</b><small>{lvl < 3 ? `${r.levels[lvl]}: ${bonusText(r.per)}` : 'Completa'}</small>{lvl < 3 && <Cost v={[researchCost(lvl), 0]} />}</button>;
         })}
       </div>
     </>
@@ -618,12 +629,12 @@ const Score: React.FC = () => {
   const w = W.world!;
   return (
     <>
-      <h3 className="font-bold pr-12">{MODES.find((m) => m.id === w.mode)?.icon} {MODES.find((m) => m.id === w.mode)?.name}</h3>
+      <h3 className="font-bold pr-12">{MODES.find((m) => m.id === w.mode)?.name}</h3>
       <p className="text-slate-300">{MODES.find((m) => m.id === w.mode)?.text}</p>
       {[...w.players].sort((a, b) => popOf(w, b.i) - popOf(w, a.i)).map((p) => (
         <div key={p.i} className={`rounded-xl border p-2 bg-slate-900/70 ${p.alive ? '' : 'opacity-40'}`} style={{ borderColor: p.color }}>
           <b>{p.emblem} {p.name}{!p.online && ' 📴'}</b>
-          <span className="block text-slate-300">🏙️ {citiesOf(w, p.i).length} • 👥 {formatNumber(popOf(w, p.i))} • 🪖 {armySize(w, p.i)} • 💀 {Math.round(p.stats.kills ?? 0)}</span>
+          <span className="block text-slate-300">{citiesOf(w, p.i).length} cidades • {formatNumber(popOf(w, p.i))} hab. • {armySize(w, p.i)} tropas • {Math.round(p.stats.kills ?? 0)} abates</span>
         </div>
       ))}
     </>
@@ -638,12 +649,12 @@ const End: React.FC = () => {
     return { ...m, who: best, n: Math.round(best.stats[m.stat] ?? 0) };
   }).filter((m) => m.n > 0);
   return (
-    <Modal isOpen onClose={() => {}} showCloseButton={false} maxWidth="lg" title={`${won ? '🏆' : '🏳️'} ${w.over!.title}`} subtitle={`${won ? 'Vitória' : 'Derrota'} • ${clock(w.t)} de guerra`}>
+    <Modal isOpen onClose={() => {}} showCloseButton={false} maxWidth="lg" title={w.over!.title} subtitle={`${won ? 'Vitória' : 'Derrota'} • ${clock(w.t)} de guerra`}>
       {w.over!.rank.map((i, n) => {
         const p = w.players[i];
-        return <div key={i} className="podium flex items-center gap-2 text-sm rounded-xl border p-2" style={{ borderColor: p.color, animationDelay: `${n * 0.1}s` }}><b className="w-6">{n + 1}º</b><span className="flex-1 truncate">{p.emblem} {p.name}{i === W.me && ' (você)'}</span><span className="text-slate-300 text-xs">🏙️ {citiesOf(w, i).length} • 💀 {Math.round(p.stats.kills ?? 0)}</span></div>;
+        return <div key={i} className="podium flex items-center gap-2 text-sm rounded-xl border p-2" style={{ borderColor: p.color, animationDelay: `${n * 0.1}s` }}><b className="w-6">{n + 1}º</b><span className="flex-1 truncate">{p.emblem} {p.name}{i === W.me && ' (você)'}</span><span className="text-slate-300 text-xs">{citiesOf(w, i).length} cidades • {Math.round(p.stats.kills ?? 0)} abates</span></div>;
       })}
-      <div className="grid grid-cols-2 gap-1.5 text-xs">{medals.map((m) => <p key={m.name} className="rounded-lg bg-slate-800/70 p-2">{m.icon} <b>{m.name}</b><span className="block text-slate-300 truncate">{m.who.name}: {formatNumber(m.n)}</span></p>)}</div>
+      <div className="grid grid-cols-2 gap-1.5 text-xs">{medals.map((m) => <p key={m.name} className="rounded-lg bg-slate-800/70 p-2"><Ico e={m.icon} size={14} /> <b>{m.name}</b><span className="block text-slate-300 truncate">{m.who.name}: {formatNumber(m.n)}</span></p>)}</div>
       {W.best && <Button variant="primary" fullWidth icon={<Play size={16} />} onClick={playReplay}>Ver a maior batalha</Button>}
       {W.host ? <Button variant="gold" size="lg" fullWidth onClick={backToLobby}>Jogar de novo</Button> : <p className="text-center text-slate-300 text-sm">Esperando quem criou a sala...</p>}
       <Button variant="outline" fullWidth onClick={quitWar}>Sair</Button>

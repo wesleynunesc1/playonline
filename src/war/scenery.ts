@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CITIES, CITY, City, ROADS } from './data';
-import { facade, mat } from './models';
+import { mat } from './models';
 import { BOUNDS, COAST_CANVAS, EXT, HEIGHT, LAKES, NX, NZ, PHONE, RINGS, RIVERS, STEP_M, Y, cityNamed, isWater, lakeEdge, noise, silhouette, spread } from './terrain';
 
 /** Cenário: chão, água, céu, estradas, cidades que crescem ou viram ruína, plantas, pontos famosos e clima. */
@@ -45,17 +45,20 @@ const GROUND = `
   // Moitas e pedras
   float tuft=smoothstep(.56,.64,fbm(p*5.5+3.)); col=mix(col,col*vec3(.62,.78,.5),tuft*.65*green);
   col=mix(col,mix(vec3(.36,.31,.27),vec3(.56,.51,.45),fine),smoothstep(.16,.36,slope+(fine-.5)*.14));
-  // Lavouras em talhões
-  vec2 q=mat2(.92,.39,-.39,.92)*p*1.35; vec2 cell=floor(q); float crop=h21(cell);
-  if(crop>.8&&alt>.2&&alt<.62&&slope<.1){ vec2 f=fract(q); float ed=smoothstep(.03,.05,f.x)*smoothstep(.03,.05,f.y)*smoothstep(.03,.05,1.-f.x)*smoothstep(.03,.05,1.-f.y);
-    float row=.78+.22*smoothstep(-.3,.3,sin((crop>.9?q.x:q.y)*62.)); vec3 cc=crop>.9?vec3(.5,.43,.2):crop>.82?vec3(.21,.3,.12):vec3(.33,.36,.16); col=mix(col,cc*row*(.85+.3*fine),ed*.7); }
+  // Lavouras agrupadas em zonas, com direção e tamanho próprios
+  float zone=smoothstep(.5,.56,fbm(p*.2+31.));
+  if(zone>.01&&alt>.2&&alt<.62&&slope<.1){ float dir=floor(vn(p*.12+5.)*4.)*.42; vec2 q=mat2(cos(dir),sin(dir),-sin(dir),cos(dir))*p*1.9; q.x+=floor(q.y)*.37; q.x*=.55+.35*h21(vec2(floor(q.y),3.));
+    vec2 cell=floor(q); float crop=h21(cell+dir); vec2 f=fract(q); float ed=smoothstep(.02,.045,f.x)*smoothstep(.02,.045,f.y)*smoothstep(.02,.045,1.-f.x)*smoothstep(.02,.045,1.-f.y);
+    float far=smoothstep(.0,.02,fwidth(q.y)); float row=mix(.8+.2*smoothstep(-.4,.4,sin((crop>.5?q.y:q.x)*70.)),.9,far);
+    vec3 cc=crop<.22?vec3(.24,.31,.12):crop<.42?vec3(.36,.38,.17):crop<.6?vec3(.5,.44,.22):crop<.8?vec3(.3,.24,.15):vec3(.17,.27,.1);
+    col=mix(col,cc*row*(.84+.32*fine),ed*zone*.82); }
   col*=(.86+.2*grit)*(.93+.12*grit2);
   // Praia e areia molhada
   float beach=smoothstep(.27,.15,alt+(mid-.5)*.06); vec3 sand=mix(vec3(.84,.74,.54),vec3(.95,.88,.71),fine)*(.93+.1*grit2);
   col=mix(col,sand,beach); col=mix(col,sand*.6,smoothstep(.06,-.02,alt));
   vec2 lu=(p-box.xy)/box.zw; vec4 own=texture2D(land,lu); float inside=step(0.,lu.x)*step(lu.x,1.)*step(0.,lu.y)*step(lu.y,1.)*own.a;
   col=mix(col*vec3(.74,.76,.8),col,smoothstep(.02,.1,inside));
-  float own2=smoothstep(.2,.6,inside); col=mix(col,own.rgb*(dot(col,vec3(.3,.59,.11))*1.25+.05),own2*.15); col=max(vec3(0.),mix(vec3(dot(col,vec3(.3,.59,.11))),col,1.28));
+  float own2=smoothstep(.2,.6,inside);
   col*=1.-.22*smoothstep(.5,.72,fbm(p*.075+vec2(time*.012,time*.007)))*(1.-night);
   col=mix(col,col*vec3(.62,.64,.68),wet);
   diffuseColor.rgb=pow(col,vec3(1.35));`;
@@ -69,21 +72,41 @@ const ripple = (s: { fragmentShader: string }) => {
     { vec2 o=vW.xz*4.; float a=vn(o+time*.6)+.5*vn(o*2.7-time*.8), b=vn(o+vec2(.2,0.)+time*.6)+.5*vn((o+vec2(.2,0.))*2.7-time*.8), c=vn(o+vec2(0.,.2)+time*.6)+.5*vn((o+vec2(0.,.2))*2.7-time*.8);
       normal=normalize(normal+(viewMatrix*vec4(a-b,0.,a-c,0.)).xyz*.55); }`);
 };
-/** Quarteirões, ruas e calçadas, nítidos em qualquer distância */
+/** Bairros: avenidas com canteiro, ruas, calçadas, praça central, parques e borda irregular */
 const URBAN = `
-  vec2 l=vUv2.xy; float rad=vUv2.z; float d=length(l)/rad; vec2 g=(l-.0425)/.17; vec2 f=abs(fract(g+.5)-.5)*.17; float aa=max(fwidth(l.x),fwidth(l.y));
-  float st=1.-smoothstep(.017-aa,.017+aa,min(f.x,f.y)); float side=1.-smoothstep(.026-aa,.026+aa,min(f.x,f.y));
-  vec2 b=floor(g+.5); float bh=h21(b); vec3 block=mix(mix(vec3(.4,.36,.3),vec3(.5,.47,.42),bh),vec3(.26,.34,.16),step(.84,bh)); block*=.85+.25*vn(vW.xz*60.);
-  vec3 asph=vec3(.15,.155,.17)*(.85+.3*vn(vW.xz*120.)); float dash=step(.5,fract((f.x<f.y?l.y:l.x)*22.))*(1.-smoothstep(.0012,.0012+aa,min(f.x,f.y)));
-  vec3 cc=mix(block,vec3(.55,.54,.52),side); cc=mix(cc,asph,st); cc=mix(cc,vec3(.85,.75,.35),dash*step(aa,.01)*.8);
-  cc=pow(cc,vec3(1.75)); diffuseColor.rgb=mix(cc,cc*vec3(.6,.62,.66),wet); diffuseColor.a=1.-smoothstep(.86,1.,d+(vn(l*9.)-.5)*.16);`;
-
+  vec2 l=vUv2.xy; float rad=vUv2.z; float d=length(l)/rad; float aa=max(fwidth(l.x),fwidth(l.y));
+  vec2 g=(l-.0425)/.17; vec2 f=abs(fract(g+.5)-.5)*.17; vec2 b=floor(g+.5); float bh=h21(b+floor(rad*91.));
+  float ave=min(abs(l.x-.0425),abs(l.y-.0425)); float st=1.-smoothstep(.0155-aa,.0155+aa,min(f.x,f.y)); float av=1.-smoothstep(.03-aa,.03+aa,ave);
+  float side=1.-smoothstep(.023-aa,.023+aa,min(f.x,f.y)); float avs=1.-smoothstep(.039-aa,.039+aa,ave);
+  float grain=vn(vW.xz*90.), patchy=fbm(vW.xz*6.);
+  vec3 lot=mix(vec3(.43,.4,.36),vec3(.55,.51,.45),bh)*(.82+.3*patchy); vec3 yard=mix(vec3(.33,.36,.2),vec3(.42,.4,.27),patchy);
+  float park=step(.87,bh); vec3 block=mix(lot,yard,smoothstep(.3,.62,patchy+d*.25)); block=mix(block,vec3(.2,.34,.13)*(.75+.5*fbm(vW.xz*18.)),park);
+  vec2 pk=abs(fract(g)-.5); float walk=(1.-smoothstep(.02,.035,abs(pk.x-pk.y)))*park; block=mix(block,vec3(.66,.6,.48),walk*.8);
+  float plaza=1.-smoothstep(.1-aa,.1+aa,max(abs(l.x),abs(l.y))); float tile=step(.5,fract(l.x*26.))*step(.5,fract(l.y*26.))+step(fract(l.x*26.),.5)*step(fract(l.y*26.),.5);
+  vec3 asph=vec3(.235,.24,.255)*(.88+.22*grain); vec3 walkc=vec3(.66,.645,.61)*(.94+.1*grain);
+  float lane=(1.-smoothstep(.0011,.0011+aa,min(f.x,f.y)))*step(.5,fract((f.x<f.y?l.y:l.x)*24.)); float near=step(aa,.004);
+  float med=1.-smoothstep(.0045-aa,.0045+aa,ave); float edge=(1.-smoothstep(.001,.001+aa,abs(ave-.026)));
+  vec3 cc=mix(block,walkc,max(side,avs)); cc=mix(cc,asph,st); cc=mix(cc,vec3(.86,.83,.74),lane*near*.7); cc=mix(cc,asph*.95,av);
+  cc=mix(cc,vec3(.24,.36,.16)*(.8+.4*grain),med*av); cc=mix(cc,vec3(.88),edge*av*near*.6);
+  cc=mix(cc,mix(vec3(.6,.55,.47),vec3(.72,.67,.58),tile),plaza);
+  cc=pow(cc,vec3(1.62)); diffuseColor.rgb=mix(cc,cc*vec3(.55,.58,.64),wet);
+  float shape=d+(fbm(vW.xz*3.+rad*7.)-.5)*.34; diffuseColor.a=1.-smoothstep(.84,.93,shape);`;
+/** Janelas, portas, telhas e lajes calculadas na superfície; acendem à noite */
+const FACADE = (roof: string) => `
+  vec3 n=abs(vNw); vec2 wu=n.x>n.z?vL.zy:vL.xy; float tone=.9+.16*vn(vL.xz*40.+vSeed*7.);
+  if(n.y>.5){ ${roof} } else {
+    vec2 cell=vec2(.0115,.0135); vec2 c=wu/cell; vec2 id=floor(c); vec2 fr=fract(c); float aw=max(fwidth(c.x),fwidth(c.y));
+    float win=smoothstep(.2-aw,.2+aw,fr.x)*smoothstep(.2-aw,.2+aw,1.-fr.x)*smoothstep(.24-aw,.24+aw,fr.y)*smoothstep(.2-aw,.2+aw,1.-fr.y); win=mix(win,.34,smoothstep(.35,1.1,aw));
+    float hw=h21(id+vSeed*31.); vec3 gl=mix(vec3(.05,.08,.11),vec3(.2,.3,.38),hw*.8); float ground=step(wu.y,.013);
+    diffuseColor.rgb*=tone*(1.-.12*step(fr.y,.07)*(1.-smoothstep(.3,.9,aw))); diffuseColor.rgb=mix(diffuseColor.rgb,gl,win*(1.-ground*.4)); vWin=win*step(.42,hw)*(.55+.6*h21(id.yx+vSeed))*mix(1.,.3,smoothstep(.3,1.,aw)); }`;
 const roadTexture = () => {
   const c = document.createElement('canvas');
   c.width = 128;
   c.height = 256;
   const x = c.getContext('2d')!;
-  x.fillStyle = '#7d6f57';
+  const g = x.createLinearGradient(0, 0, 128, 0);
+  for (const [k, a] of [[0, 0], [0.13, 0.75], [0.87, 0.75], [1, 0]] as const) g.addColorStop(k, `rgba(122,106,80,${a})`);
+  x.fillStyle = g;
   x.fillRect(0, 0, 128, 256);
   x.fillStyle = '#34373c';
   x.fillRect(16, 0, 96, 256);
@@ -102,6 +125,8 @@ const roadTexture = () => {
   t.anisotropy = 16;
   return t;
 };
+/** Cada cidade tem o seu próprio alinhamento de ruas */
+export const angleOf = (c: City) => ((c.id * 37) % 90) * (Math.PI / 180) * 0.9;
 type Pt = { x: number; z: number };
 /** Ponto de uma estrada (k de 0 a 1) */
 function roadAt(i: number, k: number): Pt {
@@ -113,7 +138,7 @@ function roadAt(i: number, k: number): Pt {
   return { x: u * u * a.x + 2 * u * k * mx + k * k * b.x, z: u * u * a.z + 2 * u * k * mz + k * k * b.z };
 }
 /** Fita que acompanha o relevo */
-function ribbons(lines: Pt[][], w: number, lift: number, rep: number) {
+function ribbons(lines: Pt[][], width: number, lift: number, rep: number, vary = 0) {
   const pos: number[] = [];
   const uv: number[] = [];
   const idx: number[] = [];
@@ -125,9 +150,10 @@ function ribbons(lines: Pt[][], w: number, lift: number, rep: number) {
       const a = Math.atan2(n.z - b.z, n.x - b.x) + Math.PI / 2;
       if (i) len += Math.hypot(p.x - b.x, p.z - b.z);
       const at = pos.length / 3;
+      const w = width * (1 + vary * (noise(p.x * 1.1, p.z * 1.1) - 0.5) * 2);
       for (const s of [1, -1]) {
         const [x, z] = [p.x + Math.cos(a) * w * s, p.z + Math.sin(a) * w * s];
-        pos.push(x, Math.max(Y(x, z), Y(p.x, p.z)) + lift, z);
+        pos.push(x, Math.max(Y(x, z), Y(p.x, p.z), (Y(b.x, b.z) + Y(n.x, n.z)) / 2) + lift, z);
       }
       uv.push(0, len * rep, 1, len * rep);
       if (i) idx.push(at - 2, at, at - 1, at, at + 1, at - 1);
@@ -161,12 +187,14 @@ export class Scenery {
   private ownCtx!: CanvasRenderingContext2D;
   private ownTex!: THREE.CanvasTexture;
   private ownDirty = true;
+  private lines: THREE.LineSegments | null = null;
+  private edges = new Map<number, [number, number]>();
   private cars!: THREE.InstancedMesh;
   private lamps!: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
   private traffic: { road: number; k: number; v: number; side: number }[] = [];
   private houses = new Map<number, House[]>();
   private looks = new Map<number, string>();
-  private tall!: THREE.MeshStandardMaterial;
+  private cityTrees: THREE.Matrix4[] = [];
   private grass!: THREE.InstancedMesh;
   private grassAt = '';
   private turbines: THREE.Object3D[] = [];
@@ -224,7 +252,7 @@ export class Scenery {
     sea.position.y = 0.02;
     sea.receiveShadow = true;
     // Açudes e rios
-    const lake = world(new THREE.MeshStandardMaterial({ color: '#17506a', roughness: 0.1, metalness: 0.15 }), WATER('0.'), ripple);
+    const lake = world(new THREE.MeshStandardMaterial({ color: '#1d5f78', roughness: 0.1, metalness: 0.15, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -8 }), WATER('0.'), ripple);
     for (const l of LAKES) {
       const s = new THREE.Shape();
       for (let i = 0; i <= 72; i++) {
@@ -239,9 +267,19 @@ export class Scenery {
       const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p.x, 0, p.z)));
       return curve.getSpacedPoints(Math.ceil(curve.getLength() / 0.12)).map((v) => ({ x: v.x + (noise(v.x * 1.3, v.z * 1.3) - 0.5) * 0.35, z: v.z + (noise(v.x * 1.3 + 9, v.z * 1.3) - 0.5) * 0.35 })).filter((v) => Y(v.x, v.z) > 0.03);
     });
-    const river = this.add(new THREE.Mesh(ribbons(lines, 0.075, 0.02, 1), lake));
+    const river = this.add(new THREE.Mesh(ribbons(lines, 0.08, 0.022, 1, 0.5), lake));
     (river.material as THREE.Material).side = THREE.DoubleSide;
-    const bank = this.add(new THREE.Mesh(ribbons(lines, 0.13, 0.012, 1), world(new THREE.MeshStandardMaterial({ color: '#3f5a24', roughness: 1, side: THREE.DoubleSide }), 'diffuseColor.rgb*=.7+.6*vn(vW.xz*40.);')));
+    const soft = document.createElement('canvas');
+    soft.width = 64;
+    soft.height = 4;
+    const sx = soft.getContext('2d')!;
+    const sg = sx.createLinearGradient(0, 0, 64, 0);
+    for (const [k, a] of [[0, 0], [0.3, 0.9], [0.7, 0.9], [1, 0]] as const) sg.addColorStop(k, `rgba(72,98,44,${a})`);
+    sx.fillStyle = sg;
+    sx.fillRect(0, 0, 64, 4);
+    const softTex = new THREE.CanvasTexture(soft);
+    softTex.colorSpace = THREE.SRGBColorSpace;
+    const bank = this.add(new THREE.Mesh(ribbons(lines, 0.26, 0.012, 1, 0.5), world(new THREE.MeshStandardMaterial({ map: softTex, transparent: true, depthWrite: false, roughness: 1, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 }), 'diffuseColor.rgb*=.6+.8*fbm(vW.xz*16.);')));
     bank.receiveShadow = true;
   }
   /** Cor do dono de cada município, lida pelo chão */
@@ -260,6 +298,7 @@ export class Scenery {
   paint(id: number, color: string) {
     if (this.painted.get(id) === color) return;
     this.painted.set(id, color);
+    this.edge(id, color);
     const x = this.ownCtx;
     const { width, height } = x.canvas;
     x.beginPath();
@@ -306,28 +345,45 @@ export class Scenery {
     }
     return mesh;
   }
+  /** Limite do município: discreto quando neutro, na cor do dono quando tomado */
+  private edge(id: number, color: string) {
+    if (!this.lines) return;
+    const [at, n] = this.edges.get(id)!;
+    const c = new THREE.Color(color || '#f4ecd2');
+    const a = this.lines.geometry.attributes.color as THREE.BufferAttribute;
+    for (let i = at; i < at + n; i++) a.setXYZW(i, c.r, c.g, c.b, color ? 0.95 : 0.13);
+    a.needsUpdate = true;
+  }
   private borders() {
     const pos: number[] = [];
-    RINGS.forEach((l) => l.forEach((r) => {
+    RINGS.forEach((l, id) => {
+      const from = pos.length / 3;
+      l.forEach((r) => {
       for (let i = 1; i < r.length; i++) {
         const [a, b] = [r[i - 1], r[i]];
         const n = Math.max(1, Math.ceil(Math.hypot(a[0] - b[0], a[1] - b[1]) / 0.25));
         for (let k = 0; k < n; k++) for (const t of [k / n, (k + 1) / n]) {
           const [x, z] = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-          pos.push(x, Math.max(0.03, Y(x, z)) + 0.025, z);
+          pos.push(x, Math.max(0.03, Y(x, z)) + 0.03, z);
         }
       }
-    }));
+      });
+      this.edges.set(id, [from, pos.length / 3 - from]);
+    });
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    this.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: '#1b1a12', transparent: true, opacity: 0.34 })));
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array((pos.length / 3) * 4), 4));
+    this.lines = this.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false })));
+    this.lines.renderOrder = 3;
+    for (const c of CITIES) this.edge(c.id, '');
   }
   private urban() {
     const geos = CITIES.map((c) => {
-      const r = spread(c) * 1.2;
-      const g = new THREE.CircleGeometry(r, 28).rotateX(-Math.PI / 2);
+      const r = spread(c) * 1.28;
+      const g = new THREE.CircleGeometry(r, 36).rotateX(-Math.PI / 2);
       const p = g.attributes.position;
-      g.setAttribute('uvc', new THREE.BufferAttribute(new Float32Array(p.count * 3).map((_, i) => [p.getX(Math.floor(i / 3)), p.getZ(Math.floor(i / 3)), r][i % 3]), 3));
+      const [ca, sa] = [Math.cos(angleOf(c)), Math.sin(angleOf(c))];
+      g.setAttribute('uvc', new THREE.BufferAttribute(new Float32Array(p.count * 3).map((_, i) => [p.getX(Math.floor(i / 3)) * ca + p.getZ(Math.floor(i / 3)) * sa, -p.getX(Math.floor(i / 3)) * sa + p.getZ(Math.floor(i / 3)) * ca, r][i % 3]), 3));
       return g.translate(c.x, Y(c.x, c.z) + 0.012, c.z);
     });
     const m = world(new THREE.MeshStandardMaterial({ transparent: true, depthWrite: false, roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -6 }), URBAN, (s) => {
@@ -340,66 +396,98 @@ export class Scenery {
   }
   private roads() {
     const lines = ROADS.map(([a, b], r) => {
-      const n = Math.max(10, Math.ceil(Math.hypot(a.x - b.x, a.z - b.z) / 0.14));
+      const n = Math.max(10, Math.ceil(Math.hypot(a.x - b.x, a.z - b.z) / 0.09));
       // Dentro da cidade quem manda são as ruas
       const pts = Array.from({ length: n + 1 }, (_, i) => roadAt(r, i / n));
-      return pts.filter((p) => Math.hypot(p.x - a.x, p.z - a.z) > spread(a) * 0.8 && Math.hypot(p.x - b.x, p.z - b.z) > spread(b) * 0.8);
+      return pts.filter((p) => Math.hypot(p.x - a.x, p.z - a.z) > spread(a) * 0.62 && Math.hypot(p.x - b.x, p.z - b.z) > spread(b) * 0.62);
     });
-    const m = this.add(new THREE.Mesh(ribbons(lines, 0.058, 0.022, 3), world(new THREE.MeshStandardMaterial({ map: roadTexture(), roughness: 0.9, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -10 }))));
+    const m = this.add(new THREE.Mesh(ribbons(lines, 0.058, 0.034, 3), world(new THREE.MeshStandardMaterial({ map: roadTexture(), transparent: true, depthWrite: false, roughness: 0.9, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -10 }))));
     m.receiveShadow = true;
-    m.renderOrder = 1;
+    m.renderOrder = 2;
   }
 
   // ===== Cidades =====
   private towns() {
     const box = (w: number, h: number, d: number, y: number, x = 0, z = 0) => new THREE.BoxGeometry(w, h, d).translate(x, y, z).toNonIndexed();
-    const gable = new THREE.CylinderGeometry(0.01, 0.66, 0.4, 4, 1).rotateY(Math.PI / 4).scale(1.1, 1, 0.95).translate(0, 0.8, 0).toNonIndexed();
+    /** Telhado de duas águas */
+    const roof = (w: number, h: number, d: number, y: number, x = 0, z = 0) => {
+      const sh = new THREE.Shape([[-w / 2, 0], [w / 2, 0], [0, h]].map(([a, b]) => new THREE.Vector2(a, b)));
+      return new THREE.ExtrudeGeometry(sh, { depth: d, bevelEnabled: false }).translate(x, y, z - d / 2);
+    };
+    const join = (l: THREE.BufferGeometry[]) => mergeGeometries(l.map((g) => {
+      const n = g.index ? g.toNonIndexed() : g;
+      n.deleteAttribute('uv');
+      return n;
+    }))!;
     const kinds = {
-      house: mergeGeometries([box(1, 0.6, 0.85, 0.3), gable, box(0.16, 0.3, 0.04, 0.15, 0.1, 0.43)])!,
-      shop: mergeGeometries([box(1.15, 0.55, 1, 0.275), box(1.2, 0.06, 1.05, 0.57), box(0.3, 0.14, 0.3, 0.66, 0.25, 0.2), box(0.9, 0.12, 0.2, 0.36, 0, 0.55)])!,
-      tower: mergeGeometries([box(1, 1, 1, 0.5), box(1.06, 0.015, 1.06, 0.25), box(1.06, 0.015, 1.06, 0.5), box(1.06, 0.015, 1.06, 0.75), box(0.7, 0.06, 0.7, 1.03), box(0.2, 0.05, 0.3, 1.08)])!,
-      step: mergeGeometries([box(1, 0.6, 1, 0.3), box(0.72, 0.3, 0.72, 0.75), box(0.42, 0.14, 0.42, 0.97), box(0.04, 0.3, 0.04, 1.15)])!,
+      house: join([box(0.95, 0.5, 0.8, 0.25), roof(1.08, 0.34, 0.92, 0.5), box(0.12, 0.2, 0.12, 0.72, 0.25, 0.1)]),
+      villa: join([box(0.7, 0.5, 1, 0.25, -0.16), roof(0.8, 0.3, 1.1, 0.5, -0.16), box(0.5, 0.42, 0.55, 0.21, 0.34, 0.16), roof(0.6, 0.22, 0.65, 0.42, 0.34, 0.16)]),
+      shop: join([box(1.2, 0.58, 1.05, 0.29), box(1.26, 0.06, 1.1, 0.6), box(0.3, 0.14, 0.3, 0.68, 0.25, 0.2), box(0.2, 0.1, 0.2, 0.66, -0.3, -0.2)]),
+      hall: join([box(1.5, 0.5, 1, 0.25), roof(1, 0.24, 1.56, 0.5).rotateY(Math.PI / 2)]),
+      apart: join([box(1, 1, 0.78, 0.5), box(0.7, 1, 1, 0.5), box(1.02, 0.03, 0.8, 1.01), box(0.26, 0.07, 0.3, 1.06)]),
+      tower: join([box(1, 1, 1, 0.5), box(1.05, 0.012, 1.05, 0.14), box(1.04, 0.02, 1.04, 1), box(0.66, 0.06, 0.66, 1.03), box(0.2, 0.05, 0.3, 1.08)]),
+      step: join([box(1, 0.6, 1, 0.3), box(0.74, 0.3, 0.74, 0.75), box(0.46, 0.14, 0.46, 0.97), box(0.03, 0.3, 0.03, 1.15)]),
+      church: join([box(0.7, 0.62, 1.3, 0.31), roof(0.78, 0.36, 1.36, 0.62), box(0.34, 1.15, 0.34, 0.575, 0, 0.72), new THREE.ConeGeometry(0.26, 0.5, 4).rotateY(Math.PI / 4).translate(0, 1.4, 0.72), box(0.03, 0.2, 0.03, 1.72, 0, 0.72), box(0.1, 0.03, 0.03, 1.74, 0, 0.72)]),
     };
     type Kind = keyof typeof kinds;
     const raw: { kind: Kind; city: City; x: number; z: number; s: number; h: number; rot: number; rank: number; luck: number }[] = [];
+    const greens: THREE.Matrix4[] = [];
     let seed = 11;
     const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
     for (const c of CITIES) {
       const s0 = spread(c);
-      const n = Math.min(PHONE ? 90 : 150, 34 + Math.round(Math.sqrt(c.pop) / 8));
-      const used = new Set<string>();
-      for (let i = 0; i < n; i++) {
-        const a = rnd() * 6.283;
-        const d = Math.sqrt(0.04 + rnd() * 0.96) * s0;
-        const gx = Math.round((Math.cos(a) * d) / 0.085);
-        const gz = Math.round((Math.sin(a) * d) / 0.085);
-        const key = `${gx},${gz}`;
-        if (Math.hypot(gx, gz) * 0.085 < 0.15 || used.has(key)) continue;
-        used.add(key);
-        const big = c.pop > 45_000 && rnd() < (d < s0 * 0.55 ? 0.72 : 0.2);
-        const kind: Kind = big ? (rnd() < 0.3 ? 'step' : 'tower') : rnd() < 0.28 ? 'shop' : 'house';
-        // Do centro para a borda: a cidade cresce para fora
-        raw.push({ kind, city: c, x: c.x + gx * 0.085, z: c.z + gz * 0.085, s: 0.05 + rnd() * 0.014, h: big ? 1.5 + rnd() * (c.pop > 1e6 ? 8 : 3.4) * (1.15 - d / s0) : 1, rot: Math.floor(rnd() * 4) * (Math.PI / 2), rank: (d / s0) * 0.75 + rnd() * 0.25, luck: rnd() });
+      const turn = angleOf(c);
+      const [ca, sa] = [Math.cos(turn), Math.sin(turn)];
+      const at = (x: number, z: number) => ({ x: c.x + x * ca - z * sa, z: c.z + x * sa + z * ca });
+      // Igreja na praça
+      raw.push({ kind: 'church', city: c, ...at(0.105, -0.06), s: 0.062, h: 1, rot: -turn, rank: 0, luck: rnd() });
+      const n = Math.ceil(s0 / 0.085);
+      for (let i = -n; i <= n; i++) for (let j = -n; j <= n; j++) {
+        const [lx, lz] = [i * 0.085, j * 0.085];
+        const d = Math.hypot(lx, lz);
+        if (d > s0 || Math.max(Math.abs(lx), Math.abs(lz)) < 0.13) continue;
+        // Cada quadra de 0,17 tem quatro lotes; avenidas ficam livres
+        const [ax, az] = [Math.abs(lx - 0.0425), Math.abs(lz - 0.0425)];
+        if (Math.min(ax, az) < 0.04) continue;
+        const k = d / s0;
+        const p = at(lx, lz);
+        const full = (PHONE ? 0.66 : 0.86) * (c.pop > 400_000 ? 0.8 : 1);
+        if (rnd() > full * (1.05 - k * 0.4)) {
+          if (rnd() < 0.5) greens.push(new THREE.Matrix4().makeRotationY(rnd() * 6).setPosition(p.x + (rnd() - 0.5) * 0.03, Y(p.x, p.z), p.z + (rnd() - 0.5) * 0.03).scale(new THREE.Vector3().setScalar(0.4 + rnd() * 0.3)));
+          continue;
+        }
+        const big = c.pop > 40_000 && rnd() < (k < 0.35 ? 0.62 : k < 0.65 ? 0.24 : 0.06) * Math.min(1.25, c.pop / 180_000 + 0.45);
+        const u = rnd();
+        const kind: Kind = big ? (u < 0.45 ? 'apart' : u < 0.82 ? 'tower' : 'step') : k < 0.35 && u < 0.5 ? 'shop' : k > 0.8 && u < 0.08 ? 'hall' : u < 0.24 ? 'villa' : 'house';
+        raw.push({ kind, city: c, x: p.x, z: p.z, s: 0.05 + rnd() * 0.01, h: big ? 1.4 + rnd() * (c.pop > 1e6 ? 6.5 : 2.8) * (1.2 - k) : 1, rot: -turn + Math.floor(rnd() * 4) * (Math.PI / 2), rank: k * 0.8 + rnd() * 0.2, luck: rnd() });
       }
     }
-    const lightless = world(new THREE.MeshStandardMaterial({ roughness: 0.88 }));
-    this.tall = world(new THREE.MeshStandardMaterial({ roughness: 0.28, metalness: 0.35, emissiveMap: facade(), emissive: '#ffd98f', emissiveIntensity: 0.25 }));
+    const build = (top: string, metal: number, rough: number) => world(new THREE.MeshStandardMaterial({ roughness: rough, metalness: metal }), `float vWin=0.;\n${FACADE(top)}`, (s) => {
+      s.vertexShader = s.vertexShader.replace('varying vec3 vW;', 'varying vec3 vL; varying float vSeed; varying vec3 vW;').replace('vNw=normal;', 'vNw=normal; vL=position*vec3(length(instanceMatrix[0].xyz),length(instanceMatrix[1].xyz),length(instanceMatrix[2].xyz)); vSeed=fract(instanceMatrix[3][0]*13.7+instanceMatrix[3][2]*7.3);');
+      s.fragmentShader = s.fragmentShader.replace('varying vec3 vW;', 'varying vec3 vL; varying float vSeed; varying vec3 vW;').replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance+=vWin*night*mix(vec3(1.,.72,.36),vec3(.85,.92,1.),step(.8,vSeed))*.8;');
+    });
+    const tiles = build('float rg=mix(sin(vL.z*900.),sin(vL.x*900.),step(.35,n.x)); diffuseColor.rgb=mix(vec3(.4,.17,.1),vec3(.52,.27,.17),vSeed)*(.82+.3*vn(vL.xz*60.+vSeed))*(.93+.07*rg);', 0, 0.9);
+    const slab = build('diffuseColor.rgb=mix(vec3(.28,.28,.29),vec3(.5,.49,.47),vSeed)*(.85+.25*vn(vL.xz*90.));', 0.05, 0.75);
+    const glassy = build('diffuseColor.rgb=mix(vec3(.25,.26,.28),vec3(.45),vSeed)*(.85+.25*vn(vL.xz*90.));', 0.3, 0.32);
+    const mats: Record<Kind, THREE.Material> = { house: tiles, villa: tiles, church: tiles, hall: slab, shop: slab, apart: slab, tower: glassy, step: glassy };
     const tints: Record<Kind, string[]> = {
-      house: ['#cdbfa8', '#e2dccf', '#b8a48c', '#b36a4c', '#d3cdc4', '#c7b48b', '#9c5a43', '#8aa0a8'], shop: ['#d7d2c8', '#b9b4a8', '#c98f5a', '#7f97a8', '#e6e2d8'],
-      tower: ['#c8d2da', '#8ea2b4', '#e4e6e6', '#b9aa93', '#738ba0', '#5f7f9c'], step: ['#d9dfe3', '#9fb3c2', '#c9bda8'],
+      house: ['#d8cbb2', '#e8e2d4', '#c6b498', '#d9b48f', '#cfd2c6', '#e0cfa4', '#b9c4c4', '#d7a98c'], villa: ['#ece6d8', '#dccfb5', '#cdb391', '#d8dcd6'], church: ['#f3efe4', '#e9dcc0', '#dfe3e2'],
+      shop: ['#d7d2c8', '#c2b9a6', '#c99a6b', '#9fb0b8', '#e6e2d8'], hall: ['#b9b6ac', '#a7b0b3', '#c3ab8c'], apart: ['#ded7c9', '#c9cdcc', '#cdb79b', '#e6e1d6', '#b4bcc0'],
+      tower: ['#b8c5cf', '#93a7b6', '#dcdfe0', '#c0b199', '#7f96a8'], step: ['#d3d9dc', '#a5b6c2', '#c9bda8'],
     };
     for (const k of Object.keys(kinds) as Kind[]) {
-      const list = raw.filter((r) => r.kind === k);
-      const mesh = this.add(new THREE.InstancedMesh(kinds[k], k === 'tower' || k === 'step' ? this.tall : lightless, list.length));
+      const list = raw.filter((x) => x.kind === k);
+      const mesh = this.add(new THREE.InstancedMesh(kinds[k], mats[k], list.length));
       mesh.castShadow = mesh.receiveShadow = true;
       mesh.frustumCulled = false;
-      list.forEach((r, i) => {
-        const l = this.houses.get(r.city.id) ?? [];
-        if (!l.length) this.houses.set(r.city.id, l);
-        l.push({ mesh, i, x: r.x, z: r.z, rot: r.rot, s: r.s, h: r.h, tint: new THREE.Color(tints[k][(i * 7) % tints[k].length]), rank: r.rank, luck: r.luck });
+      list.forEach((x, i) => {
+        const l = this.houses.get(x.city.id) ?? [];
+        if (!l.length) this.houses.set(x.city.id, l);
+        l.push({ mesh, i, x: x.x, z: x.z, rot: x.rot, s: x.s, h: x.h, tint: new THREE.Color(tints[k][(i * 7) % tints[k].length]), rank: x.rank, luck: x.luck });
         mesh.setColorAt(i, new THREE.Color());
       });
     }
+    this.cityTrees = greens;
     for (const c of CITIES) this.look(c.id, 0, 0);
     // Luzes das ruas
     const p: number[] = [];
@@ -423,7 +511,7 @@ export class Scenery {
     const up = new THREE.Vector3(0, 1, 0);
     const c = new THREE.Color();
     for (const h of this.houses.get(id) ?? []) {
-      const shown = h.rank < 0.58 + dev * 0.15;
+      const shown = h.rank < 0.64 + dev * 0.13;
       const broken = h.luck < ruin;
       const tall = h.h * (1 + dev * 0.16) * (broken ? 0.16 + h.luck * 0.3 : 1);
       q.setFromAxisAngle(up, h.rot + (broken ? h.luck : 0));
@@ -443,7 +531,7 @@ export class Scenery {
     // Carnaúba, a palmeira do Ceará
     const palm = mergeGeometries([plain(new THREE.CylinderGeometry(0.006, 0.011, 0.21, 5).translate(0, 0.105, 0), '#8a7458'), ...[0, 1, 2, 3, 4, 5, 6, 7].map(leaf)])!;
     const cactus = mergeGeometries([plain(new THREE.CylinderGeometry(0.012, 0.014, 0.13, 6).translate(0, 0.065, 0), '#ffffff'), plain(new THREE.CylinderGeometry(0.008, 0.008, 0.05, 5).translate(0.03, 0.085, 0), '#eeeeee'), plain(new THREE.CylinderGeometry(0.008, 0.008, 0.04, 5).translate(-0.028, 0.07, 0), '#eeeeee')])!;
-    const rock = plain(new THREE.DodecahedronGeometry(0.07, 0).scale(1.2, 0.7, 1), '#ffffff');
+    const rock = plain(new THREE.IcosahedronGeometry(0.045, 1).scale(1.25, 0.65, 1), '#ffffff');
     const place = (geo: THREE.BufferGeometry, want: number, tints: string[], ok: (x: number, z: number, y: number) => boolean, group = 4) => {
       const list: THREE.Matrix4[] = [];
       for (let i = 0; i < want * 6 && list.length < want; i++) {
@@ -464,6 +552,14 @@ export class Scenery {
       mesh.castShadow = true;
       mesh.frustumCulled = false;
     };
+    // Árvores das cidades
+    const town = this.add(new THREE.InstancedMesh(tree, world(new THREE.MeshStandardMaterial({ roughness: 1, vertexColors: true })), this.cityTrees.length));
+    this.cityTrees.forEach((m, i) => {
+      town.setMatrixAt(i, m);
+      town.setColorAt(i, new THREE.Color(['#48672d', '#567434', '#3c5626'][i % 3]));
+    });
+    town.castShadow = true;
+    town.frustumCulled = false;
     const f = PHONE ? 0.45 : 1;
     place(tree, 2600 * f, ['#3f5a26', '#4c6a2c', '#33481f', '#5f6b33'], (x, z, y) => y > 0.6 || noise(x * 0.3, z * 0.3) > 0.5, 8);
     place(tree, 900 * f, ['#6f6b3a', '#7a7440', '#5d5f34'], () => true, 3);
@@ -497,7 +593,7 @@ export class Scenery {
       const [px, pz] = [(gx + r * 1.6 - 0.8) * cell, (gz + r2 * 1.6 - 0.8) * cell];
       const y = Y(px, pz);
       if (y < 0.25 || noise(px * 0.7, pz * 0.7) < 0.3 || near.some((c) => Math.hypot(c.x - px, c.z - pz) < spread(c) * 1.12) || isWater(px, pz)) continue;
-      const s = 0.6 + r * 0.9;
+      const s = 0.4 + r * 0.6;
       this.grass.setMatrixAt(n, m.makeRotationY(r2 * 12).scale(new THREE.Vector3(s, s, s)).setPosition(px, y, pz));
       this.grass.setColorAt(n++, col.setHSL(0.14 + noise(px * 0.4, pz * 0.4) * 0.11, 0.42, 0.2 + r * 0.14));
       if (n >= this.grass.instanceMatrix.count) break;
@@ -529,9 +625,12 @@ export class Scenery {
     const j = at('Juazeiro do Norte', -0.35, -1.05);
     put(j, cyl(0.2, 0.26, 0.1), '#cfc8ba');
     put(j, cyl(0.055, 0.09, 0.36), '#f1efe9', 0, 0.1);
-    put(j, new THREE.SphereGeometry(0.05, 12, 10), '#f1efe9', 0, 0.5);
-    put(j, cyl(0.075, 0.075, 0.012), '#e2dfd8', 0, 0.535);
+    put(j, new THREE.SphereGeometry(0.045, 12, 10), '#d9b596', 0, 0.5);
+    put(j, cyl(0.08, 0.08, 0.012), '#2f2b27', 0, 0.535);
     put(j, cyl(0.012, 0.016, 0.3), '#d8d2c4', 0.09, 0.1);
+    put(j, cyl(0.05, 0.075, 0.02), '#3a352f', 0, 0.28);
+    put(j, cyl(0.016, 0.02, 0.2), '#f1efe9', 0.06, 0.28, 0.03).rotation.z = -0.5;
+    j.scale.setScalar(0.62);
     // Porto do Pecém: cais, guindastes e navio
     const p = at('São Gonçalo do Amarante', 0.75, -1.05);
     p.position.y = 0.04;
@@ -569,8 +668,14 @@ export class Scenery {
     }
     // Fortaleza: estádio, farol e jangadas
     const s = at('Fortaleza', -0.25, 1.28);
-    put(s, new THREE.TorusGeometry(0.15, 0.045, 8, 28).rotateX(Math.PI / 2).scale(1.2, 1.1, 1), '#dfe4e8', 0, 0.05);
-    put(s, box(0.2, 0.012, 0.14), '#3f8f3a');
+    const bowl = (pts: [number, number][]) => new THREE.LatheGeometry(pts.map(([x, y]) => new THREE.Vector2(x, y)), 48).scale(1.25, 1, 1);
+    put(s, bowl([[0.1, 0.02], [0.19, 0.11], [0.2, 0.11], [0.21, 0]]), '#c9ced2', 0, 0, 0, { rough: 0.6 });
+    for (let k = 0; k < 4; k++) put(s, bowl([[0.11 + k * 0.02, 0.026 + k * 0.02], [0.126 + k * 0.02, 0.04 + k * 0.02]]), ['#1f5f9e', '#e8ecef', '#1f5f9e', '#e8ecef'][k]);
+    put(s, bowl([[0.15, 0.128], [0.215, 0.118], [0.215, 0.124], [0.15, 0.133]]), '#f2f4f5', 0, 0, 0, { rough: 0.4 });
+    put(s, box(0.2, 0.012, 0.13), '#4a8f3c');
+    for (let k = 0; k < 5; k++) put(s, box(0.02, 0.0125, 0.13), '#56a046', -0.08 + k * 0.04);
+    put(s, box(0.002, 0.014, 0.13), '#f4f6f4');
+    s.scale.setScalar(0.85);
     for (let i = 0; i < 6; i++) {
       const c = cityNamed(['Fortaleza', 'Aquiraz', 'Cascavel', 'Camocim', 'Acaraú', 'Icapuí'][i]);
       for (let k = 0; k < 3; k++) {
@@ -658,7 +763,6 @@ export class Scenery {
     d.day.value = sky.light;
     d.warm.value = sky.warm;
     d.gray.value = Math.max(sky.rain, sky.mist);
-    this.tall.emissiveIntensity = 0.12 + (1 - sky.light) * 1.15;
     this.lamps.material.opacity = Math.max(0, 0.9 - sky.light * 1.3);
     this.rain.visible = sky.rain > 0.02;
     if (this.rain.visible) {

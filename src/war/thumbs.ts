@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { UNIT_IDS, UnitId, WORKS_IDS, WorksId } from './data';
-import { worksParts } from './models';
 import { unitGeometry } from './units';
+import { worksGeometry } from './works';
 
 /** Ícones das tropas e construções: fotos dos próprios modelos 3D, feitas uma vez */
 let pics: Record<string, string> | null = null;
@@ -31,9 +31,7 @@ export function thumbs(): Record<string, string> {
     const body = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.15 });
     for (const k of UNIT_IDS) shoot(k, new THREE.Mesh(unitGeometry(k as UnitId), body));
     for (const k of ['comando', ...WORKS_IDS] as WorksId[]) {
-      const g = new THREE.Group();
-      for (const p of worksParts(k)) g.add(new THREE.Mesh(p.geo, p.mat));
-      shoot(`w-${k}`, g);
+      shoot(`w-${k}`, new THREE.Mesh(worksGeometry(k), body));
     }
     r.dispose();
     r.forceContextLoss();

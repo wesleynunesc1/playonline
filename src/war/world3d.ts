@@ -5,11 +5,12 @@ import { sound } from '../utils/audio';
 import { CAPTURE_S, CITIES, CITY, City, EVENTS, NUKES, POWERS, PowerId, UNITS, UNIT_IDS, UnitId, WORKS_IDS, WorksId } from './data';
 import { W, fxQueue } from './match';
 import { Fx, Unit, World, allied, eyes, hasRule, mods } from './sim';
-import { fxTexture, makeRenderer, mat, worksParts } from './models';
+import { fxTexture, makeRenderer, mat } from './models';
 import { Post } from './post';
 import { Scenery, Sky, U } from './scenery';
 import { BOUNDS, PHONE, Y, spread } from './terrain';
-import { UNIT_TIME, unitGeometry, unitMaterial } from './units';
+import { UNIT_NIGHT, UNIT_TIME, unitGeometry, unitMaterial } from './units';
+import { worksGeometry } from './works';
 
 /** Mundo aberto em 3D: terreno, cidades, tropas, efeitos e visão. Lê o estado da partida a cada quadro. */
 export interface Tap { x: number; z: number; unit: Unit | null; city: City | null }
@@ -95,7 +96,7 @@ export class World3D {
   private raf = 0;
   private labels = new Map<number, { sprite: THREE.Sprite; text: string; h: number }>();
   private units = new Map<UnitId, THREE.InstancedMesh>();
-  private works = new Map<WorksId, THREE.InstancedMesh[]>();
+  private works = new Map<WorksId, THREE.InstancedMesh>();
   private worksSig = '';
   private discs!: THREE.InstancedMesh;
   private barBack!: THREE.InstancedMesh;
@@ -136,6 +137,8 @@ export class World3D {
   private scenery: Scenery;
   private flashes: THREE.PointLight[] = [];
   private hot = new Map<string, THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>>();
+  /** Passeio lento de câmera atrás do menu */
+  orbit = false;
   selected = new Set<number>();
   focus = 0;
   /** Apoio sendo mirado */
@@ -249,6 +252,11 @@ export class World3D {
       this.camera.position.add(d);
       if (d.length() < 0.004) this.goal = null;
     }
+    if (this.orbit) {
+      const a = performance.now() / 26000;
+      this.controls.target.set(21.5, Y(21.5, -13), -13);
+      this.camera.position.set(21.5 + Math.cos(a) * 11, 5.5, -13 + Math.sin(a) * 11);
+    }
     const t = this.controls.target;
     const before = t.clone();
     if (this.follow) {
@@ -286,6 +294,11 @@ export class World3D {
     const off = this.camera.position.clone().sub(this.controls.target);
     if (distance && off.length() > distance) this.camera.position.copy(this.controls.target).add(off.setLength(distance));
   }
+  /** Vista geral do estado, com a cidade escolhida no centro */
+  overview(x: number, z: number) {
+    this.controls.target.set(x * 0.4, Y(x * 0.4, z * 0.4), z * 0.4);
+    this.camera.position.set(x * 0.4, 72, z * 0.4 + 46);
+  }
   get mask() {
     return this.scenery.mask;
   }
@@ -297,7 +310,8 @@ export class World3D {
   }
   /** Sol, lua, cor do céu e clima */
   private daylight(w: World | null, now: number, dt: number) {
-    const t = w ? w.t : now / 1000;
+    // No menu é sempre fim de tarde
+    const t = w ? w.t : this.orbit ? DAY_S * 0.355 : DAY_S * 0.1;
     const a = ((t / DAY_S + 0.16) % 1) * Math.PI * 2;
     const up = Math.sin(a) * 0.8 + 0.3;
     const light = THREE.MathUtils.smoothstep(up, -0.12, 0.28);
@@ -358,11 +372,12 @@ export class World3D {
       this.units.set(k, m);
     }
     for (const k of ['comando', ...WORKS_IDS] as WorksId[]) {
-      this.works.set(k, worksParts(k).map((p) => {
-        const m = inst(p.geo, p.mat, 140);
-        m.castShadow = p.mat !== undefined;
-        return m;
-      }));
+      const geo = worksGeometry(k).clone();
+      geo.setAttribute('anim', new THREE.InstancedBufferAttribute(new Float32Array(140 * 4), 4));
+      const m = inst(geo, body, 140);
+      m.setColorAt(0, new THREE.Color());
+      m.castShadow = m.receiveShadow = true;
+      this.works.set(k, m);
     }
     const wave = new THREE.MeshStandardMaterial({ side: THREE.DoubleSide, roughness: 0.8 });
     wave.onBeforeCompile = (x) => {
@@ -434,6 +449,7 @@ export class World3D {
   // ===== Quadro =====
   private draw(dt: number, now: number) {
     UNIT_TIME.value += dt;
+    UNIT_NIGHT.value = 1 - this.sky.light;
     for (const l of this.flashes) l.intensity *= Math.max(0, 1 - dt * 5);
     const w = W.world;
     this.daylight(w, now, dt);
@@ -448,7 +464,7 @@ export class World3D {
       fxQueue.length = 0;
       U.fogOn.value = 0;
       for (const m of this.units.values()) m.count = 0;
-      this.works.forEach((l) => l.forEach((m) => { m.count = 0; }));
+      this.works.forEach((m) => { m.count = 0; });
       this.worksSig = this.flags.sig = '';
       this.flags.pole.count = this.flags.cloth.count = this.cranes.count = 0;
       this.discs.count = this.barBack.count = this.barFill.count = 0;
@@ -609,7 +625,7 @@ export class World3D {
     }
   }
   private drawWorks(w: World) {
-    const sig = w.cities.map((c) => (c.works.length ? c.works.map((k) => k.k + (k.left > 0 ? '~' : '')).join() : '')).join('|');
+    const sig = w.cities.map((c) => (c.works.length ? c.owner + c.works.map((k) => k.k + (k.left > 0 ? '~' : '')).join() : '')).join('|');
     if (sig === this.worksSig) return;
     this.worksSig = sig;
     const n = {} as Record<WorksId, number>;
@@ -621,19 +637,21 @@ export class World3D {
         const at = n[k.k] ?? 0;
         if (at >= 140) return;
         n[k.k] = at + 1;
-        const s = k.k === 'comando' ? 0.078 : 0.075;
+        const s = k.k === 'comando' ? 0.085 : 0.08;
         // Em obras: ainda saindo do chão
         const m = new THREE.Matrix4().compose(new THREE.Vector3(x, Y(x, z), z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), i * 0.9), new THREE.Vector3(s, k.left > 0 ? s * 0.35 : s, s));
-        list.forEach((mesh) => mesh.setMatrixAt(at, m));
+        list.setMatrixAt(at, m);
+        list.setColorAt(at, new THREE.Color(w.players[c.owner]?.color ?? '#9aa3ad'));
         if (k.left > 0 && cranes < 80) this.cranes.setMatrixAt(cranes++, new THREE.Matrix4().makeRotationY(i * 1.7).setPosition(x + 0.1, Y(x, z), z));
       });
     }
     this.cranes.count = cranes;
     this.cranes.instanceMatrix.needsUpdate = true;
-    this.works.forEach((l, k) => l.forEach((m) => {
+    this.works.forEach((m, k) => {
       m.count = n[k] ?? 0;
       m.instanceMatrix.needsUpdate = true;
-    }));
+      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    });
   }
   private slot(city: number, i: number, k: WorksId) {
     const c = CITY[city];
@@ -703,7 +721,7 @@ export class World3D {
       this.scenery.paint(c.id, color);
       this.scenery.look(c.id, s?.dev ?? 0, s?.ruin ?? 0);
       const key = !!color || c.id === this.focus;
-      let show = (c.pop >= min || key) && Math.hypot(c.x - t.x, c.z - t.z) < d * 1.5 + 4;
+      let show = !this.orbit && (c.pop >= min || key) && Math.hypot(c.x - t.x, c.z - t.z) < d * 1.5 + 4;
       if (show) {
         // Nomes não se sobrepõem: o da maior cidade fica
         at.set(c.x, Y(c.x, c.z) + 0.95, c.z).project(this.camera);
@@ -716,7 +734,7 @@ export class World3D {
         if (old) old.sprite.visible = false;
         continue;
       }
-      const text = `${owner ? `${owner.emblem} ` : seat ? `${seat.emblem} ` : ''}${c.name}${seat ? ` (${seat.name})` : ` ${c.level}★${s?.dev ? `+${s.dev}` : ''}`}${s?.cap ? ' ⚑' : ''}${s?.deal ? ' 🤝' : ''}${s?.devLeft ? ' 🏗️' : ''}`;
+      const text = `${owner ? `${owner.emblem} ` : seat ? `${seat.emblem} ` : ''}${c.name}${seat ? ` (${seat.name})` : (s?.dev ? ` ${'★'.repeat(s.dev)}` : '')}${s?.cap ? ' ⚑' : ''}${s?.deal ? ' 🤝' : ''}${s?.devLeft ? ' 🏗️' : ''}`;
       let l = old;
       if (old?.text !== text + color) {
         if (old) {
@@ -735,28 +753,35 @@ export class World3D {
   private label(text: string, color: string) {
     const c = document.createElement('canvas');
     const ctx = c.getContext('2d')!;
-    const font = '700 30px Inter, sans-serif';
+    const font = '600 40px Inter, sans-serif';
     ctx.font = font;
-    const w = Math.ceil(ctx.measureText(text).width) + 28;
+    const w = Math.ceil(ctx.measureText(text).width) + 40;
     c.width = w;
-    c.height = 46;
+    c.height = 64;
     ctx.font = font;
-    ctx.fillStyle = 'rgba(8,11,17,.8)';
-    ctx.beginPath();
-    ctx.roundRect(0, 0, w, 46, 14);
-    ctx.fill();
+    ctx.textBaseline = 'middle';
     if (color) {
-      ctx.fillStyle = color;
-      ctx.fillRect(12, 39, w - 24, 5);
+      ctx.fillStyle = 'rgba(10,14,22,.82)';
+      ctx.beginPath();
+      ctx.roundRect(1, 4, w - 2, 56, 28);
+      ctx.fill();
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = color;
+      ctx.stroke();
+    } else {
+      // Sem dono: só o texto, com contorno para ler em qualquer fundo
+      ctx.lineWidth = 9;
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(12,16,24,.85)';
+      ctx.strokeText(text, 20, 34);
     }
     ctx.fillStyle = '#fff';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, 14, 22);
+    ctx.fillText(text, 20, 34);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, sizeAttenuation: false, fog: false }));
-    const k = PHONE ? 0.026 : 0.023;
-    s.scale.set((w / 46) * k, k, 1);
+    const k = PHONE ? 0.03 : 0.026;
+    s.scale.set((w / 64) * k, k, 1);
     s.renderOrder = 8;
     return s;
   }

@@ -3,16 +3,17 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { UnitId } from './data';
 
 /** Modelos das tropas. Cada peça tem um "osso" e o sombreador anima pernas, torres, canos e hélices. */
-const BONE = { corpo: 0, pernaE: 1, pernaD: 2, torre: 3, helice: 4, cano: 5 } as const;
+const BONE = { corpo: 0, pernaE: 1, pernaD: 2, torre: 3, helice: 4, cano: 5, rotor: 6, giro: 7 } as const;
 type Bone = keyof typeof BONE;
 type V = [number, number, number];
 const cache = new Map<UnitId, THREE.BufferGeometry>();
 
-class Kit {
+export class Kit {
   parts: THREE.BufferGeometry[] = [];
   bone: Bone = 'corpo';
   pivot: V = [0, 0, 0];
   team = 0;
+  light = 0;
   put(geo: THREE.BufferGeometry, color: string, at: V = [0, 0, 0], rot: V = [0, 0, 0], scale: V = [1, 1, 1]) {
     const g = geo.index ? geo.toNonIndexed() : geo.clone();
     g.deleteAttribute('uv');
@@ -24,6 +25,7 @@ class Kit {
     g.setAttribute('bone', fill(1, [BONE[this.bone]]));
     g.setAttribute('pivot', fill(3, this.pivot));
     g.setAttribute('team', fill(1, [this.team]));
+    g.setAttribute('light', fill(1, [this.light]));
     this.parts.push(g);
     return this;
   }
@@ -55,6 +57,13 @@ class Kit {
     this.team = 1;
     fn();
     this.team = 0;
+    return this;
+  }
+  /** Vidros e lâmpadas que acendem à noite */
+  glow(fn: () => void) {
+    this.light = 1;
+    fn();
+    this.light = 0;
     return this;
   }
   build() {
@@ -226,21 +235,24 @@ export function unitGeometry(t: UnitId): THREE.BufferGeometry {
   return g;
 }
 export const UNIT_TIME = { value: 0 };
+export const UNIT_NIGHT = { value: 0 };
 /** anim por tropa: passada, giro da torre, recuo do cano, inclinação */
 export function unitMaterial() {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.18 });
   m.onBeforeCompile = (s) => {
     s.uniforms.uT = UNIT_TIME;
+    s.uniforms.uN = UNIT_NIGHT;
     s.vertexShader = s.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float bone,team; attribute vec3 pivot; attribute vec4 anim; uniform float uT;\nvec2 rot2(vec2 v,float a){ float c=cos(a),n=sin(a); return vec2(c*v.x-n*v.y,n*v.x+c*v.y); }')
-      .replace('#include <color_vertex>', '#include <color_vertex>\n#ifdef USE_INSTANCING_COLOR\nvColor.rgb=color*mix(mix(vec3(1.),instanceColor,.14),instanceColor,team);\n#endif')
+      .replace('#include <common>', '#include <common>\nattribute float bone,team,light; varying float vLight; attribute vec3 pivot; attribute vec4 anim; uniform float uT;\nvec2 rot2(vec2 v,float a){ float c=cos(a),n=sin(a); return vec2(c*v.x-n*v.y,n*v.x+c*v.y); }')
+      .replace('#include <color_vertex>', '#include <color_vertex>\nvLight=light;\n#ifdef USE_INSTANCING_COLOR\nvColor.rgb=color*mix(mix(vec3(1.),instanceColor,.14),instanceColor,team);\n#endif')
       .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
         float ang=bone<.5?0.:bone<1.5?sin(anim.x)*.7:bone<2.5?-sin(anim.x)*.7:0.; if(anim.x==0.) ang=0.;
-        float yaw=(bone>2.5&&bone<3.5)||bone>4.5?anim.y:bone>3.5&&bone<4.5?uT*26.:0.;
+        float yaw=(bone>2.5&&bone<3.5)||(bone>4.5&&bone<5.5)?anim.y:bone>3.5&&bone<4.5?uT*26.:0.; float roll=bone>5.5&&bone<6.5?uT*1.5:0.; if(bone>6.5) yaw=uT*1.1;
         objectNormal.xy=rot2(objectNormal.xy,ang); objectNormal.xz=rot2(objectNormal.xz,yaw);`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
-        vec3 q=transformed-pivot; q.xy=rot2(q.xy,ang); if(bone>4.5) q.x-=anim.z*.22; q.xz=rot2(q.xz,yaw); transformed=q+pivot;
+        vec3 q=transformed-pivot; q.xy=rot2(q.xy,ang); if(bone>4.5&&bone<5.5) q.x-=anim.z*.22; q.yz=rot2(q.yz,roll); q.xz=rot2(q.xz,yaw); transformed=q+pivot;
         transformed.yz=rot2(transformed.yz,anim.w);`);
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vLight; uniform float uN;').replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance+=vLight*uN*vec3(1.,.82,.5)*.9;');
   };
   return m;
 }

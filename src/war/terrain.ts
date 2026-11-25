@@ -21,7 +21,10 @@ export const BOUNDS = (() => {
 const M = 14;
 /** Área com relevo, um pouco maior que o estado */
 export const EXT = { x0: BOUNDS.x0 - M, z0: BOUNDS.z0 - M, w: BOUNDS.w + 2 * M, h: BOUNDS.h + 2 * M };
-export const spread = (c: City) => Math.min(1.15, 0.26 + Math.sqrt(c.pop) / 1300);
+/** Tamanho da mancha urbana; vizinhas coladas dividem o espaço sem se sobrepor */
+const reach = (c: City) => Math.min(1.15, 0.28 + Math.sqrt(c.pop) / 1300);
+const SPREAD = new Map(CITIES.map((c) => [c.id, CITIES.reduce((r, o) => (o === c ? r : Math.min(r, Math.max(0.24, (Math.hypot(o.x - c.x, o.z - c.z) * reach(c)) / (reach(c) + reach(o)) / 1.16))), reach(c))]));
+export const spread = (c: City) => SPREAD.get(c.id)!;
 const named = new Map(CITIES.map((c) => [c.name, c]));
 export const cityNamed = (n: string) => named.get(n)!;
 
@@ -171,8 +174,16 @@ export const COAST_CANVAS = silhouette(640, EXT, { blur: 7, around: true });
     });
   }
   // Cidades em terreno plano
+  // Cidades coladas ficam no mesmo nível
+  const level = new Map(CITIES.map((c) => [c.id, Math.max(0.2, raw(c.x, c.z))]));
+  for (let i = 0; i < 12; i++) for (const a of CITIES) for (const b of CITIES) {
+    if (a.id >= b.id || Math.hypot(a.x - b.x, a.z - b.z) > (spread(a) + spread(b)) * 1.2 + 0.9) continue;
+    const mid = (level.get(a.id)! + level.get(b.id)!) / 2;
+    level.set(a.id, mid);
+    level.set(b.id, mid);
+  }
   for (const c of CITIES) {
-    const base = Math.max(0.2, raw(c.x, c.z));
+    const base = level.get(c.id)!;
     const r = spread(c) * 1.2 + 0.25;
     around(c.x, c.z, r + 0.7, (h, d) => {
       const t = smooth(r + 0.7, r, d);

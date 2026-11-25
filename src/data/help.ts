@@ -281,7 +281,7 @@ export const HELP: HelpGroup[] = [
           'O escuro é onde você não enxerga. Drone Espião, Radar e 🛰️ Satélite mostram o inimigo.',
           'Quem ganha de quem: antitanque e FPV destroem tanques; tanque e artilharia destroem infantaria; antiaérea derruba aviões e drones.',
           '🚀 Arsenal: escolha e toque no mapa. Cuidado, bombas também machucam você.',
-          '☢️ Nuclear: pesquise o Programa Nuclear e construa um Silo em cidade 5★. Há 3 bombas. O lugar fica com radiação. O Domo Antimíssil derruba 1 míssil por minuto.',
+          '☢️ Nuclear: pesquise o Programa Nuclear e construa um Silo em cidade tamanho 5. Há 3 bombas. O lugar fica com radiação. O Domo Antimíssil derruba 1 míssil por minuto.',
           '🎯 Missões dão dinheiro e ensinam o caminho. ⭐ Tropas que destroem inimigos viram veteranas e ficam mais fortes.',
           '♾️ Em Treinar, escolha Sem parar para a cidade produzir sozinha.',
           'Dá para jogar com o celular em pé ou deitado.',
