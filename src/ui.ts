@@ -4,7 +4,7 @@ import { sound } from './utils/audio';
 import { music, speak } from './utils/music';
 
 /** Estado só de interface (telas, painel aberto, país selecionado, avisos). */
-export type Screen = 'home' | 'country_select' | 'game' | 'snake';
+export type Screen = 'home' | 'country_select' | 'game' | 'snake' | 'lan';
 export type Panel = 'imperio' | 'exercito' | 'generais' | 'diplomacia' | 'ciencia' | 'missoes' | 'mundo' | 'menu' | null;
 
 interface App {
@@ -12,6 +12,7 @@ interface App {
   panel: Panel;
   selected: string;
   mode: string;
+  admin: boolean;
   soundEnabled: boolean;
   toast: { id: number; text: string; type: 'success' | 'danger' | 'info' } | null;
   setScreen: (s: Screen) => void;
@@ -27,6 +28,7 @@ export const useApp = create<App>((set, get) => ({
   panel: null,
   selected: '',
   mode: 'livre',
+  admin: false,
   soundEnabled: sound.enabled,
   toast: null,
   setScreen: (screen) => {

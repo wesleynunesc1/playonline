@@ -5,7 +5,8 @@ import { formatMoney, formatDuration } from '../utils/formatters';
 import { TAX_INFO, armyPower, budget, defensePower, mods, production, reach, scienceRate } from './calc';
 import { addXp, completeScenario, track } from './meta';
 import { randomCrisis } from './realm';
-import { Game, M, PLAYER, Rival, ZOMBIES, bump, clamp, fail, game, hooks, loadSave, news, ok, owned, pick, rand, rivalDef, save, scenarioOf, setGame } from './state';
+import { cheatTick } from './cheats';
+import { Game, M, PLAYER, Rival, ZOMBIES, bump, cheat, clamp, fail, game, hooks, isHuman, loadSave, net, news, ok, owned, pick, rand, rivalDef, save, scenarioOf, setGame } from './state';
 import { changeMorale, conquer, loseCountry, lostCountry, remember, resolveThreat } from './war';
 
 /** Passagem do tempo: economia, rivais, eventos e vitória. */
@@ -15,20 +16,25 @@ const OFFLINE_LIMIT_S = 8 * 3600;
 
 export function tick(seconds: number, blocked = false) {
   const g = game();
-  if (!g || g.paused || g.over || g.battle || blocked) return;
-  const dt = seconds * g.speed;
+  if (!g || g.over) return;
+  const lan = g.mode === 'lan';
+  if (!lan && (g.paused || g.battle || blocked)) return;
+  const dt = seconds * g.speed * (lan ? 1 : cheat.speed);
   g.time += dt;
+  cheatTick();
   economy(g, dt);
   timers(g, dt);
   // Vários passos curtos para a velocidade 5x não pular decisões dos rivais
   for (const r of Object.values(g.rivals)) rivalTick(g, r, dt);
+  for (const b of g.buffs) b.left -= dt;
+  if (g.buffs.some((b) => b.left <= 0)) g.buffs = g.buffs.filter((b) => b.left > 0);
   coalition(g);
   if (g.threat) {
     g.threat.left -= dt;
     if (g.threat.left <= 0 && !g.strike) resolveThreat();
   }
   achievements(g);
-  victory(g);
+  if (!lan) victory(g);
   bump();
 }
 
@@ -95,11 +101,12 @@ function timers(g: Game, dt: number) {
     }
   }
   if (due('joke', rand(35, 60))) news(pick(JOKES), 'fun');
-  if (due('event', rand(90, 140)) && !g.strike) {
+  const solo = g.mode !== 'lan';
+  if (solo && due('event', rand(90, 140)) && !g.strike) {
     g.crisis = randomCrisis();
     hooks.sound('alert');
   }
-  if (due('vote', 240)) proposeVote(g);
+  if (solo && due('vote', 240)) proposeVote(g);
   if (due('revolt', 30)) {
     for (const id of owned()) {
       const c = g.countries[id];
@@ -112,7 +119,7 @@ function timers(g: Game, dt: number) {
   }
   if (due('raid', rand(70, 120))) {
     const routes = COUNTRY_IDS.filter((id) => g.countries[id].route);
-    const foe = Object.values(g.rivals).find((r) => r.alive && r.rel < -10 && !r.ally);
+    const foe = Object.values(g.rivals).find((r) => r.alive && r.rel < -10 && !r.ally && !isHuman(r.id));
     if (routes.length && foe) {
       const id = pick(routes);
       g.countries[id].route = false;
@@ -182,6 +189,8 @@ function rivalTick(g: Game, r: Rival, dt: number) {
   r.cyber = Math.max(0, r.cyber - dt);
   r.warTime = Math.max(0, r.warTime - dt);
   if (r.war && (r.warTime <= 0 || !g.rivals[r.war]?.alive)) r.war = '';
+  if (isHuman(r.id)) return;
+  const guest = net.active && !net.host;
   const mine = owned(r.id);
   const income = mine.reduce((s, id) => s + COUNTRIES[id].income, 0);
   r.power += income * 0.009 * (def.personality === 'comerciante' ? 1.2 : 1) * (r.cyber > 0 ? 0.2 : 1) * (r.sanction > 0 ? 0.5 : 1) * (1 + M.prestige * 0.1) * dt;
@@ -196,13 +205,14 @@ function rivalTick(g: Game, r: Rival, dt: number) {
     news(`TRAIÇÃO! ${def.leader}: "${def.war}"`, 'war');
     fail(`${def.leader} traiu a aliança!`);
   }
+  if (cheat.freeze) return;
   r.next -= dt;
   if (r.next > 0) return;
   r.next = rand(18, 34) * (def.personality === 'agressivo' ? 0.8 : def.personality === 'pacifico' ? 1.5 : 1);
 
   // Guerra entre rivais
-  if (!r.war && Math.random() < (def.personality === 'pacifico' ? 0.05 : 0.15)) {
-    const foe = Object.values(g.rivals).find((o) => o.alive && o !== r && mine.some((id) => COUNTRIES[id].neighbors.some((n) => g.countries[n].owner === o.id)));
+  if (!guest && !r.war && Math.random() < (def.personality === 'pacifico' ? 0.05 : 0.15)) {
+    const foe = Object.values(g.rivals).find((o) => o.alive && o !== r && !isHuman(o.id) && mine.some((id) => COUNTRIES[id].neighbors.some((n) => g.countries[n].owner === o.id)));
     if (foe) {
       r.war = foe.id;
       r.warTime = 120;
@@ -228,7 +238,8 @@ function rivalTick(g: Game, r: Rival, dt: number) {
     }
   }
 
-  // Expansão
+  // Expansão (no Wi-Fi, só o criador da sala move a máquina)
+  if (guest) return;
   const candidates = [...new Set(mine.flatMap((id) => COUNTRIES[id].neighbors))].filter((id) => {
     const c = g.countries[id];
     return !c.vassal && (c.owner === '' || c.owner === ZOMBIES || (r.war && c.owner === r.war));
@@ -275,7 +286,7 @@ function coalition(g: Game) {
   if (should) {
     for (const r of Object.values(g.rivals)) {
       r.trade = false;
-      if (r.rel < 60) r.ally = false;
+      if (r.rel < 60 && !isHuman(r.id)) r.ally = false;
     }
     news('COALIZÃO MUNDIAL formada contra você!', 'war');
     hooks.sound('alert');
@@ -357,6 +368,7 @@ export function nextGoal(): string {
   if (g.stats.techs === 0 && g.science >= 20) return 'Abra Ciência e pesquise sua primeira tecnologia';
   if (M.chests > 0) return `Você tem ${M.chests} baú(s) para abrir em Generais`;
   if (g.countries[g.capital].happy < 35) return 'Seu povo está infeliz: baixe os impostos';
+  if (g.mode === 'lan') return 'Conquiste, negocie e fique de olho no relógio';
   if (sc && sp) return `${sc.name}: ${sc.text} (${sp.have}/${sp.need})`;
   const best = [...VICTORIES].sort((a, b) => victoryProgress(b.id) - victoryProgress(a.id))[0];
   return `Rumo à vitória ${best.name.toLowerCase()}: ${Math.floor(clamp(victoryProgress(best.id), 0, 1) * 100)}%`;

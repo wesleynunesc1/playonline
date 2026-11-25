@@ -8,6 +8,7 @@ import { SHIP_CAPACITY, attackPower, buildCost, countryIncome, defensePower, ene
 import { attackBlock, garrison, startAttack, suggestArmy, toggleSiege, usePower } from '../../engine/war';
 import { OP_INFO, SPY_COST, SpyOp, build, buildWonder, buyCountry, buyPrice, spyOp, toggleRoute, ultimatum, upgradeCountry, vassalize } from '../../engine/realm';
 import { formatMoney, formatNumber } from '../../utils/formatters';
+import { ping } from '../../lan/match';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Action, Bar, Card, Row } from '../common/Kit';
@@ -43,6 +44,7 @@ const Content: React.FC<{ id: string }> = ({ id }) => {
         <Row label="Terreno">{terrain.icon} {terrain.name}</Row>
         <Row label={mine ? 'Guarnição' : 'Defesa'}>{formatNumber(mine ? c.def : defensePower(id))}</Row>
       </div>
+      {g.mode === 'lan' && <Button size="sm" variant="outline" fullWidth onClick={() => ping(id)}>📍 Marcar para todos</Button>}
       {mine ? <Mine id={id} /> : <Foreign id={id} />}
     </Modal>
   );
@@ -144,7 +146,7 @@ const War: React.FC<{ id: string }> = ({ id }) => {
         {block && <p className="text-amber-300">{block}</p>}
         {UNITS.map((u) => (
           <label key={u} className="flex items-center gap-2">
-            <span className="w-32 truncate text-slate-200" title={UNIT_INFO[u].beats}>{UNIT_INFO[u].icon} {ERAS[g.era].units[u]}</span>
+            <span className="w-24 sm:w-32 truncate text-slate-200" title={UNIT_INFO[u].beats}>{UNIT_INFO[u].icon} {ERAS[g.era].units[u]}</span>
             <input type="range" min={0} max={Math.floor(g.army[u])} value={sent[u]} onChange={(e) => setArmy({ ...sent, [u]: Number(e.target.value) })} className="flex-1 accent-blue-500" aria-label={ERAS[g.era].units[u]} />
             <span className="w-16 text-right font-mono text-slate-100">{sent[u]}/{Math.floor(g.army[u])}</span>
           </label>

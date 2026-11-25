@@ -6,7 +6,7 @@ import {
   SEASON_TIERS, SKILLS, SPACE, Skill, TECH_COST, UNITS, UNIT_INFO, describeMods,
 } from '../../data/content';
 import { ACHIEVEMENTS } from '../../data/achievements';
-import { M, Mission, bump, game, levelOf, owned, rivalDef, save, scenarioOf, titleOf, useGame, xpFor } from '../../engine/state';
+import { M, Mission, bump, game, isHuman, levelOf, owned, rivalDef, save, scenarioOf, titleOf, useGame, xpFor } from '../../engine/state';
 import { SEASON_NAMES, TAX_INFO, armyPower, budget, continentsOwned, hasMonopoly, mods, monopolyShare, production, recruitCost, revealed, scienceRate, seasonNow } from '../../engine/calc';
 import { BOSS, bossPower, fightBoss, recruit, usePower } from '../../engine/war';
 import {
@@ -16,6 +16,8 @@ import {
 import { Loot, buyPerk, claimSeason, doPrestige, equip, finishGame, learnSkill, openChest, prestigeGain, ransom, ransomCost, seasonName, toggleStaff, weekKey } from '../../engine/meta';
 import { VICTORIES, victoryProgress } from '../../engine/tick';
 import { formatDuration, formatMoney, formatNumber } from '../../utils/formatters';
+import { HumanActions } from './LanHud';
+import { L, modeOf, quit } from '../../lan/match';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Action, Bar, Card, Row } from '../common/Kit';
@@ -204,7 +206,7 @@ const Diplomacy: React.FC = () => {
               <span className="flex-1">
                 <b style={{ color: d.color }}>{d.leader}</b> <span className="text-slate-400">{d.title}</span>
                 <span className="block text-slate-300">
-                  {r.alive ? PERSONALITY[d.personality] : r.returnIn > 0 ? '😈 Derrotado, jurou vingança' : '☠️ Derrotado'}
+                  {r.alive ? (isHuman(r.id) ? '🎮 Jogador' : PERSONALITY[d.personality]) : r.returnIn > 0 ? '😈 Derrotado, jurou vingança' : '☠️ Derrotado'}
                   {r.ally && ' • 🤝 Aliado'}{r.trade && ' • 📜 Tratado'}{r.truce > 0 && ` • 🕊️ ${Math.ceil(r.truce)}s`}{r.war && ` • ⚔️ ${rivalDef(r.war).icon}`}{r.nemesis && ' • 😈'}
                 </span>
               </span>
@@ -216,14 +218,14 @@ const Diplomacy: React.FC = () => {
                 <Row label="Poder militar">{revealed(r.id) ? formatNumber(r.power) : '??? (infiltre um espião)'}</Row>
                 {revealed(r.id) && <Row label="Plano">{g.threat?.by === r.id ? 'Atacando você!' : r.war ? `Guerra com ${rivalDef(r.war).title}` : r.rel < -15 && !r.ally ? 'Preparando ataque a você' : 'Expandir território'}</Row>}
                 {r.memory.length > 0 && <p className="text-slate-400">Lembra: {r.memory.slice(0, 3).join(' ')}</p>}
-                <div className="grid grid-cols-2 gap-2">
+                {isHuman(r.id) ? <HumanActions r={r} /> : <div className="grid grid-cols-2 gap-2">
                   <Button size="sm" variant="secondary" onClick={() => gift(r.id)}>🎁 {formatMoney(giftCost())}</Button>
                   <Button size="sm" variant="secondary" disabled={r.trade} onClick={() => proposeTrade(r.id)}>📜 Tratado</Button>
                   <Button size="sm" variant="secondary" disabled={r.truce > 0} onClick={() => proposeTruce(r.id)}>🕊️ Trégua</Button>
                   <Button size="sm" variant="secondary" disabled={r.ally} onClick={() => proposeAlliance(r.id)}>🤝 Aliança</Button>
                   <Button size="sm" variant="danger" onClick={() => (r.ally ? betray(r.id) : declareWar(r.id))}>{r.ally ? '🗡️ Trair' : '⚔️ Declarar guerra'}</Button>
-                </div>
-                {r.ally && live.filter((o) => o.id !== r.id && !o.ally).map((o) => (
+                </div>}
+                {r.ally && !isHuman(r.id) && live.filter((o) => o.id !== r.id && !o.ally && !isHuman(o.id)).map((o) => (
                   <Button key={o.id} size="sm" variant="outline" onClick={() => callAlly(r.id, o.id)}>Pedir guerra contra {rivalDef(o.id).icon} {rivalDef(o.id).title}</Button>
                 ))}
               </div>
@@ -342,15 +344,21 @@ const Menu: React.FC = () => {
     updateMusic();
     bump();
   };
+  const lan = g.mode === 'lan';
+  const leaveLan = () => {
+    quit();
+    setScreen('home');
+  };
   return (
     <>
-      <p className="text-xs text-slate-400">{scenarioOf(g.mode)?.name ?? 'Partida livre'} • salvamento automático</p>
+      <p className="text-xs text-slate-400">{lan ? `Wi-Fi • ${modeOf().name} • sala ${L.code}` : scenarioOf(g.mode)?.name ?? 'Partida livre'}{!lan && ' • salvamento automático'}</p>
       <Button fullWidth onClick={() => setPanel(null)}>Continuar</Button>
       <Button fullWidth variant="secondary" onClick={toggleSound}>Som: {soundEnabled ? 'ligado' : 'desligado'}</Button>
       <Button fullWidth variant="secondary" onClick={() => toggle('music')}>Música: {M.music ? 'ligada' : 'desligada'}</Button>
       <Button fullWidth variant="secondary" onClick={() => toggle('voice')}>Locutor de notícias: {M.voice ? 'ligado' : 'desligado'}</Button>
-      <Button fullWidth variant="outline" onClick={() => setScreen('home')}>Salvar e voltar ao menu</Button>
-      <Confirm label="Abandonar partida" onConfirm={() => { finishGame(); setScreen('home'); }} />
+      {lan && <Confirm label={L.host ? 'Encerrar a sala para todos' : 'Sair da partida'} onConfirm={leaveLan} />}
+      {!lan && <Button fullWidth variant="outline" onClick={() => setScreen('home')}>Salvar e voltar ao menu</Button>}
+      {!lan && <Confirm label="Abandonar partida" onConfirm={() => { finishGame(); setScreen('home'); }} />}
     </>
   );
 };

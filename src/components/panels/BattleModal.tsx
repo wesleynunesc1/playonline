@@ -5,6 +5,7 @@ import { GENERALS, TERRAIN_INFO, UNITS, UNIT_INFO } from '../../data/content';
 import { Tactic, game, useGame } from '../../engine/state';
 import { BOSS, TACTICS, autoBattle, battleRound, closeBattle, retreat } from '../../engine/war';
 import { formatNumber } from '../../utils/formatters';
+import { L } from '../../lan/match';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Bar } from '../common/Kit';
@@ -32,7 +33,7 @@ export const BattleModal: React.FC = () => {
   return (
     <Modal isOpen onClose={b.done ? closeBattle : () => {}} maxWidth="lg" showCloseButton={false}
       title={b.done ? TITLE[b.done] : <>⚔️ Batalha por {b.boss ? `${BOSS.icon} ${name}` : `${base.flag} ${name}`}</>}
-      subtitle={b.done ? name : `Rodada ${b.round}${b.boss ? '' : ` • ${TERRAIN_INFO[base.terrain].icon} ${TERRAIN_INFO[base.terrain].name}`}`}>
+      subtitle={b.done ? name : `Rodada ${b.round}${game().mode === 'lan' ? ` • ⏱ ${Math.ceil(L.battleLeft)}s` : ''}${b.boss ? '' : ` • ${TERRAIN_INFO[base.terrain].icon} ${TERRAIN_INFO[base.terrain].name}`}`}>
       <div className={`battlefield terrain-${b.boss ? 'deserto' : base.terrain}`} key={b.round}>
         <div className="battle-side">{soldiers(b.a / b.a0, units.length ? units.map((u) => UNIT_INFO[u].icon) : ['🪖'], 'march-right')}</div>
         {b.round > 1 && !b.done && <span className="battle-boom">💥</span>}

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Pause, Play, Volume2, VolumeX } from 'lucide-react';
 import { useApp } from '../../ui';
+import { cheat } from '../../engine/state';
 import { sound } from '../../utils/audio';
 import { Button } from '../common/Button';
 import { BONUS_POINTS, Direction, FOOD_POINTS, SnakeGame, createSnake, step, stepMs, turn } from '../../games/snake';
@@ -101,7 +102,7 @@ export const SnakeScreen: React.FC = () => {
     };
 
     const advance = () => {
-      const result = step(game.current);
+      const result = step(game.current, cheat.snake);
       if (result === 'dead' || result === 'win') finish(result === 'win');
       else if (result !== 'move') {
         const bonus = result === 'bonus';
@@ -189,7 +190,7 @@ export const SnakeScreen: React.FC = () => {
   const ended = status === 'over' || status === 'won';
 
   return (
-    <div className="w-full h-full flex flex-col items-center gap-3 p-3 sm:p-5 overflow-y-auto bg-[radial-gradient(ellipse_at_top,#0f3b38,#050b0d_70%)]">
+    <div className="w-full h-full flex flex-col items-center gap-3 p-3 sm:p-5 safe-top overflow-y-auto bg-[radial-gradient(ellipse_at_top,#0f3b38,#050b0d_70%)]">
       <header className="w-full max-w-2xl flex items-center justify-between gap-2">
         <button onClick={() => setScreen('home')} className="glass-btn h-11 px-3 gap-2 text-sm">
           <ArrowLeft size={18} /> Menu
@@ -215,7 +216,7 @@ export const SnakeScreen: React.FC = () => {
       </header>
 
       <div
-        className="snake-board relative shrink-0 aspect-square w-[min(100%,calc(100dvh-17rem))] sm:w-[min(100%,calc(100dvh-7rem))] min-w-[240px] max-w-3xl rounded-2xl overflow-hidden touch-none"
+        className="snake-board relative shrink-0 aspect-square w-[min(100%,calc(100dvh-17rem))] landscape:w-[min(100%,calc(100dvh-5.5rem))] sm:w-[min(100%,calc(100dvh-7rem))] min-w-[240px] max-w-3xl rounded-2xl overflow-hidden touch-none"
         onPointerDown={(e) => { swipe.current = { x: e.clientX, y: e.clientY }; }}
         onPointerMove={onPointerMove}
         onPointerUp={endSwipe}
@@ -244,7 +245,7 @@ export const SnakeScreen: React.FC = () => {
         )}
       </div>
 
-      <div className="sm:hidden grid grid-cols-3 gap-1.5">
+      <div className="sm:hidden landscape:hidden grid grid-cols-3 gap-1.5">
         {pad('up', ArrowUp, 'col-start-2', 'Cima')}
         {pad('left', ArrowLeft, 'col-start-1 row-start-2', 'Esquerda')}
         {pad('down', ArrowDown, 'col-start-2 row-start-2', 'Baixo')}

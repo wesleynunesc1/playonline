@@ -3,6 +3,7 @@ import { geoGraticule10, geoNaturalEarth1, geoPath } from 'd3-geo';
 import { useApp } from '../../ui';
 import { COUNTRIES, COUNTRY_IDS, NUMERIC_TO_COUNTRY } from '../../data/countries';
 import { Game, PLAYER, ZOMBIES, game, rivalDef, useGame } from '../../engine/state';
+import { L } from '../../lan/match';
 import { reach } from '../../engine/calc';
 import { useWorldGeo } from '../../services/worldGeo';
 import { ZoomIn, ZoomOut, LocateFixed, Loader2 } from 'lucide-react';
@@ -35,7 +36,7 @@ const clampView = (v: View): View => {
 function visualOf(id: string, g: Game, reachable: boolean, selected: string): string {
   const c = g.countries[id];
   const fill = c.owner === PLAYER ? (id === g.capital ? 'capital' : 'owned') : c.sab > 0 ? 'sabotaged' : c.owner || (c.vassal ? 'vassal' : 'rival');
-  return `${fill}|${id === selected ? 'land-selected' : g.threat?.target === id ? 'land-threat' : c.siege ? 'land-siege' : reachable ? 'land-reach' : ''}`;
+  return `${fill}|${id === selected ? 'land-selected' : g.threat?.target === id ? 'land-threat' : g.mode === 'lan' && L.mode === 'colina' && L.hill === id ? 'land-hill' : c.siege ? 'land-siege' : reachable ? 'land-reach' : ''}`;
 }
 
 /** Polígonos dos países. Memoizado: não re-renderiza ao arrastar/zoom. */
@@ -46,7 +47,7 @@ const CountryShapes = memo(function CountryShapes({ shapes, visuals }: { shapes:
       {shapes.map(({ key, d, countryId }) => {
         if (!countryId) return <path key={key} d={d} className="land-inert" vectorEffect="non-scaling-stroke" />;
         const [fill, extra] = (look[countryId] as string).split('|');
-        const rival = /^r\d/.test(fill);
+        const rival = /^[rh]\d/.test(fill);
         return (
           <path key={key} d={d} data-id={countryId} vectorEffect="non-scaling-stroke"
             className={`land-playable ${rival ? '' : `land-${fill}`} ${extra}`}
@@ -131,6 +132,7 @@ export const InteractiveMap: React.FC = () => {
   const selected = useApp((s) => s.selected);
   const selectCountry = useApp((s) => s.select);
   const { strike, threat, capital } = g;
+  const lastTap = useRef({ at: 0, x: 0, y: 0 });
   const playerCountryId = capital;
   // Um passo de jogo = um recálculo; arrastar o mapa não passa por aqui
   const { visuals, reachable } = useMemo(() => {
@@ -293,6 +295,12 @@ export const InteractiveMap: React.FC = () => {
     if (!pointers.current.has(e.pointerId)) return;
     const g = gesture.current;
     pointers.current.delete(e.pointerId);
+    // Toque duplo no mar aproxima
+    if (g && !g.moved && !g.tapId && pointers.current.size === 0) {
+      const t = lastTap.current;
+      if (e.timeStamp - t.at < 350 && Math.hypot(e.clientX - t.x, e.clientY - t.y) < 30) zoomAt(1.8, toSvgPoint(e.clientX, e.clientY));
+      lastTap.current = { at: e.timeStamp, x: e.clientX, y: e.clientY };
+    }
     if (g && !g.moved && g.tapId && pointers.current.size === 0) selectCountry(g.tapId);
     // Ao soltar um dedo da pinça, reinicia o gesto com o dedo restante
     if (pointers.current.size > 0) beginGesture();
@@ -350,13 +358,13 @@ export const InteractiveMap: React.FC = () => {
               const isSelected = id === selected;
               const rivalCapital = g.rivals[c.owner]?.capital === id;
               // Longe, mostra só o que importa; de perto, todos
-              if (!isSelected && !rivalCapital && id !== capital && pxPerUnit < (owned || reachable.has(id) ? 1.1 : COUNTRIES[id].income >= 30 ? 1.8 : 3)) return null;
+              if (!isSelected && !rivalCapital && id !== capital && !(g.mode === 'lan' && L.mode === 'colina' && L.hill === id) && pxPerUnit < (owned || reachable.has(id) ? 1.1 : COUNTRIES[id].income >= 30 ? 1.8 : 3)) return null;
               const ring = isSelected ? '#fbbf24' : owned ? '#60a5fa' : g.rivals[c.owner] ? rivalDef(c.owner).color : c.owner === ZOMBIES ? '#84cc16' : reachable.has(id) ? '#facc15' : '#64748b';
               return (
                 <g key={id} data-id={id} transform={`translate(${x},${y}) scale(${markerScale})`} className="cursor-pointer">
                   <circle r={MARKER_PX / 2} fill="#0b1220" fillOpacity={0.9} stroke={ring} strokeWidth={isSelected ? 2.5 : 1.5} />
                   <text y={4.5} textAnchor="middle" fontSize={13} className="emoji-text" pointerEvents="none">
-                    {rivalCapital ? rivalDef(c.owner).icon : id === capital ? '👑' : c.owner === ZOMBIES ? '🧟' : COUNTRIES[id].flag}
+                    {rivalCapital ? rivalDef(c.owner).icon : id === capital ? '👑' : c.owner === ZOMBIES ? '🧟' : g.mode === 'lan' && L.mode === 'colina' && L.hill === id ? '⛰️' : COUNTRIES[id].flag}
                   </text>
                   {(showDetails || isSelected) && (
                     <g pointerEvents="none">

@@ -41,7 +41,7 @@ class SoundSystem {
 
   private play(notes: Note[], vibration?: number | number[]) {
     if (!this.enabled) return;
-    if (vibration && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+    if (vibration && typeof navigator !== 'undefined' && 'vibrate' in navigator && navigator.userActivation?.hasBeenActive) {
       try { navigator.vibrate(vibration); } catch { /* sem suporte */ }
     }
     const ctx = this.getCtx();

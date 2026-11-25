@@ -3,7 +3,7 @@ import {
   BRANCHES, BUILDINGS, Building, COMBOS, ERAS, GENERALS, ITEMS, ModKey, Mods, PERKS, RARITY, REGIMES, RESOURCES, SPACE,
   TERRAIN_INFO, UNITS, UNIT_INFO, Unit, WONDERS,
 } from '../data/content';
-import { Army, CountryState, M, PLAYER, clamp, game, isMine, owned } from './state';
+import { Army, CountryState, M, PLAYER, cheat, clamp, game, isMine, owned } from './state';
 
 /** Soma todos os bônus ativos (tecnologia, maravilhas, regime, prestígio, dupla de generais, país) */
 export function mods(): Record<ModKey, number> {
@@ -18,7 +18,8 @@ export function mods(): Record<ModKey, number> {
   for (const b of BRANCHES) add(b.mods, g.techs[b.id] ?? 0);
   for (const w of WONDERS) if (g.wonders[w.id] && isMine(g.wonders[w.id])) add(w.mods);
   add(REGIMES.find((r) => r.id === g.regime)!.mods);
-  for (const p of PERKS) add(p.mods, M.perks[p.id] ?? 0);
+  // No Wi-Fi todos jogam sem os bônus de prestígio
+  if (g.mode !== 'lan') for (const p of PERKS) add(p.mods, M.perks[p.id] ?? 0);
   for (const c of COMBOS) if (c.ids.every((id) => M.staff.includes(id) && !M.generals[id]?.captor)) add(c.mods);
   add(abilityOf(g.origin) as Mods);
   const count = (b: Building) => owned().reduce((s, id) => s + g.countries[id].b[b], 0);
@@ -29,6 +30,7 @@ export function mods(): Record<ModKey, number> {
   out.trade += Math.min(0.5, ports * 0.05);
   out.attack += ERAS[g.era].bonus;
   out.defense += ERAS[g.era].bonus;
+  for (const b of g.buffs) out[b.k] += b.v;
   out.recruit = Math.min(0.6, out.recruit);
   out.upgrade = Math.min(0.6, out.upgrade);
   out.casualty = Math.min(0.6, out.casualty);
@@ -170,7 +172,7 @@ export function reach(target: string, from = PLAYER, range = from === PLAYER ? n
   const g = game();
   const t = COUNTRIES[target];
   if (t.neighbors.some((n) => g.countries[n].owner === from)) return 'terra';
-  if (from === PLAYER && g.para) return 'ar';
+  if (from === PLAYER && (g.para || cheat.reach)) return 'ar';
   if (t.coastal && owned(from).some((id) => COUNTRIES[id].coastal && distance(id, target) <= range)) return 'mar';
   return null;
 }

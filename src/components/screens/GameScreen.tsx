@@ -15,6 +15,9 @@ import { CountryPanel } from '../panels/CountryPanel';
 import { BattleModal } from '../panels/BattleModal';
 import { Panels } from '../panels/Panels';
 import { Dialogs, dialogOpen } from '../panels/Dialogs';
+import { LanEnd, LanSide, LanTop } from '../panels/LanHud';
+import { L, lanTick } from '../../lan/match';
+import { useWakeLock } from '../../hooks/useDevice';
 import { Button } from '../common/Button';
 
 const AWAY_GAP_S = 60;
@@ -23,7 +26,7 @@ const NAV: { id: Exclude<Panel, null>; icon: string; name: string }[] = [
   { id: 'imperio', icon: '🏛️', name: 'Império' },
   { id: 'exercito', icon: '⚔️', name: 'Exército' },
   { id: 'generais', icon: '🎖️', name: 'Generais' },
-  { id: 'diplomacia', icon: '🤝', name: 'Diplomacia' },
+  { id: 'diplomacia', icon: '🤝', name: 'Aliados' },
   { id: 'ciencia', icon: '🔬', name: 'Ciência' },
   { id: 'missoes', icon: '🎯', name: 'Missões' },
   { id: 'mundo', icon: '🌍', name: 'Mundo' },
@@ -39,7 +42,12 @@ function useGameLoop() {
       const elapsed = (now - last) / 1000;
       last = now;
       if (!G) return;
-      if (elapsed > AWAY_GAP_S) {
+      if (G.mode === 'lan') {
+        if (L.phase === 'play') {
+          tick(Math.min(elapsed, 5));
+          lanTick(Math.min(elapsed, 5));
+        }
+      } else if (elapsed > AWAY_GAP_S) {
         // Aba suspensa: vira relatório de ausência
         if (!G.paused && !G.over) awayReport(G, Math.min(elapsed, 8 * 3600));
         bump();
@@ -66,9 +74,16 @@ function useGameLoop() {
 
 export const GameScreen: React.FC = () => {
   useGameLoop();
+  useWakeLock();
   useGame();
   const setPanel = useApp((s) => s.setPanel);
+  const setScreen = useApp((s) => s.setScreen);
+  useEffect(() => {
+    // Partida encerrada por fora (sala fechada, revanche)
+    if (!G) setScreen(L.phase === 'lobby' || L.error ? 'lan' : 'home');
+  });
   if (!G) return null;
+  const lan = G.mode === 'lan';
   const badge: Partial<Record<string, number>> = { generais: M.chests };
   return (
     <div className="relative w-full h-full flex flex-col bg-[#060911] text-slate-100 overflow-hidden">
@@ -76,19 +91,20 @@ export const GameScreen: React.FC = () => {
       <main className="flex-1 min-h-0 relative overflow-hidden">
         <InteractiveMap />
         <div className="absolute top-2 inset-x-2 z-20 mx-auto max-w-lg space-y-2 pointer-events-none">
-          <p className="glass-panel rounded-xl px-3 py-1.5 text-xs text-center text-amber-200">🎯 {nextGoal()}</p>
+          {lan ? <LanTop /> : <p className="glass-panel rounded-xl px-3 py-1.5 text-xs text-center text-amber-200">🎯 {nextGoal()}</p>}
           <Threat />
         </div>
         <div className="absolute left-2 bottom-2 z-20 flex flex-col gap-2">
+          {lan && <LanSide />}
           <PowerBar />
-          <Speed />
+          {!lan && <Speed />}
         </div>
       </main>
-      <nav className="relative z-30 shrink-0 grid grid-cols-8 bg-slate-950 border-t border-slate-800 pb-[env(safe-area-inset-bottom)]">
+      <nav className="game-nav relative z-30 shrink-0 grid grid-cols-8 bg-slate-950 border-t border-slate-800 pb-[env(safe-area-inset-bottom)]">
         {NAV.map((n) => (
-          <button key={n.id} onClick={() => setPanel(n.id)} className="relative flex flex-col items-center gap-0.5 py-1.5 text-[9px] xs:text-[11px] text-slate-300 hover:bg-slate-900 active:scale-95 transition min-w-0">
+          <button key={n.id} onClick={() => setPanel(n.id)} className="relative flex flex-col items-center gap-0.5 py-2 text-[10px] xs:text-[11px] text-slate-300 hover:bg-slate-900 active:scale-95 transition min-w-0">
             <span className="text-lg leading-none">{n.icon}</span>
-            <span className="truncate max-w-full">{n.name}</span>
+            <span className="nav-label truncate max-w-full">{n.name}</span>
             {!!badge[n.id] && <span className="absolute top-0.5 right-1/4 bg-rose-600 text-white rounded-full px-1 text-[9px] font-bold">{badge[n.id]}</span>}
           </button>
         ))}
@@ -97,7 +113,7 @@ export const GameScreen: React.FC = () => {
       <Panels />
       <BattleModal />
       <Dialogs />
-      <Toast />
+      <LanEnd />
     </div>
   );
 };
@@ -108,14 +124,14 @@ const Hud: React.FC = () => {
   const income = budget().total;
   const power = useAnimatedNumber(armyPower(g.army));
   return (
-    <header className="relative z-30 shrink-0 bg-slate-950 border-b border-slate-800">
-      <p key={g.news[0]?.id} className="news-in px-3 py-1 text-[11px] text-slate-300 truncate border-b border-slate-900">📡 {g.news[0]?.text}</p>
-      <div className="flex items-center justify-between gap-2 px-2 sm:px-4 py-1.5 text-xs font-mono overflow-x-auto">
+    <header className="safe-top relative z-30 shrink-0 bg-slate-950 border-b border-slate-800">
+      <p key={g.news[0]?.id} className="news-in news-line px-3 py-1 text-[11px] text-slate-300 truncate border-b border-slate-900">📡 {g.news[0]?.text}</p>
+      <div className="flex items-center justify-between gap-2 px-2 sm:px-4 py-1.5 text-xs font-mono overflow-x-auto no-scrollbar">
         <span className="shrink-0 font-bold">{COUNTRIES[g.capital].flag} {owned().length}</span>
         <span className="shrink-0 text-amber-300 font-bold">💰 {formatMoney(money)} <span className={income < 0 ? 'text-rose-400' : 'text-emerald-400'}>{income < 0 ? '' : '+'}{Math.round(income)}/s</span></span>
         <span className="shrink-0 text-blue-300 font-bold">⚔️ {formatNumber(power)}</span>
         <span className="shrink-0 text-cyan-300">🔬 {formatNumber(g.science)}</span>
-        {RES_LIST.map((r) => <span key={r} className="hidden sm:inline shrink-0 text-slate-300" title={RES_INFO[r].name}>{RES_INFO[r].icon} {formatNumber(g.res[r])}</span>)}
+        {RES_LIST.map((r) => <span key={r} className="shrink-0 text-slate-300" title={RES_INFO[r].name}>{RES_INFO[r].icon} {formatNumber(g.res[r])}</span>)}
         {g.infamy > 20 && <span className={`shrink-0 ${g.infamy > 45 ? 'text-rose-400' : 'text-orange-300'}`} title="Má fama">😠 {Math.round(g.infamy)}</span>}
       </div>
     </header>
@@ -175,17 +191,6 @@ const Speed: React.FC = () => {
           {s > 1 && <FastForward size={10} />}{s}x
         </button>
       ))}
-    </div>
-  );
-};
-
-const TONE = { success: 'border-emerald-500 text-emerald-200', danger: 'border-rose-500 text-rose-200', info: 'border-sky-500 text-sky-200' };
-const Toast: React.FC = () => {
-  const toast = useApp((s) => s.toast);
-  if (!toast) return null;
-  return (
-    <div key={toast.id} className="toast-in fixed bottom-32 left-1/2 -translate-x-1/2 z-[60] max-w-sm w-[90%] pointer-events-none">
-      <p role="status" className={`px-4 py-3 rounded-xl border bg-slate-900 shadow-xl text-sm text-center ${TONE[toast.type]}`}>{toast.text}</p>
     </div>
   );
 };

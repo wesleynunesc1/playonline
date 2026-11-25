@@ -65,19 +65,19 @@ export function turn(game: SnakeGame, dir: Direction) {
 
 export const stepMs = (game: SnakeGame) => Math.max(72, 150 - game.eaten * 2.5);
 
-export function step(game: SnakeGame): StepResult {
+export function step(game: SnakeGame, immortal = false): StepResult {
   game.dir = game.queue.shift() ?? game.dir;
   const v = VECTORS[game.dir];
   const head = { x: game.body[0].x + v.x, y: game.body[0].y + v.y };
 
-  if (game.walls && (head.x < 0 || head.y < 0 || head.x >= GRID || head.y >= GRID)) return 'dead';
+  if (!immortal && game.walls && (head.x < 0 || head.y < 0 || head.x >= GRID || head.y >= GRID)) return 'dead';
   head.x = (head.x + GRID) % GRID;
   head.y = (head.y + GRID) % GRID;
 
   const ate = same(head, game.food);
   // A cauda libera sua célula neste passo, exceto quando a cobra cresce
   const obstacles = ate ? game.body : game.body.slice(0, -1);
-  if (obstacles.some((c) => same(c, head))) return 'dead';
+  if (!immortal && obstacles.some((c) => same(c, head))) return 'dead';
 
   game.lastTail = game.body[game.body.length - 1];
   game.body.unshift(head);

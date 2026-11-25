@@ -23,7 +23,7 @@ export const Button: React.FC<ButtonProps> = ({
     'inline-flex items-center justify-center font-semibold rounded-xl transition-all duration-150 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 select-none shadow-sm';
 
   const sizeStyles = {
-    sm: 'text-xs px-3 py-1.5 gap-1.5 min-h-[34px]',
+    sm: 'text-xs px-3 py-1.5 gap-1.5 min-h-[40px]',
     md: 'text-sm px-4 py-2.5 gap-2 min-h-[44px]',
     lg: 'text-base px-6 py-3.5 gap-2.5 min-h-[52px]',
   }[size];

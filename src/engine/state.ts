@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { COUNTRIES, COUNTRY_IDS, Res } from '../data/countries';
-import { Building, CAMPAIGN, Power, RIVALS, RESOURCES, RES_INFO, SCENARIOS, Skill, Stat, TITLES, Unit } from '../data/content';
+import { Building, CAMPAIGN, ModKey, Power, RIVALS, RESOURCES, RivalDef, RES_INFO, SCENARIOS, Skill, Stat, TITLES, Unit } from '../data/content';
 
 /**
  * Estado do jogo: `G` é a partida atual e `M` é o progresso permanente.
@@ -45,14 +45,14 @@ export interface Game {
   battle: Battle | null; news: News[]; crisis: string; vote: { rival: string; text: string; kind: 'sancao' | 'paz' | 'contra' } | null;
   timers: Record<'market' | 'event' | 'vote' | 'joke' | 'special' | 'revolt' | 'raid', number>;
   wave: number; defeated: number; achievements: string[]; victories: string[]; over: { won: boolean; title: string; text: string } | null;
-  stats: Record<Stat, number>; report: string[]; storySeen: boolean; seq: number;
+  stats: Record<Stat, number>; report: string[]; storySeen: boolean; seq: number; buffs: { k: ModKey; v: number; left: number }[];
 }
 export interface GeneralState { lvl: number; xp: number; pts: number; skills: Record<Skill, number>; item: string; captor: string }
 export interface Mission { stat: Stat; text: string; n: number; have: number; done: boolean }
 export interface Meta {
   legacy: number; prestige: number; perks: Record<string, number>; xp: number; generals: Record<string, GeneralState>; staff: string[];
   items: Record<string, number>; chests: number; day: string; daily: Mission[]; week: string; weekly: Mission[]; streak: number; lastDay: string;
-  season: { id: string; pts: number; claimed: number }; bossWeek: string; campaign: number; waveRecord: number; music: boolean; voice: boolean;
+  season: { id: string; pts: number; claimed: number }; bossWeek: string; campaign: number; waveRecord: number; music: boolean; voice: boolean; lan?: { played: number; wins: number };
 }
 
 export const emptyArmy = (): Army => ({ inf: 0, tank: 0, air: 0, navy: 0 });
@@ -96,14 +96,16 @@ export const useGame = () => useSyncExternalStore((l) => { listeners.add(l); ret
 // ===== Salvamento =====
 export function save() {
   write(META_KEY, M);
-  if (G && !G.over) write(SAVE_KEY, { ...G, savedAt: Date.now(), strike: null, battle: null });
+  if (G && !G.over && G.mode !== 'lan') write(SAVE_KEY, { ...G, savedAt: Date.now(), strike: null, battle: null });
 }
 export function clearSave() {
   try { localStorage.removeItem(SAVE_KEY); } catch { /* armazenamento indisponível */ }
 }
 export function loadSave(): Game | null {
   const g = read<Game>(SAVE_KEY);
-  return g && g.version === VERSION && COUNTRIES[g.capital] ? g : null;
+  if (!g || g.version !== VERSION || !COUNTRIES[g.capital]) return null;
+  g.buffs ??= [];
+  return g;
 }
 
 // ===== Utilidades =====
@@ -112,7 +114,24 @@ export const pick = <T,>(list: T[]): T => list[Math.floor(Math.random() * list.l
 export const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 export const owned = (owner = PLAYER) => COUNTRY_IDS.filter((id) => game().countries[id].owner === owner);
 export const isMine = (id: string) => game().countries[id].owner === PLAYER;
-export const rivalDef = (id: string) => RIVALS.find((r) => r.id === id)!;
+/** Jogadores reais da partida no Wi-Fi entram como rivais */
+export const extraRivals: RivalDef[] = [];
+export const isHuman = (id: string) => /^h\d$/.test(id);
+export const rivalDef = (id: string) => RIVALS.find((r) => r.id === id) ?? extraRivals.find((r) => r.id === id)!;
+/** Chaves do administrador (menu protegido por senha) */
+export const cheat = {
+  god: false, win: false, rich: false, army: false, reach: false, free: false, power: false, calm: false, freeze: false, see: false,
+  snake: false, cards: false, speed: 1,
+};
+/** Ligação com a partida no Wi-Fi (preenchida por lan/match) */
+export const net = {
+  active: false, host: false,
+  locked: (_id: string) => false,
+  incoming: (_owner: string, _target: string) => {},
+  cyber: (_owner: string) => {},
+  war: (_owner: string, _betrayal: boolean) => {},
+  lost: () => {},
+};
 export const scenarioOf = (mode: string) => [...SCENARIOS, ...CAMPAIGN].find((s) => s.id === mode) ?? null;
 export function ownerName(owner: string) {
   if (owner === PLAYER) return 'Você';
@@ -151,9 +170,9 @@ function makeRival(id: string, capital: string, hard: number): Rival {
   };
 }
 
-export function newGame(countryId: string, mode = 'livre') {
+export function newGame(countryId: string, mode = 'livre', lan?: { humans: string[]; ais: string[] }) {
   const sc = scenarioOf(mode);
-  const hard = 1 + M.prestige * 0.2;
+  const hard = lan ? 1 : 1 + M.prestige * 0.2;
   const countries: Record<string, CountryState> = {};
   for (const id of COUNTRY_IDS) {
     countries[id] = {
@@ -165,11 +184,17 @@ export function newGame(countryId: string, mode = 'livre') {
   for (const r of RIVALS) {
     if (r.capital === countryId) continue;
     // Na partida livre o sétimo rival só entra se o jogador ocupar a vaga de outro
-    const enters = sc ? sc.rivals.includes(r.id) : r.id !== 'r7' || Object.keys(rivals).length < 6;
+    const enters = lan ? lan.ais.includes(r.id) : sc ? sc.rivals.includes(r.id) : r.id !== 'r7' || Object.keys(rivals).length < 6;
     if (!enters) continue;
     rivals[r.id] = makeRival(r.id, r.capital, hard);
     countries[r.capital].owner = r.id;
     countries[r.capital].def = Math.round(COUNTRIES[r.capital].defense * 1.5 * hard);
+  }
+  for (const id of lan?.humans ?? []) {
+    const home = rivalDef(id).capital;
+    rivals[id] = makeRival(id, home, 1);
+    countries[home].owner = id;
+    countries[home].def = 40;
   }
   countries[countryId].owner = PLAYER;
   countries[countryId].def = 40;
@@ -184,7 +209,7 @@ export function newGame(countryId: string, mode = 'livre') {
     crisis: '', vote: null, timers: { market: 12, event: 60, vote: 200, joke: 25, special: 45, revolt: 30, raid: 80 },
     wave: 0, defeated: 0, achievements: [], victories: [], over: null,
     stats: { conquests: 0, battles: 0, defended: 0, recruited: 0, upgrades: 0, techs: 0, spies: 0, trades: 0, gifts: 0, earned: 0, powers: 0, sieges: 0 },
-    report: [], storySeen: !sc?.story, seq: 0,
+    report: [], storySeen: !sc?.story, seq: 0, buffs: [],
   };
   news(`${COUNTRIES[countryId].name} entra na disputa pelo mundo!`);
   save();

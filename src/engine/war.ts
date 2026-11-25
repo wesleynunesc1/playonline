@@ -2,7 +2,7 @@ import { COUNTRIES, distance } from '../data/countries';
 import { GENERALS, POWERS, Power, UNITS, UNIT_INFO, Unit } from '../data/content';
 import { SHIP_CAPACITY, armyPower, attackPower, defensePower, generalStats, landTroops, mods, reach, recruitCost, revealed, winChance } from './calc';
 import { addGeneralXp, addXp, freeGenerals, track, weekKey } from './meta';
-import { Army, Battle, M, PLAYER, Tactic, ZOMBIES, bump, clamp, emptyArmy, fail, game, hooks, isMine, news, ok, owned, ownerName, pick, rand, rivalDef, save } from './state';
+import { Army, Battle, M, PLAYER, Tactic, ZOMBIES, bump, cheat, clamp, emptyArmy, fail, game, hooks, isHuman, isMine, net, news, ok, owned, ownerName, pick, rand, rivalDef, save } from './state';
 
 /** Batalhas, poderes, cercos e defesa. */
 
@@ -51,6 +51,7 @@ export function attackBlock(target: string): string {
   const r = g.rivals[c.owner];
   if (c.owner === PLAYER) return 'O país já é seu.';
   if (c.vassal) return 'Este país é seu vassalo.';
+  if (cheat.free) return g.strike || g.battle ? 'Há um ataque em andamento.' : '';
   if (r?.ally) return 'É seu aliado. Rompa a aliança na Diplomacia para atacar.';
   if (r && r.truce > 0) return `Trégua em vigor: ${Math.ceil(r.truce)}s.`;
   if (g.strike || g.battle) return 'Há um ataque em andamento.';
@@ -98,6 +99,7 @@ function createBattle(target: string, army: Army, general: string, a: number, d:
   return b;
 }
 
+let launched: Army | null = null;
 export function startAttack(target: string, army: Army, general: string) {
   const g = game();
   const block = attackBlock(target);
@@ -109,6 +111,7 @@ export function startAttack(target: string, army: Army, general: string) {
   if (way === 'mar' && landTroops(army) > army.navy * SHIP_CAPACITY) return fail(`Cada navio leva ${SHIP_CAPACITY} tropas. Envie mais navios.`);
   if (M.generals[general]?.captor) general = '';
   for (const u of UNITS) g.army[u] -= army[u];
+  launched = { ...army };
   if (way === 'ar') g.para = false;
   const owner = g.countries[target].owner;
   if (g.rivals[owner]) provoke(owner, 25, `Você atacou ${COUNTRIES[target].name}.`);
@@ -116,9 +119,10 @@ export function startAttack(target: string, army: Army, general: string) {
   const from = owned().reduce((best, id) => (distance(id, target) < distance(best, target) ? id : best), g.capital);
   g.strike = { from, to: target, hostile: false, key: ++g.seq };
   hooks.sound('launch');
+  if (isHuman(owner)) net.incoming(owner, target);
   bump();
   setTimeout(() => {
-    if (game() !== g) return;
+    if (game() !== g || !g.strike) return;
     g.strike = null;
     g.battle = battle;
     hooks.sound('impact');
@@ -138,8 +142,8 @@ export function battleRound(tactic: Tactic) {
   const mine = good ? 1.35 : bad ? 0.75 : 1;
   const dealt = b.a0 * 0.3 * mine * rand(0.85, 1.15);
   const taken = (b.d0 * 0.3 * rand(0.85, 1.15)) / mine;
-  b.d = Math.max(0, b.d - dealt);
-  b.a = Math.max(0, b.a - taken);
+  b.d = cheat.win ? 0 : Math.max(0, b.d - dealt);
+  if (!cheat.win) b.a = Math.max(0, b.a - taken);
   b.log = [`${good ? '✅' : bad ? '❌' : '➖'} ${TACTICS[tactic].name} contra ${TACTICS[b.stance].name.toLowerCase()}`, ...b.log].slice(0, 5);
   hooks.sound('impact');
   b.round++;
@@ -152,9 +156,21 @@ export function retreat() {
   endBattle('fled');
   bump();
 }
+/** Tática que vence o palpite dos batedores */
+export const autoPick = (): Tactic => STANCES.find((t) => BEATS[t] === game().battle?.hint) ?? 'avancar';
 export function autoBattle() {
   const b = game().battle;
-  for (let i = 0; b && !b.done && i < 30; i++) battleRound(b.hint === 'avancar' ? 'flanquear' : b.hint === 'flanquear' ? 'atrair' : 'avancar');
+  for (let i = 0; b && !b.done && i < 30; i++) battleRound(autoPick());
+}
+/** Escudo do outro jogador: as tropas voltam para casa */
+export function cancelAttack(target: string) {
+  const g = game();
+  const army = g.battle?.target === target && !g.battle.done ? g.battle.army : g.strike?.to === target ? launched : null;
+  if (!army) return false;
+  for (const u of UNITS) g.army[u] += army[u];
+  g.battle = null;
+  g.strike = null;
+  return true;
 }
 
 function endBattle(done: 'won' | 'lost' | 'fled') {
@@ -215,7 +231,7 @@ export function conquer(id: string, peaceful = false) {
   addXp(15);
   if (!peaceful) g.infamy = Math.min(100, g.infamy + 3);
   // O mundo se arma conforme o império cresce
-  for (const x in g.countries) {
+  for (const x in g.mode === 'lan' ? {} : g.countries) {
     const o = g.countries[x];
     if (o.owner !== PLAYER) o.def = Math.round(Math.min(o.def * 1.02 + 0.5, COUNTRIES[x].defense * 12));
   }
@@ -232,7 +248,7 @@ export function lostCountry(rivalId: string, id: string) {
   if (!r.alive) return;
   r.power *= 0.92;
   const rest = owned(rivalId);
-  if (r.capital !== id && rest.length) return;
+  if (isHuman(rivalId) || (r.capital !== id && rest.length)) return;
   for (const x of rest) g.countries[x].owner = '';
   Object.assign(r, { alive: false, ally: false, trade: false, war: '', power: r.power * 0.5 });
   if (g.threat?.by === rivalId) g.threat = null;
@@ -242,7 +258,7 @@ export function lostCountry(rivalId: string, id: string) {
     addXp(60);
     M.chests++;
     changeMorale(0.08);
-    if (!r.nemesis) {
+    if (!r.nemesis && g.mode !== 'lan') {
       r.nemesis = true;
       r.returnIn = 240;
     }
@@ -316,7 +332,9 @@ export function loseCountry(id: string, to: string) {
   Object.assign(g.countries[id], { owner: to, def: Math.round(COUNTRIES[id].defense * 0.6), happy: 60, siege: false });
   changeMorale(-0.05);
   const rest = owned();
+  if (g.mode === 'lan') net.lost();
   if (!rest.length) {
+    if (g.mode === 'lan') return;
     g.over = { won: false, title: 'O império caiu', text: `Você resistiu por ${Math.floor(g.time / 60)} minutos.` };
     return;
   }

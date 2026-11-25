@@ -197,7 +197,7 @@ export function freeGenerals(captor: string) {
 // ===== Prestígio =====
 export function prestigeGain() {
   const g = G;
-  if (!g) return 0;
+  if (!g || g.mode === 'lan') return 0;
   return owned().length < 10 && !g.victories.length ? 0 : 1 + Math.floor(owned().length / 12) + g.victories.length * 3 + g.space;
 }
 export function doPrestige() {
@@ -223,7 +223,7 @@ export function buyPerk(id: string) {
 /** Encerra a partida: generais presos voltam para casa */
 export function finishGame() {
   for (const id in M.generals) M.generals[id].captor = '';
-  clearSave();
+  if (G?.mode !== 'lan') clearSave();
   setGame(null);
   save();
 }

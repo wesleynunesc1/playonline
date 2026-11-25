@@ -83,6 +83,7 @@
 .land-capital { fill: url(#gradCapital); stroke: #ecfeff; stroke-width: 1.8; }
 .land-sabotaged { fill: #9f1239; }
 .land-reach { stroke: #facc15; stroke-width: 1.5; }
+.land-hill { stroke: #fde047; stroke-width: 4; }
 .land-siege { stroke: #fb923c; stroke-width: 2.4; stroke-dasharray: 4 3; }
 .land-vassal { fill: #67a8d8; }
 .land-Z { fill: #4d7c0f; }
@@ -120,6 +121,37 @@
 .impact-flash { inset: 0; opacity: 0; background: radial-gradient(circle, #fff7ed, rgba(251, 191, 36, 0.4) 60%); animation: flash 0.35s 0.8s ease-out; }
 .impact-hostile { background: radial-gradient(circle, #fecdd3, rgba(225, 29, 72, 0.5) 60%); }
 @keyframes flash { from { opacity: 0.6; } to { opacity: 0; } }
+
+/* ===== Wi-Fi ===== */
+.speech { animation: speech 0.3s cubic-bezier(0.2, 1.5, 0.4, 1); }
+@keyframes speech { from { opacity: 0; transform: translateX(-30px) scale(0.6); } }
+.card-in { animation: card-in 0.4s cubic-bezier(0.2, 1.4, 0.4, 1); }
+@keyframes card-in { from { opacity: 0; transform: rotateY(90deg); } }
+.podium { animation: podium 0.5s ease-out both; }
+@keyframes podium { from { opacity: 0; transform: translateY(40px); } }
+
+/* ===== Celular ===== */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.safe-top { padding-top: max(var(--safe-min, 0px), env(safe-area-inset-top)); }
+.safe-bottom { padding-bottom: calc(1rem + env(safe-area-inset-bottom)); }
+.sheet { max-height: 90dvh; }
+input, select { font-size: 16px; }
+input[type='range'] { height: 32px; touch-action: pan-y; }
+input[type='range']::-webkit-slider-thumb { width: 26px; height: 26px; }
+@media (max-width: 639px) {
+  .modal-pop { animation: sheet-up 0.28s ease-out; }
+}
+@keyframes sheet-up { from { transform: translateY(100%); } }
+/* Celular deitado: aproveita a altura */
+@media (max-height: 480px) {
+  .game-nav button { flex-direction: row; justify-content: center; padding-block: 0.35rem; }
+  .game-nav .nav-label, .news-line { display: none; }
+  .sheet { max-height: 98dvh; }
+  .battlefield { height: 80px !important; }
+}
+.lite .cloud-layer, .lite .ocean-light, .lite .coast-far { display: none; }
+.lite .shine::after, .lite .radar-ring, .lite .radar-sweep { animation: none; display: none; }
 
 /* ===== Batalha ===== */
 .battlefield { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 1rem; height: 130px; padding: 0.75rem; border-radius: 0.75rem; overflow: hidden; border: 1px solid #334155; }

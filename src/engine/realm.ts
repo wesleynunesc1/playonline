@@ -3,7 +3,7 @@ import { BRANCHES, Building, ERAS, MAX_BUILDING, REGIMES, RES_INFO, SPACE, TECH_
 import { GEOPOLITICAL_EVENTS } from '../data/events';
 import { armyPower, budget, buildCost, countryIncome, defensePower, mods, reach, spyChance, upgradeCost } from './calc';
 import { addXp, track } from './meta';
-import { bump, clamp, fail, game, hooks, isMine, news, ok, owned, pick, rivalDef, save } from './state';
+import { bump, clamp, fail, game, hooks, isHuman, isMine, net, news, ok, owned, pick, rivalDef, save } from './state';
 import { conquer, provoke, remember } from './war';
 
 /** Economia, ciência, diplomacia e espionagem. */
@@ -211,6 +211,8 @@ export function betray(id: string) {
   const g = game();
   const r = g.rivals[id];
   if (!r.ally) return false;
+  if (net.locked(id)) return fail('Vocês são do mesmo time.');
+  if (isHuman(id)) net.war(id, true);
   r.ally = false;
   r.truce = 0;
   r.power *= 0.85;
@@ -224,6 +226,7 @@ export function betray(id: string) {
 export function declareWar(id: string) {
   const r = game().rivals[id];
   if (r.ally) return betray(id);
+  if (isHuman(id)) net.war(id, false);
   r.truce = 0;
   provoke(id, 40, 'Você declarou guerra.');
   news(`Guerra! ${rivalDef(id).leader}: "${rivalDef(id).war}"`, 'war');
@@ -322,6 +325,7 @@ export function spyOp(op: SpyOp, id: string) {
   if (isMine(id) || c.vassal) return fail('Alvo inválido.');
   if (OP_INFO[op].rivalOnly && !r) return fail('Só contra impérios rivais.');
   if (op === 'roubar' && !r.spy) return fail('Infiltre um espião antes.');
+  if (op === 'golpe' && isHuman(c.owner)) return fail('Jogadores não caem por golpe.');
   if (op === 'golpe' && r && r.capital === id) return fail('A capital é protegida demais para um golpe.');
   if (!pay(SPY_COST[op])) return false;
   track('spies');
@@ -335,6 +339,7 @@ export function spyOp(op: SpyOp, id: string) {
   else if (op === 'sabotar') c.sab = 90;
   else if (op === 'ciber') {
     r.cyber = 90;
+    if (isHuman(c.owner)) net.cyber(c.owner);
     for (const x of owned(c.owner)) g.countries[x].cyber = 90;
   } else conquer(id, true);
   addXp(8);
