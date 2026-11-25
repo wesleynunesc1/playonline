@@ -92,7 +92,42 @@ assert.equal(Object.keys(v.conquered).length, 1);
 const t0 = v.trophies;
 V.sufferRaid('Bia', 2, 1e12, 5);
 assert.ok(v.moedas === 0 && v.trophies <= t0 && v.shield > Date.now());
-console.log('✔ Ataques');
+// Feitiços
+const spellBase = V.cityBase(K.CITIES.find((c) => c.level === 3).id);
+const sr = S.startRaid(spellBase, army(3), { reza: 1, trovao: 1, forro: 1 });
+assert.equal(S.cast(sr, 'trovao', 13, 13), false, 'só depois de começar');
+S.deploy(sr, 'vaqueiro', 13 + 14.2, 13);
+const hp = sr.builds.reduce((s, b) => s + b.hp, 0);
+assert.ok(S.cast(sr, 'trovao', 13, 13) && sr.builds.reduce((s, b) => s + b.hp, 0) < hp && !S.cast(sr, 'trovao', 13, 13));
+assert.ok(S.cast(sr, 'forro', sr.troops[0].x, sr.troops[0].y) && S.cast(sr, 'reza', sr.troops[0].x, sr.troops[0].y));
+sr.troops[0].hp = 5;
+const x0 = sr.troops[0].x;
+S.stepRaid(sr);
+assert.ok(sr.troops[0].hp > 5 && x0 - sr.troops[0].x > K.TROOPS.vaqueiro.speed * S.STEP * 1.2);
+v.moedas = 1e6;
+assert.equal(V.buySpell('reza'), '');
+v.army = V.emptySquad();
+v.farinha = 1e6;
+assert.ok(V.TROOP_TOTAL(v.last) > 0 ? V.retrain() > 0 : true);
+v.builds.push({ id: 9999, b: 'muro', level: 1, x: 2, y: 2, done: 0, since: 0 });
+assert.ok(V.upgradeWalls() > 0);
+assert.ok(V.dailyGift() > 0 && V.dailyGift() === 0 && V.nextStep());
+console.log('✔ Ataques e feitiços');
+// Mod menu
+const { mod, MODS } = await server.ssrLoadModule('/src/ceara/mods.ts');
+for (const m of MODS) mod[m.id] = true;
+const hard = V.cityBase(2304400);
+const mr = S.startRaid(hard, { ...V.emptySquad(), vaqueiro: 1 }, { reza: 1, trovao: 0, forro: 0 });
+for (let i = 0; i < 12; i++) assert.ok(S.deploy(mr, 'vaqueiro', 13, 13), 'tropas infinitas em qualquer lugar');
+for (let i = 0; i < 3000 && !mr.over; i++) S.stepRaid(mr);
+assert.ok(mr.stars === 3 && mr.time === K.RAID_SECONDS && mr.troops.length === 12 && mr.moedas > hard.moedas * 5);
+v.moedas = 0;
+v.farinha = 0;
+assert.equal(V.train('rezadeira', 50), '');
+assert.equal(V.build('catapulta', ...Object.values(V.findSpot('catapulta'))), '');
+V.sufferRaid('X', 3, 100, 100);
+for (const m of MODS) mod[m.id] = false;
+console.log(`✔ Mod menu: ${MODS.length} chaves`);
 
 // Servidor
 const call = async (b) => { const r = await API.POST(new Request('http://x', { method: 'POST', body: JSON.stringify(b) })); return [r.status, await r.json()]; };

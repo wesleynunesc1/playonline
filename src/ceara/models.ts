@@ -373,9 +373,12 @@ export const fxTexture = (k: 'fire' | 'smoke' | 'glow') => {
 
 export function makeRenderer(canvas: HTMLCanvasElement) {
   const r = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  r.setPixelRatio(Math.min(1.75, window.devicePixelRatio || 1));
+  r.setPixelRatio(Math.min(window.innerWidth < 700 ? 1.5 : 1.75, window.devicePixelRatio || 1));
   r.shadowMap.enabled = true;
   r.shadowMap.type = THREE.PCFSoftShadowMap;
+  // Sombras só são refeitas quando algo muda de lugar
+  r.shadowMap.autoUpdate = false;
+  r.shadowMap.needsUpdate = true;
   r.toneMapping = THREE.ACESFilmicToneMapping;
   r.toneMappingExposure = 1.35;
   return r;
@@ -407,7 +410,6 @@ export function autoQuality(r: THREE.WebGLRenderer) {
     if (slow < 25) return;
     slow = 0;
     const p = r.getPixelRatio();
-    if (p > 0.7) r.setPixelRatio(p * 0.8);
-    else r.shadowMap.autoUpdate = false;
+    if (p > 0.65) r.setPixelRatio(p * 0.8);
   };
 }

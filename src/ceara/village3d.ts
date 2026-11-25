@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
-import { BUILDS, BuildId, GRID, TROOPS } from './content';
+import { BUILDS, BuildId, GRID, SPELLS, TROOPS } from './content';
 import { autoQuality, fxTexture, light, makeBuilding, makeRenderer, makeTroop, mat, soil } from './models';
 import type { Raid, SimTroop } from './sim';
 
@@ -12,6 +12,7 @@ interface Flying { mesh: THREE.Mesh; from: THREE.Vector3; to: THREE.Vector3; t: 
 const C = GRID / 2;
 const pos = (x: number, y: number) => new THREE.Vector3(x - C, 0, y - C);
 const WALL = new THREE.BoxGeometry(0.92, 0.95, 0.92).translate(0, 0.47, 0);
+const ZONE = new THREE.CircleGeometry(1, 40).rotateX(-Math.PI / 2);
 const SHOT = new THREE.SphereGeometry(0.13, 8, 6);
 
 export class Village3D {
@@ -23,6 +24,8 @@ export class Village3D {
   private walls: THREE.InstancedMesh | null = null;
   private wallIds: number[] = [];
   private wallKey = '';
+  private walkers: { g: THREE.Group; to: THREE.Vector3; wait: number }[] = [];
+  private zones: THREE.Mesh[] = [];
   private troops = new Map<number, THREE.Group>();
   private fx: Fx[] = [];
   private flying: Flying[] = [];
@@ -228,7 +231,9 @@ export class Village3D {
         cur = { group, key, item: it, aim: group.getObjectByName('aim') };
         this.items.set(it.id, cur);
         this.scene.add(group);
+        this.renderer.shadowMap.needsUpdate = true;
       }
+      if (cur.item.x !== it.x || cur.item.y !== it.y) this.renderer.shadowMap.needsUpdate = true;
       const half = BUILDS[it.b].size / 2;
       cur.group.position.copy(pos(it.x + half, it.y + half));
       cur.item = it;
@@ -246,6 +251,7 @@ export class Village3D {
     const key = list.map((w) => `${w.id}:${w.x},${w.y},${w.level}`).join(';');
     if (key === this.wallKey) return;
     this.wallKey = key;
+    this.renderer.shadowMap.needsUpdate = true;
     if (this.walls) {
       this.scene.remove(this.walls);
       this.walls.dispose();
@@ -284,8 +290,39 @@ export class Village3D {
     this.grid.visible = false;
   }
 
+  /** Moradores passeando pela vila */
+  populate(n: number) {
+    for (let i = this.walkers.length; i < n; i++) {
+      const g = makeTroop(i % 3 === 0 ? 'rendeira' : i % 7 === 5 ? 'jegue' : 'vaqueiro');
+      g.scale.setScalar(0.85);
+      g.position.set((Math.random() - 0.5) * 20, 0, (Math.random() - 0.5) * 20);
+      this.scene.add(g);
+      this.walkers.push({ g, to: g.position.clone(), wait: Math.random() * 3 });
+    }
+  }
+  private walk(dt: number) {
+    for (const w of this.walkers) {
+      w.wait -= dt;
+      const d = w.to.clone().sub(w.g.position);
+      if (d.length() < 0.15) {
+        if (w.wait > 0) continue;
+        w.wait = 1 + Math.random() * 4;
+        const x = (Math.random() - 0.5) * 22;
+        const z = (Math.random() - 0.5) * 22;
+        // Só caminha para onde não há construção
+        const blocked = [...this.items.values()].some((i) => Math.abs(i.group.position.x - x) < 2.4 && Math.abs(i.group.position.z - z) < 2.4);
+        if (!blocked) w.to.set(x, 0, z);
+        continue;
+      }
+      w.g.position.add(d.setLength(Math.min(d.length(), dt * 1.1)));
+      w.g.rotation.y = -Math.atan2(d.z, d.x);
+      w.g.position.y = Math.abs(Math.sin(this.time * 9 + w.wait)) * 0.06;
+    }
+  }
+
   // ===== Ataque =====
   syncRaid(r: Raid) {
+    this.showZones(r);
     for (const s of r.shots) this.shoot(s.x1, s.y1, s.x2, s.y2, s.kind, s.air);
     for (const b of r.builds) {
       const cur = this.items.get(b.id);
@@ -307,12 +344,14 @@ export class Village3D {
           this.walls.instanceMatrix.needsUpdate = true;
         }
         this.puff(pos(b.cx, b.cy), 4);
+        this.renderer.shadowMap.needsUpdate = true;
         continue;
       }
       const cur = this.items.get(b.id);
       if (!cur) continue;
       this.explode(cur.group.position, BUILDS[b.b].size);
       cur.group.scale.set(1, 0.16, 1);
+      this.renderer.shadowMap.needsUpdate = true;
       cur.group.traverse((o) => { if (o instanceof THREE.Mesh) o.material = mat('#3a3129'); });
       if (cur.bar) this.scene.remove(cur.bar);
       cur.bar = undefined;
@@ -338,6 +377,28 @@ export class Village3D {
       this.scene.remove(g);
       this.troops.delete(id);
     }
+  }
+  private showZones(r: Raid) {
+    const color = { reza: '#4ade80', trovao: '#fde047', forro: '#f472b6' };
+    while (this.zones.length < r.zones.length) {
+      const z = r.zones[this.zones.length];
+      const m = new THREE.Mesh(ZONE, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.28, depthWrite: false }));
+      this.scene.add(m);
+      this.zones.push(m);
+      if (z.s === 'trovao') {
+        this.explode(pos(z.x, z.y), 3.4);
+        for (let i = 0; i < 6; i++) this.add('glow', pos(z.x, z.y).setY(i * 1.6 + 0.5), 1.2, 0.35, 0, [0, 0, 0]);
+      }
+    }
+    this.zones.forEach((m, i) => {
+      const z = r.zones[i];
+      m.visible = !!z;
+      if (!z) return;
+      m.position.copy(pos(z.x, z.y)).setY(0.08);
+      m.scale.setScalar(SPELLS[z.s].radius * (1 + Math.sin(this.time * 8) * 0.03));
+      (m.material as THREE.MeshBasicMaterial).color.set(color[z.s]);
+      if (Math.random() < 0.25) this.add('glow', pos(z.x + (Math.random() - 0.5) * 4, z.y + (Math.random() - 0.5) * 4).setY(0.3), 0.5, 0.7, 0, [0, 1.6, 0], 0.6);
+    });
   }
   private troop(u: SimTroop) {
     const g = makeTroop(u.t);
@@ -400,6 +461,7 @@ export class Village3D {
 
   private animate(dt: number) {
     this.time += dt;
+    this.walk(dt);
     const t = this.time;
     for (const i of this.items.values()) {
       const flame = i.group.getObjectByName('flame');

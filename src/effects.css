@@ -90,7 +90,7 @@
 .land-playable:hover { fill-opacity: 0.55; stroke: #fff; }
 .land-selected { stroke: #fbbf24; stroke-width: 2.4; }
 .land-threat { stroke: #f43f5e; stroke-width: 2.6; fill: #881337; }
-.emoji-text { font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; fill: #e2e8f0; }
+.emoji-text { font-family: 'Bandeiras', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; fill: #e2e8f0; }
 
 .supply-path { fill: none; stroke: #fbbf24; stroke-opacity: 0.4; stroke-width: 1.2; stroke-dasharray: 3 7; animation: dash 1.2s linear infinite; }
 @keyframes dash { to { stroke-dashoffset: -20; } }

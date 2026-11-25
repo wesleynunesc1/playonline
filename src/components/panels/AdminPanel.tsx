@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import { useApp } from '../../ui';
 import { COUNTRIES, REGIONS } from '../../data/countries';
@@ -44,8 +44,9 @@ export const AdminLogin: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 };
 
 // ===== Catálogo do menu =====
-type Tab = 'jogador' | 'guerra' | 'mundo' | 'rivais' | 'wifi' | 'progresso' | 'visual';
-const TABS: Record<Tab, string> = { jogador: '👤 Jogador', guerra: '⚔️ Guerra', mundo: '🌍 Mundo', rivais: '👹 Rivais', wifi: '📶 Wi-Fi', progresso: '🏆 Progresso', visual: '🎬 Efeitos' };
+type Tab = 'jogador' | 'guerra' | 'mundo' | 'rivais' | 'wifi' | 'progresso' | 'visual' | 'ceara';
+const TABS: Record<Tab, string> = { jogador: '👤 Jogador', guerra: '⚔️ Guerra', mundo: '🌍 Mundo', rivais: '👹 Rivais', wifi: '📶 Wi-Fi', progresso: '🏆 Progresso', visual: '🎬 Efeitos', ceara: '🏰 Ceará' };
+const CearaMods = lazy(() => import('./CearaMods'));
 type Entry =
   | { tab: Tab; name: string; icon: string; toggle: keyof typeof cheat }
   | { tab: Tab; name: string; icon: string; run: () => void; game?: boolean; solo?: boolean }
@@ -226,6 +227,7 @@ export const AdminMenu: React.FC = () => {
   useGame();
   const admin = useApp((s) => s.admin);
   const [open, setOpen] = useState(false);
+  const screen = useApp((s) => s.screen);
   const [tab, setTab] = useState<Tab>('jogador');
   const [query, setQuery] = useState('');
   const [pos, setPos] = useState({ x: -1, y: 220 });
@@ -241,6 +243,12 @@ export const AdminMenu: React.FC = () => {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [admin]);
+
+  // Abre já na aba do jogo em que a pessoa está
+  useEffect(() => {
+    if (screen === 'ceara') setTab('ceara');
+    else if (screen === 'game') setTab('jogador');
+  }, [screen]);
 
   if (!admin) return null;
   const active = C.FLAGS.filter((f) => cheat[f.id]).length;
@@ -294,11 +302,12 @@ export const AdminMenu: React.FC = () => {
             </nav>
           )}
           <div className="flex-1 overflow-y-auto overscroll-contain px-3 pb-4 space-y-1.5">
-            {!G && !query && tab !== 'progresso' && <p className="text-slate-400 py-2">Entre em uma partida para liberar o resto desta aba.</p>}
+            {!query && tab === 'ceara' && <Suspense fallback={<p>Carregando...</p>}><CearaMods /></Suspense>}
+            {!G && !query && tab !== 'progresso' && tab !== 'ceara' && <p className="text-slate-400 py-2">Entre em uma partida para liberar o resto desta aba.</p>}
             {G && !query && tab === 'guerra' && <CountryEditor />}
             {G && !query && tab === 'rivais' && <RivalEditor />}
             {list.map((e) => <EntryRow key={e.tab + e.name} e={e} />)}
-            {!query && tab === 'progresso' && <Btn className="w-full" onClick={() => { for (const f of C.FLAGS) cheat[f.id] = false; cheat.speed = 1; useApp.setState({ admin: false }); setOpen(false); bump(); }}>🚪 Sair do modo administrador</Btn>}
+            {!query && tab === 'progresso' && <Btn className="w-full" onClick={() => { for (const f of C.FLAGS) cheat[f.id] = false; cheat.speed = 1; useApp.setState({ admin: false }); import('../../ceara/mods').then(({ MODS, mod }) => MODS.forEach((m) => { mod[m.id] = false; })); setOpen(false); bump(); }}>🚪 Sair do modo administrador</Btn>}
           </div>
         </div>
       )}

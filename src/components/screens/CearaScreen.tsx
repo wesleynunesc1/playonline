@@ -1,13 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Map as MapIcon, Search } from 'lucide-react';
 import { useApp } from '../../ui';
-import { hooks, cheat } from '../../engine/state';
+import { M, hooks } from '../../engine/state';
+import { music } from '../../utils/music';
 import { sound } from '../../utils/audio';
 import { formatNumber } from '../../utils/formatters';
-import { BUILDS, BUILD_IDS, BuildId, CITIES, CITY, CLAN_PHRASES, GRID, MAX_LEVEL, RAID_SECONDS, TROOPS, TROOP_IDS, TroopId, dpsAt, hpAt, leagueOf, produces, upCost, upTime } from '../../ceara/content';
+import { BUILDS, BUILD_IDS, BuildId, CITIES, CITY, CLAN_PHRASES, GRID, MAX_LEVEL, RAID_SECONDS, SPELLS, SPELL_IDS, SpellId, TROOPS, TROOP_IDS, TroopId, dpsAt, hpAt, leagueOf, produces, spellSlots, upCost, upTime } from '../../ceara/content';
 import * as V from '../../ceara/village';
 import { Net, donate, fetchBase, leaveCity, loadPlayers, playerAt, publish, reportRaid, say, startSync } from '../../ceara/online';
-import { Raid, STEP, canDeploy, deploy, startRaid, stepRaid, survivors } from '../../ceara/sim';
+import { Raid, STEP, canDeploy, cast, deploy, startRaid, stepRaid, survivors } from '../../ceara/sim';
 import { Map3D, Mark } from '../../ceara/map3d';
 import { Village3D } from '../../ceara/village3d';
 import { Button } from '../common/Button';
@@ -26,6 +27,7 @@ export const CearaScreen: React.FC = () => {
   V.useVillage();
   const [view, setView] = useState<View>(V.V ? 'vila' : 'mapa');
   const [target, setTarget] = useState<V.Base | null>(null);
+  const [goal, setGoal] = useState(0);
   useEffect(() => {
     loadPlayers();
     V.events.quest = (text, prize) => hooks.toast(`🎯 ${text}: +${prize} rapaduras`, 'success');
@@ -33,24 +35,32 @@ export const CearaScreen: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
   const founded = !!V.V;
+  useEffect(() => {
+    music.set(sound.enabled && M.music ? (view === 'ataque' ? 'guerra' : 'paz') : null);
+  }, [view]);
+  useEffect(() => () => music.set(null), []);
+  useEffect(() => {
+    const n = founded ? V.dailyGift() : 0;
+    if (n) hooks.toast(`🎁 Presente do dia: +${n} rapaduras`, 'success');
+  }, [founded]);
   useEffect(() => (founded ? startSync() : undefined), [founded]);
 
   return (
     <div className="relative w-full h-full overflow-hidden bg-[#1b2a35] text-slate-100">
-      {view === 'mapa' && <MapView onVillage={() => setView('vila')} onAttack={(b) => { setTarget(b); setView('ataque'); }} />}
-      {view === 'vila' && founded && <VillageView onMap={() => setView('mapa')} />}
-      {view === 'ataque' && target && <RaidView key={target.city} base={target} onEnd={() => { setTarget(null); setView('mapa'); }} />}
+      {view === 'mapa' && <MapView start={goal} onVillage={() => setView('vila')} onAttack={(b) => { setTarget(b); setView('ataque'); }} />}
+      {view === 'vila' && founded && <VillageView onMap={(city = 0) => { setGoal(city); setView('mapa'); }} />}
+      {view === 'ataque' && target && <RaidView key={target.city} base={target} onEnd={() => { setTarget(null); setGoal(0); setView('mapa'); }} />}
     </div>
   );
 };
 
 // ===================== Mapa =====================
-const MapView: React.FC<{ onVillage: () => void; onAttack: (b: V.Base) => void }> = ({ onVillage, onAttack }) => {
+const MapView: React.FC<{ start: number; onVillage: () => void; onAttack: (b: V.Base) => void }> = ({ start, onVillage, onAttack }) => {
   V.useVillage();
   const setScreen = useApp((s) => s.setScreen);
   const ref = useRef<HTMLCanvasElement>(null);
   const map = useRef<Map3D | null>(null);
-  const [picked, setPicked] = useState(0);
+  const [picked, setPicked] = useState(start);
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const v = V.V;
@@ -59,7 +69,7 @@ const MapView: React.FC<{ onVillage: () => void; onAttack: (b: V.Base) => void }
     const m = new Map3D(ref.current!);
     m.onPick = (id) => { sound.playClick(); setPicked(id); };
     map.current = m;
-    if (V.V) m.select(V.V.city, true);
+    if (start || V.V) m.select(start || V.V!.city, true);
     return () => m.destroy();
   }, []);
   const conquered = v?.conquered;
@@ -104,6 +114,18 @@ const MapView: React.FC<{ onVillage: () => void; onAttack: (b: V.Base) => void }
     setBusy(false);
   };
 
+  /** Alvo do seu tamanho: jogador sem escudo ou cidade ainda não conquistada, perto de casa */
+  const search = () => {
+    if (!v) return;
+    const rivals = players.filter((p) => p.city !== v.city && p.shield < Date.now() && Math.abs(p.level - V.hall()) <= 1 && (!v.clan || p.clan.toLowerCase() !== v.clan.toLowerCase()));
+    if (rivals.length && Math.random() < 0.5) return go(rivals[Math.floor(Math.random() * rivals.length)].city);
+    const home = CITY[v.city];
+    const list = CITIES.filter((c) => c.id !== v.city && !v.conquered[c.id] && !playerAt(c.id) && c.level <= Math.max(1, V.hall()))
+      .sort((a, b) => Math.hypot(a.x - home.x, a.y - home.y) - Math.hypot(b.x - home.x, b.y - home.y));
+    if (!list.length) return hooks.toast('Evolua a Prefeitura para encarar cidades maiores.', 'info');
+    go(list[Math.floor(Math.random() * Math.min(5, list.length))].id);
+  };
+
   return (
     <>
       <canvas ref={ref} className="absolute inset-0 w-full h-full touch-none" aria-label="Mapa 3D do Ceará" />
@@ -121,6 +143,7 @@ const MapView: React.FC<{ onVillage: () => void; onAttack: (b: V.Base) => void }
           <p>{Net.online ? `🟢 ${players.length} jogador(es) online` : '⚪ Sem conexão'}</p>
         </div>
       )}
+      {v && !picked && <button onClick={search} className="absolute right-2 bottom-2 rounded-2xl px-5 py-3 font-black text-white bg-gradient-to-b from-amber-500 to-red-700 border-2 border-amber-300 shadow-xl active:scale-95">🎲 Procurar alvo</button>}
       {!v && !picked && <p className="absolute inset-x-4 bottom-6 mx-auto max-w-md glass-panel rounded-2xl p-4 text-center font-bold">Toque em uma das 184 cidades do Ceará para fundar a sua vila!</p>}
       <Modal isOpen={!!picked} onClose={() => setPicked(0)} maxWidth="sm" title={picked ? CITY[picked].name : ''} subtitle={picked ? `${CITY[picked].region} • ${CITY[picked].pop.toLocaleString('pt-BR')} habitantes` : ''}>
         {picked > 0 && (v ? <CityInfo id={picked} busy={busy} onAttack={() => attack(picked)} onVillage={onVillage} /> : <FoundForm id={picked} onDone={onVillage} />)}
@@ -180,7 +203,7 @@ const CityInfo: React.FC<{ id: number; busy: boolean; onAttack: () => void; onVi
 type Sheet = '' | 'loja' | 'tropas' | 'cla' | 'ranking' | 'missoes' | 'diario';
 const NAV: [Sheet, string, string][] = [['loja', '🏗️', 'Construir'], ['tropas', '🪖', 'Tropas'], ['cla', '🛡️', 'Clã'], ['ranking', '🏆', 'Ranking'], ['missoes', '🎯', 'Missões'], ['diario', '📜', 'Diário']];
 
-const VillageView: React.FC<{ onMap: () => void }> = ({ onMap }) => {
+const VillageView: React.FC<{ onMap: (city?: number) => void }> = ({ onMap }) => {
   V.useVillage();
   const ref = useRef<HTMLCanvasElement>(null);
   const scene = useRef<Village3D | null>(null);
@@ -210,6 +233,7 @@ const VillageView: React.FC<{ onMap: () => void }> = ({ onMap }) => {
   }, []);
   useEffect(() => {
     scene.current?.setItems(v.builds.map((p) => ({ ...p, busy: p.done > 0 })));
+    scene.current?.populate(4 + V.hall() * 2);
   });
   useEffect(() => {
     if (place) scene.current?.setGhost(place.b, place.x, place.y, V.fits(place.b, place.x, place.y, place.move));
@@ -250,6 +274,7 @@ const VillageView: React.FC<{ onMap: () => void }> = ({ onMap }) => {
           {v.shield > now && <span className="glass-panel rounded-full px-3 py-1.5 text-sky-300">🛡️ {clock((v.shield - now) / 1000)}</span>}
           <span title={Net.online ? 'Online' : 'Sem conexão'}>{Net.online ? '🟢' : '⚪'}</span>
         </div>
+        <button onClick={() => setSheet('missoes')} className="pointer-events-auto glass-panel rounded-full px-3 py-1.5 text-xs text-amber-200 max-w-full truncate">{V.nextStep()}</button>
         {Net.error && <p className="glass-panel rounded-xl px-3 py-2 text-xs text-amber-300 pointer-events-auto">{Net.error}</p>}
       </header>
 
@@ -265,7 +290,7 @@ const VillageView: React.FC<{ onMap: () => void }> = ({ onMap }) => {
         <footer className="absolute bottom-0 inset-x-0 p-2 space-y-2 safe-bottom !pb-2 pointer-events-none">
           <div className="flex items-end justify-between gap-2">
             <button onClick={() => { const n = V.collect(); if (n) { sound.playBuy(); hooks.toast(`+${formatNumber(n)} coletados`, 'success'); } else hooks.toast('Armazéns cheios.', 'danger'); }} disabled={waiting < 1} className="pointer-events-auto glass-panel rounded-2xl px-4 py-2.5 text-sm font-bold disabled:opacity-40">🧺 Coletar {waiting >= 1 && formatNumber(waiting)}</button>
-            <button onClick={onMap} className="pointer-events-auto rounded-2xl px-5 py-3 font-black text-white bg-gradient-to-b from-amber-500 to-red-700 border-2 border-amber-300 shadow-xl flex items-center gap-2 active:scale-95"><MapIcon size={20} /> Atacar!</button>
+            <button onClick={() => onMap()} className="pointer-events-auto rounded-2xl px-5 py-3 font-black text-white bg-gradient-to-b from-amber-500 to-red-700 border-2 border-amber-300 shadow-xl flex items-center gap-2 active:scale-95"><MapIcon size={20} /> Atacar!</button>
           </div>
           <nav className="grid grid-cols-6 gap-1 pointer-events-auto">
             {NAV.map(([id, icon, name]) => (
@@ -285,11 +310,11 @@ const VillageView: React.FC<{ onMap: () => void }> = ({ onMap }) => {
           setSheet('');
           setPlace({ b, ...s, move: 0 });
         }} />}
-        {sheet === 'tropas' && <Troops />}
+        {sheet === 'tropas' && <><Troops /><Spells /></>}
         {sheet === 'cla' && <Clan />}
         {sheet === 'ranking' && <Ranking />}
         {sheet === 'missoes' && <Quests />}
-        {sheet === 'diario' && <Diary />}
+        {sheet === 'diario' && <Diary onRevenge={(city) => { setSheet(''); onMap(city); }} />}
       </Modal>
     </>
   );
@@ -331,6 +356,7 @@ const Shop: React.FC<{ onBuy: (b: BuildId) => void }> = ({ onBuy }) => (
       const full = V.countOf(b) >= V.maxOf(b);
       return <Action key={b} icon={d.icon} title={`${d.name} ${V.countOf(b)}/${V.maxOf(b)}`} text={d.text} button={full ? (V.hall() < MAX_LEVEL ? 'Limite' : 'Máx.') : `${d.pay === 'moedas' ? '🪙' : '🌾'} ${formatNumber(upCost(b, 1))}`} disabled={full || V.me()[d.pay] < upCost(b, 1)} variant="primary" onClick={() => onBuy(b)} />;
     })}
+    <Button variant="secondary" fullWidth onClick={() => { const n = V.upgradeWalls(); hooks.toast(n ? `${n} muros evoluídos!` : 'Nenhum muro para evoluir com as moedas atuais.', n ? 'success' : 'danger'); }}>🧱 Evoluir muros com as moedas</Button>
     <p className="text-xs text-slate-400">Evolua a Prefeitura para liberar mais.</p>
   </>
 );
@@ -340,6 +366,7 @@ const Troops: React.FC = () => {
     <>
       <Row label="Terreiro">{V.spaceUsed()}/{V.campSize()}</Row>
       <Bar value={V.spaceUsed() / Math.max(1, V.campSize())} color="bg-amber-500" />
+      {V.TROOP_TOTAL(v.last) > 0 && <Button variant="secondary" fullWidth onClick={() => { const n = V.retrain(); hooks.toast(n ? `${n} tropas na fila!` : 'Nada a treinar: terreiro cheio ou sem farinha.', n ? 'success' : 'danger'); }}>🔁 Retreinar último exército</Button>}
       {v.training.length > 0 && <p className="text-xs text-slate-300">Treinando: {v.training.map((q) => `${q.n}${TROOPS[q.t].icon}`).join(' ')} • pronto em {clock((v.training[v.training.length - 1].ready - Date.now()) / 1000)}</p>}
       {TROOP_IDS.map((t) => {
         const d = TROOPS[t];
@@ -352,6 +379,16 @@ const Troops: React.FC = () => {
           </div>
         );
       })}
+    </>
+  );
+};
+const Spells: React.FC = () => {
+  const v = V.me();
+  const slots = spellSlots(V.hall());
+  return (
+    <>
+      <h4 className="font-bold text-amber-300 pt-2">✨ Feitiços {SPELL_IDS.reduce((n, s) => n + v.spells[s], 0)}/{slots}</h4>
+      {SPELL_IDS.map((s) => <Action key={s} icon={SPELLS[s].icon} title={`${SPELLS[s].name} x${v.spells[s]}`} text={V.hall() < SPELLS[s].hall ? `Prefeitura nível ${SPELLS[s].hall}` : SPELLS[s].text} button={`🪙 ${SPELLS[s].cost}`} disabled={V.hall() < SPELLS[s].hall || v.moedas < SPELLS[s].cost} onClick={() => toast(V.buySpell(s))} />)}
     </>
   );
 };
@@ -425,13 +462,14 @@ const Quests: React.FC = () => {
     </>
   );
 };
-const Diary: React.FC = () => (
+const Diary: React.FC<{ onRevenge: (city: number) => void }> = ({ onRevenge }) => (
   <>
     {!V.me().log.length && <p className="text-sm text-slate-400">Nenhum ataque ainda.</p>}
     {V.me().log.map((l) => (
       <div key={l.at} className={`rounded-xl border p-2.5 text-xs ${l.mine ? 'border-emerald-800' : 'border-rose-800'}`}>
         <p className="font-bold text-sm">{l.mine ? `Você atacou ${l.by}` : `${l.by} atacou você`} {'★'.repeat(l.stars)}{'☆'.repeat(3 - l.stars)}</p>
         <p className="text-slate-300">{l.mine ? '+' : '-'}🪙 {formatNumber(l.moedas)} {l.mine ? '+' : '-'}🌾 {formatNumber(l.farinha)} • 🏆 {l.trophies > 0 ? '+' : ''}{l.trophies} • {new Date(l.at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
+        {!l.mine && !!l.city && <Button size="sm" variant="danger" className="mt-2" onClick={() => onRevenge(l.city!)}>😤 Vingar</Button>}
       </div>
     ))}
   </>
@@ -441,7 +479,10 @@ const Diary: React.FC = () => (
 const RaidView: React.FC<{ base: V.Base; onEnd: () => void }> = ({ base, onEnd }) => {
   const ref = useRef<HTMLCanvasElement>(null);
   const raid = useRef<Raid>(null as unknown as Raid);
-  raid.current ??= startRaid(base, V.me().army);
+  raid.current ??= startRaid(base, V.me().army, V.me().spells);
+  const [spell, setSpell] = useState<SpellId | ''>('');
+  const magic = useRef(spell);
+  magic.current = spell;
   const [troop, setTroop] = useState<TroopId>(() => TROOP_IDS.find((t) => V.me().army[t] > 0) ?? 'vaqueiro');
   const chosen = useRef(troop);
   chosen.current = troop;
@@ -455,7 +496,7 @@ const RaidView: React.FC<{ base: V.Base; onEnd: () => void }> = ({ base, onEnd }
     if (result || !x) return;
     x.over = true;
     const loot = { moedas: Math.floor(x.moedas), farinha: Math.floor(x.farinha) };
-    const got = V.applyRaid(base, x.stars, loot, survivors(x));
+    const got = V.applyRaid(base, x.stars, loot, survivors(x), x.spells);
     if (base.player) reportRaid(base.city, x.stars, loot.moedas, loot.farinha).catch((e) => hooks.toast((e as Error).message, 'danger'));
     setResult({ stars: x.stars, percent: x.percent, ...got });
     if (x.stars) sound.playVictory();
@@ -469,6 +510,12 @@ const RaidView: React.FC<{ base: V.Base; onEnd: () => void }> = ({ base, onEnd }
     s.onTap = (x, y) => {
       const R = raid.current;
       if (R.over) return;
+      if (magic.current) {
+        if (cast(R, magic.current, x, y)) sound.playTechUnlocked();
+        else hooks.toast(R.started ? 'Feitiço esgotado.' : 'Solte uma tropa antes.', 'danger');
+        setSpell('');
+        return;
+      }
       let t = chosen.current;
       if (R.left[t] < 1) {
         const next = TROOP_IDS.find((k) => R.left[k] > 0);
@@ -493,7 +540,6 @@ const RaidView: React.FC<{ base: V.Base; onEnd: () => void }> = ({ base, onEnd }
       const R = raid.current;
       while (acc >= STEP && !R.over) {
         acc -= STEP;
-        if (cheat.win) for (const u of R.troops) u.hp = u.max;
         stepRaid(R);
         s.syncRaid(R);
         if (R.fallen.some((b) => b.b !== 'muro')) sound.playImpact();
@@ -524,8 +570,13 @@ const RaidView: React.FC<{ base: V.Base; onEnd: () => void }> = ({ base, onEnd }
       {!r.started && <p className="absolute top-28 inset-x-6 mx-auto max-w-sm text-center glass-panel rounded-2xl p-3 text-sm pointer-events-none">Escolha a tropa embaixo e toque no chão em volta da vila. Segure para soltar várias.</p>}
       <footer className="absolute bottom-0 inset-x-0 p-2 safe-bottom !pb-2 flex gap-1.5 overflow-x-auto no-scrollbar justify-center">
         {TROOP_IDS.filter((t) => V.me().army[t] > 0 || r.left[t] > 0).map((t) => (
-          <button key={t} onClick={() => setTroop(t)} disabled={r.left[t] < 1} className={`shrink-0 w-16 rounded-xl border-2 py-1.5 text-center disabled:opacity-30 ${t === troop ? 'border-amber-300 bg-amber-900/80' : 'border-slate-700 bg-slate-950/80'}`}>
+          <button key={t} onClick={() => { setSpell(''); setTroop(t); }} disabled={r.left[t] < 1} className={`shrink-0 w-16 rounded-xl border-2 py-1.5 text-center disabled:opacity-30 ${t === troop && !spell ? 'border-amber-300 bg-amber-900/80' : 'border-slate-700 bg-slate-950/80'}`}>
             <span className="block text-2xl leading-tight">{TROOPS[t].icon}</span><b className="text-xs">x{r.left[t]}</b>
+          </button>
+        ))}
+        {SPELL_IDS.filter((s) => V.me().spells[s] > 0).map((s) => (
+          <button key={s} onClick={() => setSpell(spell === s ? '' : s)} disabled={r.spells[s] < 1} className={`shrink-0 w-16 rounded-xl border-2 py-1.5 text-center disabled:opacity-30 ${spell === s ? 'border-fuchsia-300 bg-fuchsia-900/80' : 'border-fuchsia-900 bg-slate-950/80'}`}>
+            <span className="block text-2xl leading-tight">{SPELLS[s].icon}</span><b className="text-xs">x{r.spells[s]}</b>
           </button>
         ))}
       </footer>

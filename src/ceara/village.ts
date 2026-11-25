@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
-import { BUILDS, BUILD_IDS, BuildId, CITY, GRID, MAX_LEVEL, PROD_CAP_S, TROOPS, TROOP_IDS, TroopId, campAt, produces, storageAt, upCost, upTime } from './content';
+import { mod } from './mods';
+import { BUILDS, BUILD_IDS, BuildId, CITY, GRID, MAX_LEVEL, PROD_CAP_S, SPELLS, SPELL_IDS, SpellId, TROOPS, TROOP_IDS, TroopId, campAt, produces, spellSlots, storageAt, upCost, upTime } from './content';
 
 /** A vila do jogador: construções, recursos, tropas e salvamento. */
 export interface Placed { id: number; b: BuildId; level: number; x: number; y: number; done: number; since: number }
@@ -7,15 +8,23 @@ export type Squad = Record<TroopId, number>;
 export interface Village {
   v: number; city: number; name: string; clan: string; secret: string; moedas: number; farinha: number; rapadura: number; trophies: number;
   builds: Placed[]; army: Squad; training: { t: TroopId; n: number; ready: number }[]; conquered: Record<number, number>; tribute: number;
-  seq: number; wins: number; defenses: number; log: RaidLog[]; shield: number; quests: string[]; saved: number;
+  spells: Record<SpellId, number>; last: Squad; gift: string; seq: number; wins: number; defenses: number; log: RaidLog[]; shield: number; quests: string[]; saved: number;
 }
-export interface RaidLog { at: number; by: string; stars: number; moedas: number; farinha: number; trophies: number; mine: boolean }
+export interface RaidLog { at: number; by: string; stars: number; moedas: number; farinha: number; trophies: number; mine: boolean; city?: number }
 
+export const TROOP_TOTAL = (s: Squad) => TROOP_IDS.reduce((n, t) => n + s[t], 0);
+export const noSpells = () => Object.fromEntries(SPELL_IDS.map((s) => [s, 0])) as Record<SpellId, number>;
+export const emptySquad = () => Object.fromEntries(TROOP_IDS.map((t) => [t, 0])) as Squad;
 const KEY = 'PLAY_ONLINE_CEARA';
 const read = (): Village | null => {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Village | null;
-    return v && v.v === 1 && CITY[v.city] ? v : null;
+    if (!v || v.v !== 1 || !CITY[v.city]) return null;
+    // Vilas de versões anteriores
+    v.spells ??= noSpells();
+    v.last ??= emptySquad();
+    v.gift ??= '';
+    return v;
   } catch {
     return null;
   }
@@ -36,8 +45,6 @@ export function touch(store = true) {
   listeners.forEach((l) => l());
 }
 export const useVillage = () => useSyncExternalStore((l) => { listeners.add(l); return () => listeners.delete(l); }, () => version);
-export const emptySquad = () => Object.fromEntries(TROOP_IDS.map((t) => [t, 0])) as Squad;
-
 const token = () => Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => (b % 36).toString(36)).join('');
 export function found(city: number, name: string) {
   const now = Date.now();
@@ -45,7 +52,7 @@ export function found(city: number, name: string) {
   V = {
     v: 1, city, name, clan: '', secret: token(), moedas: 1200, farinha: 1200, rapadura: 60, trophies: 0,
     builds: [b(1, 'prefeitura', 11, 11), b(2, 'feira', 6, 8), b(3, 'casafarinha', 6, 14), b(4, 'rancho', 17, 8), b(5, 'terreiro', 17, 15), b(6, 'canhao', 12, 7), b(7, 'cofre', 8, 12), b(8, 'celeiro', 12, 17)],
-    army: { ...emptySquad(), vaqueiro: 12, rendeira: 4 }, training: [], conquered: {}, tribute: now, seq: 20, wins: 0, defenses: 0, log: [], shield: 0, quests: [], saved: now,
+    army: { ...emptySquad(), vaqueiro: 12, rendeira: 4 }, spells: noSpells(), last: emptySquad(), gift: '', training: [], conquered: {}, tribute: now, seq: 20, wins: 0, defenses: 0, log: [], shield: 0, quests: [], saved: now,
   };
   touch();
 }
@@ -61,12 +68,12 @@ export function abandon() {
 export const hall = (v = me()) => v.builds.find((b) => b.b === 'prefeitura')!.level;
 const working = (p: Placed) => p.done > 0;
 export const BUILDERS = 2;
-export const freeBuilders = () => BUILDERS - me().builds.filter(working).length;
+export const freeBuilders = () => (mod.noLimit ? 99 : 0) + BUILDERS - me().builds.filter(working).length;
 export const countOf = (b: BuildId, v = me()) => v.builds.filter((p) => p.b === b).length;
-export const maxOf = (b: BuildId, v = me()) => BUILDS[b].max[hall(v) - 1];
+export const maxOf = (b: BuildId, v = me()) => (mod.noLimit ? 999 : 0) || BUILDS[b].max[hall(v) - 1];
 export const capOf = (kind: 'moedas' | 'farinha', v = me()) =>
   2000 + hall(v) * 1500 + v.builds.filter((p) => p.b === (kind === 'moedas' ? 'cofre' : 'celeiro')).reduce((s, p) => s + storageAt(p.level), 0);
-export const campSize = (v = me()) => v.builds.filter((p) => p.b === 'terreiro').reduce((s, p) => s + campAt(p.level), 0);
+export const campSize = (v = me()) => (mod.noLimit ? 99_999 : 0) + v.builds.filter((p) => p.b === 'terreiro').reduce((s, p) => s + campAt(p.level), 0);
 export const spaceUsed = (v = me()) =>
   TROOP_IDS.reduce((s, t) => s + v.army[t] * TROOPS[t].space, 0) + v.training.reduce((s, q) => s + q.n * TROOPS[q.t].space, 0);
 export const ranchoLevel = (v = me()) => Math.max(0, ...v.builds.filter((p) => p.b === 'rancho').map((p) => p.level));
@@ -100,6 +107,7 @@ export function findSpot(b: BuildId): { x: number; y: number } | null {
 // ===== Ações: devolvem '' se deu certo ou o motivo da recusa =====
 function pay(kind: 'moedas' | 'farinha', n: number): string {
   const v = me();
+  if (mod.free) return '';
   if (v[kind] < n) return kind === 'moedas' ? 'Faltam moedas.' : 'Falta farinha.';
   v[kind] -= n;
   return '';
@@ -111,7 +119,7 @@ export function build(b: BuildId, x: number, y: number): string {
   const no = pay(BUILDS[b].pay, upCost(b, 1));
   if (no) return no;
   const now = Date.now();
-  me().builds.push({ id: ++me().seq, b, level: b === 'muro' ? 1 : 0, x, y, done: b === 'muro' ? 0 : now + upTime(b, 1) * 1000, since: now });
+  me().builds.push({ id: ++me().seq, b, level: b === 'muro' ? 1 : 0, x, y, done: b === 'muro' ? 0 : now + (mod.instant ? 1 : upTime(b, 1) * 1000), since: now });
   touch();
   return '';
 }
@@ -131,7 +139,7 @@ export function upgrade(id: number): string {
   const no = pay(BUILDS[p.b].pay, upCost(p.b, p.level + 1));
   if (no) return no;
   if (p.b === 'muro') p.level++;
-  else p.done = Date.now() + upTime(p.b, p.level + 1) * 1000;
+  else p.done = Date.now() + (mod.instant ? 1 : upTime(p.b, p.level + 1) * 1000);
   touch();
   return '';
 }
@@ -180,9 +188,69 @@ export function train(t: TroopId, n = 1): string {
   if (no) return no;
   const ranchos = Math.max(1, countOf('rancho'));
   const last = v.training.length ? v.training[v.training.length - 1].ready : Date.now();
-  v.training.push({ t, n, ready: Math.max(last, Date.now()) + (TROOPS[t].time * n * 1000) / ranchos });
+  v.training.push({ t, n, ready: Math.max(last, Date.now()) + (mod.instant ? 1 : (TROOPS[t].time * n * 1000) / ranchos) });
   touch();
   return '';
+}
+
+export function buySpell(s: SpellId): string {
+  const v = me();
+  if (hall() < SPELLS[s].hall) return `Precisa de Prefeitura nível ${SPELLS[s].hall}.`;
+  if (SPELL_IDS.reduce((n, k) => n + v.spells[k], 0) >= spellSlots(hall())) return 'Sem espaço para mais feitiços.';
+  const no = pay('moedas', SPELLS[s].cost);
+  if (no) return no;
+  v.spells[s]++;
+  touch();
+  return '';
+}
+/** Treina de novo a composição do último ataque, até onde der */
+export function retrain(): number {
+  const v = me();
+  let n = 0;
+  for (const t of TROOP_IDS) {
+    const queued = v.training.filter((q) => q.t === t).reduce((s, q) => s + q.n, 0);
+    let need = v.last[t] - v.army[t] - queued;
+    const room = Math.floor((campSize() - spaceUsed()) / TROOPS[t].space);
+    need = Math.min(need, room, Math.floor(v.farinha / TROOPS[t].cost));
+    if (need > 0 && !train(t, need)) n += need;
+  }
+  return n;
+}
+/** Evolui de uma vez os muros mais fracos que o dinheiro permitir */
+export function upgradeWalls(): number {
+  let n = 0;
+  for (;;) {
+    const w = me().builds.filter((p) => p.b === 'muro' && p.level < Math.min(MAX_LEVEL, hall() + 1)).sort((a, b) => a.level - b.level)[0];
+    if (!w || me().moedas < upCost('muro', w.level + 1)) break;
+    me().moedas -= upCost('muro', w.level + 1);
+    w.level++;
+    n++;
+  }
+  touch();
+  return n;
+}
+/** Presente diário */
+export function dailyGift(): number {
+  const v = me();
+  const d = new Date();
+  const today = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  if (v.gift === today) return 0;
+  v.gift = today;
+  const n = 15 + hall() * 5;
+  v.rapadura += n;
+  touch();
+  return n;
+}
+/** Próximo passo sugerido a quem está começando */
+export function nextStep(): string {
+  const v = me();
+  if (!v.wins) return spaceUsed() ? '⚔️ Toque em Atacar! e escolha uma cidade 1★ perto de você' : '🪖 Treine tropas em Tropas';
+  if (countOf('muro') < 10) return '🧱 Construa 10 muros em Construir';
+  if (hall() < 2) return '🏛️ Toque na Prefeitura e evolua para o nível 2';
+  if (!countOf('mirante')) return '🏹 Construa um Mirante para se defender';
+  if (!v.clan) return '🛡️ Entre em um Clã';
+  const n = Object.keys(v.conquered).length;
+  return n < 183 ? `🚩 Conquiste o Ceará: ${n}/183 cidades` : '👑 O Ceará é todo seu!';
 }
 
 /** Conclui obras e treinos vencidos */
@@ -288,9 +356,11 @@ export function snapshot(): Base & { clan: string; shield: number; conquered: nu
 }
 
 /** Resultado de um ataque feito por este jogador */
-export function applyRaid(base: Base, stars: number, loot: { moedas: number; farinha: number }, left: Squad): { moedas: number; farinha: number; trophies: number } {
+export function applyRaid(base: Base, stars: number, loot: { moedas: number; farinha: number }, left: Squad, spells = me().spells): { moedas: number; farinha: number; trophies: number } {
   const v = me();
+  v.last = { ...v.army };
   v.army = { ...left };
+  v.spells = { ...spells };
   const before = { moedas: v.moedas, farinha: v.farinha };
   v.moedas = Math.max(v.moedas, Math.min(capOf('moedas'), v.moedas + loot.moedas));
   v.farinha = Math.max(v.farinha, Math.min(capOf('farinha'), v.farinha + loot.farinha));
@@ -308,17 +378,17 @@ export function applyRaid(base: Base, stars: number, loot: { moedas: number; far
   return { moedas: v.moedas - before.moedas, farinha: v.farinha - before.farinha, trophies };
 }
 /** Ataque sofrido enquanto estava fora (veio da caixa de entrada) */
-export function sufferRaid(by: string, stars: number, moedas: number, farinha: number) {
+export function sufferRaid(by: string, stars: number, moedas: number, farinha: number, city = 0) {
   const v = me();
-  const m = Math.min(v.moedas, Math.max(0, moedas));
-  const f = Math.min(v.farinha, Math.max(0, farinha));
+  const m = mod.safe ? 0 : Math.min(v.moedas, Math.max(0, moedas));
+  const f = mod.safe ? 0 : Math.min(v.farinha, Math.max(0, farinha));
   v.moedas -= m;
   v.farinha -= f;
-  const trophies = stars ? -(4 + stars * 5) : 10;
+  const trophies = stars ? (mod.safe ? 0 : -(4 + stars * 5)) : 10;
   v.trophies = Math.max(0, v.trophies + trophies);
   if (!stars) v.defenses++;
   v.shield = Date.now() + (stars ? 30 : 5) * 60_000;
-  v.log = [{ at: Date.now(), by, stars, moedas: m, farinha: f, trophies, mine: false }, ...v.log].slice(0, 30);
+  v.log = [{ at: Date.now(), by, stars, moedas: m, farinha: f, trophies, mine: false, city }, ...v.log].slice(0, 30);
   touch();
 }
 export function receiveTroops(t: TroopId, n: number) {

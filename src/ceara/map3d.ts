@@ -46,6 +46,9 @@ export class Map3D {
     Object.assign(this.controls, { enableDamping: true, dampingFactor: 0.12, minDistance: 7, maxDistance: 85, maxPolarAngle: 1.25, zoomToCursor: true });
     this.surroundings();
     for (const c of CITIES) this.addCity(c);
+    const line = new THREE.BufferGeometry();
+    line.setAttribute('position', new THREE.Float32BufferAttribute(this.borders, 3));
+    this.scene.add(new THREE.LineSegments(line, new THREE.LineBasicMaterial({ color: '#2b2416', transparent: true, opacity: 0.45 })));
     this.towns();
     let start = { x: 0, y: 0 };
     canvas.addEventListener('pointerdown', (e) => { start = { x: e.clientX, y: e.clientY }; this.goal = null; });
@@ -115,6 +118,7 @@ export class Map3D {
     t.needsUpdate = true;
     return t;
   }
+  private borders: number[] = [];
   private reliefTex = this.tex(0.16);
 
   private addCity(c: City) {
@@ -126,14 +130,10 @@ export class Map3D {
     mesh.userData.city = c.id;
     this.scene.add(mesh);
     this.tiles.set(c.id, mesh);
-    const line = new THREE.BufferGeometry();
-    const v: number[] = [];
     for (const r of c.rings) {
       const pts = ringPoints(r);
-      for (let i = 1; i < pts.length; i++) v.push(wx(pts[i - 1][0]), heightOf(c) + 0.05, wz(pts[i - 1][1]), wx(pts[i][0]), heightOf(c) + 0.05, wz(pts[i][1]));
+      for (let i = 1; i < pts.length; i++) this.borders.push(wx(pts[i - 1][0]), heightOf(c) + 0.05, wz(pts[i - 1][1]), wx(pts[i][0]), heightOf(c) + 0.05, wz(pts[i][1]));
     }
-    line.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
-    this.scene.add(new THREE.LineSegments(line, new THREE.LineBasicMaterial({ color: '#2b2416', transparent: true, opacity: 0.45 })));
   }
 
   /** Casinhas e prédios proporcionais à população real */

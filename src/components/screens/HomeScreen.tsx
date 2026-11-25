@@ -15,6 +15,7 @@ import { Globe } from '../common/Globe';
 import { Modal } from '../common/Modal';
 import { Action, Bar } from '../common/Kit';
 import { HelpButton } from '../panels/HelpModal';
+import { BackupModal } from '../panels/BackupModal';
 import { AdminLogin } from '../panels/AdminPanel';
 
 const Item: React.FC<{ icon: React.ReactNode; title: string; text: string; i: number; hot?: boolean; onClick: () => void }> = ({ icon, title, text, i, hot, onClick }) => (
@@ -35,6 +36,7 @@ export const HomeScreen: React.FC = () => {
   const [list, setList] = useState<'' | 'campanha' | 'cenarios'>('');
   const [pending, setPending] = useState<Scenario | 'livre' | null>(null);
   const updating = useUpdate((s) => s.busy);
+  const [backup, setBackup] = useState(false);
   const [login, setLogin] = useState(false);
 
   useEffect(() => {
@@ -92,10 +94,12 @@ export const HomeScreen: React.FC = () => {
         </main>
         <footer className="text-[11px] text-slate-400">
           Líderes fictícios • imagens: NASA • Ceará: IBGE
+          <button onClick={() => setBackup(true)} className="ml-2 underline underline-offset-2 p-2 -my-2">💾 Levar meu progresso</button>
           <button onClick={() => setLogin(true)} aria-label="Administrador" className="p-3 -my-3 opacity-50">🔒</button>
         </footer>
       </div>
 
+      {backup && <BackupModal onClose={() => setBackup(false)} />}
       {login && <AdminLogin onClose={() => setLogin(false)} />}
       <Modal isOpen={!!list && !pending} onClose={() => setList('')} maxWidth="md" title={list === 'campanha' ? '📖 Campanha' : '🗺️ Cenários'}>
         {(list === 'campanha' ? CAMPAIGN : SCENARIOS).map((s, i) => {

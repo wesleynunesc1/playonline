@@ -98,7 +98,7 @@ export async function POST(req: Request): Promise<Response> {
     if (!base) return json({ error: 'vila indisponível' }, 404);
     const stars = num(b.stars, 0, 3);
     // Ninguém leva mais do que a vila publicada oferecia
-    await push({ k: 'raid', by: mine.name, stars, moedas: num(b.moedas, 0, base.moedas), farinha: num(b.farinha, 0, base.farinha), at: now });
+    await push({ k: 'raid', by: mine.name, c: b.city, stars, moedas: num(b.moedas, 0, base.moedas), farinha: num(b.farinha, 0, base.farinha), at: now });
     const shield = now + (stars ? 30 : 5) * 60_000;
     await c.set('index', (await index()).map((e) => (e.city === b.target ? { ...e, shield } : e)), { ttl: WEEK });
     return json({ ok: true });

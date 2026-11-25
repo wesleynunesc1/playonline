@@ -1,4 +1,5 @@
-import { BUILDS, BuildId, GRID, RAID_SECONDS, TROOPS, TroopId, dpsAt, hpAt } from './content';
+import { BUILDS, BuildId, GRID, RAID_SECONDS, SPELLS, SpellId, TROOPS, TroopId, dpsAt, hpAt } from './content';
+import { mod } from './mods';
 import type { Base, Squad } from './village';
 
 /** Simulação do ataque, sem tela: passos fixos de 0,1 s. */
@@ -9,10 +10,11 @@ export interface Shot { x1: number; y1: number; x2: number; y2: number; kind: 'b
 export interface Raid {
   base: Base; builds: SimBuild[]; troops: SimTroop[]; left: Squad; time: number; shots: Shot[]; fallen: SimBuild[]; died: SimTroop[];
   total: number; destroyed: number; stars: number; percent: number; over: boolean; seq: number; moedas: number; farinha: number; started: boolean;
+  spells: Record<SpellId, number>; zones: { s: SpellId; x: number; y: number; left: number }[]; pendingFall: SimBuild[];
 }
 const LOOT: BuildId[] = ['feira', 'casafarinha', 'cofre', 'celeiro', 'prefeitura'];
 
-export function startRaid(base: Base, army: Squad): Raid {
+export function startRaid(base: Base, army: Squad, spells: Record<SpellId, number> = { reza: 0, trovao: 0, forro: 0 }): Raid {
   const builds = base.builds.map((p) => {
     const half = BUILDS[p.b].size / 2;
     const hp = hpAt(p.b, p.level);
@@ -20,23 +22,35 @@ export function startRaid(base: Base, army: Squad): Raid {
   });
   return {
     base, builds, troops: [], left: { ...army }, time: RAID_SECONDS, shots: [], fallen: [], died: [], total: builds.filter((b) => b.b !== 'muro').length,
-    destroyed: 0, stars: 0, percent: 0, over: false, seq: 0, moedas: 0, farinha: 0, started: false,
+    destroyed: 0, stars: 0, percent: 0, over: false, seq: 0, moedas: 0, farinha: 0, started: false, spells: { ...spells }, zones: [], pendingFall: [],
   };
 }
 /** Distância de um ponto à borda de uma construção */
 const gap = (x: number, y: number, b: SimBuild) => Math.hypot(Math.max(0, Math.abs(x - b.cx) - b.half), Math.max(0, Math.abs(y - b.cy) - b.half));
 /** Só se desembarca fora do alcance das construções */
 export const canDeploy = (r: Raid, x: number, y: number) =>
-  x >= -2 && y >= -2 && x <= GRID + 2 && y <= GRID + 2 && r.builds.every((b) => b.hp <= 0 || gap(x, y, b) > (b.b === 'muro' ? 0.6 : 1.3));
+  mod.anywhere || x >= -2 && y >= -2 && x <= GRID + 2 && y <= GRID + 2 && r.builds.every((b) => b.hp <= 0 || gap(x, y, b) > (b.b === 'muro' ? 0.6 : 1.3));
 
 export function deploy(r: Raid, t: TroopId, x: number, y: number): boolean {
   if (r.over || r.left[t] < 1 || !canDeploy(r, x, y)) return false;
-  r.left[t]--;
+  if (!mod.endless) r.left[t]--;
   r.started = true;
   const d = TROOPS[t];
   r.troops.push({ id: ++r.seq, t, x, y, hp: d.hp, max: d.hp, cool: 0.3, target: 0, dir: 0, hit: 0 });
   return true;
 }
+
+/** Feitiço: pode cair em qualquer lugar, depois que a luta começou */
+export function cast(r: Raid, s: SpellId, x: number, y: number): boolean {
+  if (r.over || !r.started || r.spells[s] < 1) return false;
+  if (!mod.spells) r.spells[s]--;
+  r.zones.push({ s, x, y, left: SPELLS[s].seconds });
+  const seen = new Set(r.fallen.map((b) => b.id));
+  if (s === 'trovao') for (const b of r.builds) if (b.hp > 0 && gap(x, y, b) <= SPELLS.trovao.radius) hurtBuild(r, b, 260 + r.base.level * 70);
+  if (s === 'trovao') r.pendingFall.push(...r.fallen.filter((b) => b.hp <= 0 && !seen.has(b.id)));
+  return true;
+}
+const boosted = (r: Raid, u: SimTroop) => r.zones.some((z) => z.s === 'forro' && Math.hypot(z.x - u.x, z.y - u.y) <= SPELLS.forro.radius);
 
 function pickTarget(r: Raid, u: SimTroop): SimBuild | null {
   const d = TROOPS[u.t];
@@ -59,10 +73,10 @@ function pickTarget(r: Raid, u: SimTroop): SimBuild | null {
 function hurtBuild(r: Raid, b: SimBuild, n: number) {
   if (b.hp <= 0) return;
   const before = Math.max(0, b.hp);
-  b.hp -= n;
+  b.hp -= mod.oneHit ? b.max : n;
   if (LOOT.includes(b.b)) {
     // O saque sai aos poucos, conforme a construção apanha
-    const share = (before - Math.max(0, b.hp)) / b.max / r.builds.filter((x) => LOOT.includes(x.b)).length;
+    const share = ((before - Math.max(0, b.hp)) * (mod.loot && !r.base.player ? 10 : 1)) / b.max / r.builds.filter((x) => LOOT.includes(x.b)).length;
     r.moedas += r.base.moedas * share;
     r.farinha += r.base.farinha * share;
   }
@@ -75,7 +89,7 @@ function hurtBuild(r: Raid, b: SimBuild, n: number) {
   r.stars = (r.percent >= 50 ? 1 : 0) + (hallDown ? 1 : 0) + (r.percent >= 100 ? 1 : 0);
 }
 function hurtTroop(r: Raid, u: SimTroop, n: number) {
-  if (u.hp <= 0) return;
+  if (u.hp <= 0 || (mod.god && n < 1e8)) return;
   u.hp -= n;
   u.hit = 0.15;
   if (u.hp <= 0) r.died.push(u);
@@ -83,10 +97,16 @@ function hurtTroop(r: Raid, u: SimTroop, n: number) {
 
 export function stepRaid(r: Raid) {
   r.shots = [];
-  r.fallen = [];
+  r.fallen = r.pendingFall;
+  r.pendingFall = [];
   r.died = [];
   if (r.over) return;
-  if (r.started) r.time -= STEP;
+  if (r.started && !mod.clock) r.time -= STEP;
+  for (const z of r.zones) {
+    z.left -= STEP;
+    if (z.s === 'reza') for (const u of r.troops) if (Math.hypot(z.x - u.x, z.y - u.y) <= SPELLS.reza.radius) u.hp = Math.min(u.max, u.hp + 45 * STEP + u.max * 0.06 * STEP);
+  }
+  r.zones = r.zones.filter((z) => z.left > 0);
   const byId = new Map(r.builds.map((b) => [b.id, b]));
 
   for (const u of r.troops) {
@@ -106,10 +126,11 @@ export function stepRaid(r: Raid) {
     if (!b) continue;
     u.dir = Math.atan2(b.cy - u.y, b.cx - u.x);
     if (gap(u.x, u.y, b) > d.range) {
-      const vx = Math.cos(u.dir) * d.speed * STEP;
-      const vy = Math.sin(u.dir) * d.speed * STEP;
+      const speed = d.speed * (boosted(r, u) ? 1.4 : 1) * (mod.fast ? 2.5 : 1) * STEP;
+      const vx = Math.cos(u.dir) * speed;
+      const vy = Math.sin(u.dir) * speed;
       // Muro no caminho: ataca o muro
-      const wall = d.air ? undefined : r.builds.find((w) => w.hp > 0 && w !== b && w.b === 'muro' && gap(u.x + vx * 2, u.y + vy * 2, w) < 0.12);
+      const wall = d.air || mod.through ? undefined : r.builds.find((w) => w.hp > 0 && w !== b && w.b === 'muro' && gap(u.x + vx * 2, u.y + vy * 2, w) < 0.12);
       if (wall) b = wall;
       else {
         u.x += vx;
@@ -119,7 +140,7 @@ export function stepRaid(r: Raid) {
     }
     if (u.cool > 0) continue;
     u.cool = d.every;
-    const n = d.bomb ? d.dps * (b.b === 'muro' ? 8 : 1) : d.dps * d.every;
+    const n = (d.bomb ? d.dps * (b.b === 'muro' ? 8 : 1) : d.dps * d.every) * (boosted(r, u) ? 1.6 : 1);
     r.shots.push({ x1: u.x, y1: u.y, x2: b.cx, y2: b.cy, kind: d.bomb ? 'bomba' : u.t === 'boitata' ? 'fogo' : d.range > 2 ? 'flecha' : 'golpe', air: !!d.air });
     if (d.splash) {
       const [sx, sy] = d.bomb ? [u.x, u.y] : [b.cx, b.cy];
@@ -130,7 +151,7 @@ export function stepRaid(r: Raid) {
 
   for (const b of r.builds) {
     const def = BUILDS[b.b].defense;
-    if (!def || b.hp <= 0) continue;
+    if (!def || b.hp <= 0 || mod.freeze) continue;
     b.cool -= STEP;
     if (b.cool > 0) continue;
     let best: SimTroop | null = null;

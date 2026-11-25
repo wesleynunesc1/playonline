@@ -65,6 +65,16 @@ export const TROOPS: Record<TroopId, TroopDef> = {
   rezadeira: { name: 'Rezadeira', icon: '🙏', space: 6, hp: 190, dps: 34, every: 0.8, range: 4, speed: 2, cost: 450, time: 22, rancho: 5, text: 'Cura as tropas por perto.', heal: true },
 };
 export const TROOP_IDS = Object.keys(TROOPS) as TroopId[];
+// ===== Feitiços =====
+export type SpellId = 'reza' | 'trovao' | 'forro';
+export const SPELLS: Record<SpellId, { name: string; icon: string; cost: number; radius: number; seconds: number; hall: number; text: string }> = {
+  reza: { name: 'Reza Forte', icon: '💚', cost: 400, radius: 3.4, seconds: 5, hall: 2, text: 'Cura suas tropas na área.' },
+  trovao: { name: 'Trovão', icon: '⚡', cost: 500, radius: 2.4, seconds: 0.4, hall: 2, text: 'Raio que danifica construções.' },
+  forro: { name: 'Forró Arretado', icon: '🪗', cost: 600, radius: 3.6, seconds: 9, hall: 3, text: 'Tropas mais rápidas e 60% mais fortes.' },
+};
+export const SPELL_IDS = Object.keys(SPELLS) as SpellId[];
+export const spellSlots = (hallLevel: number) => (hallLevel < 2 ? 0 : 1 + Math.floor(hallLevel / 2));
+
 export const RAID_SECONDS = 150;
 
 export const CLAN_PHRASES = ['Bora, cabra!', 'Valha me Deus!', 'Arretado!', 'Preciso de tropas', 'Mandei reforço', 'Ataquei, foi massa!', 'Égua, macho!', 'Vai lá tu', 'Oxente!', 'Tamo junto'];

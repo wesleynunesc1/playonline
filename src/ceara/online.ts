@@ -39,7 +39,7 @@ export async function publish(): Promise<void> {
       const by = String(m.by ?? '').slice(0, 14);
       if (m.k === 'raid') {
         const stars = Number(m.stars) || 0;
-        sufferRaid(by, stars, Number(m.moedas) || 0, Number(m.farinha) || 0);
+        sufferRaid(by, stars, Number(m.moedas) || 0, Number(m.farinha) || 0, CITY[Number(m.c)] ? Number(m.c) : 0);
         hooks.toast(stars ? `⚔️ ${by} atacou sua cidade (${stars}★)!` : `🛡️ Sua cidade repeliu ${by}!`, stars ? 'danger' : 'success');
       } else if (m.k === 'troops' && TROOPS[m.t as TroopId]) {
         receiveTroops(m.t as TroopId, Number(m.n) || 1);

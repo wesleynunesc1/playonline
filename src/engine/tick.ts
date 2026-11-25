@@ -151,7 +151,7 @@ function specialTick(g: Game, special: 'zumbis' | 'aliens' | 'ondas') {
     if (!near.length) return;
     const id = pick(near);
     const c = g.countries[id];
-    if (c.owner === PLAYER) threaten(g, ZOMBIES, id, 30 + g.time * 0.12);
+    if (c.owner === PLAYER) threaten(g, ZOMBIES, id, 50 + g.time * 0.35);
     else {
       const before = c.owner;
       Object.assign(c, { owner: ZOMBIES, def: Math.round(COUNTRIES[id].defense * 0.9), vassal: false, route: false });
@@ -164,7 +164,7 @@ function specialTick(g: Game, special: 'zumbis' | 'aliens' | 'ondas') {
       M.waveRecord = Math.max(M.waveRecord, g.wave - 1);
       addXp(5);
     }
-    const strength = special === 'ondas' ? 30 + g.wave * 16 * (1 + g.wave * 0.12) : 60 + g.time * 0.3;
+    const strength = special === 'ondas' ? 40 + g.wave * 22 * (1 + g.wave * 0.2) : 80 + g.time * 0.6;
     threaten(g, special === 'ondas' ? 'onda' : 'alien', pick(owned()), strength);
   }
 }

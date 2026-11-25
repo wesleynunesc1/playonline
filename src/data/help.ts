@@ -244,7 +244,7 @@ export const HELP: HelpGroup[] = [
       },
       {
         icon: '💾', title: 'Meu jogo fica salvo?', short: 'Sim, sozinho, neste aparelho.',
-        lines: ['Salva sozinho a cada poucos segundos. Use CONTINUAR no menu.', 'Enquanto está fora, você ainda ganha metade do dinheiro, por até 8 horas.', 'Trocar de celular ou apagar os dados do navegador faz perder o progresso.'],
+        lines: ['Salva sozinho a cada poucos segundos. Use CONTINUAR no menu.', 'Enquanto está fora, você ainda ganha metade do dinheiro, por até 8 horas.', 'Vai trocar de celular? Toque em 💾 Levar meu progresso, no menu inicial, e copie o código.', 'Apagar os dados do navegador sem esse código faz perder o progresso.'],
       },
     ],
   },
@@ -273,6 +273,8 @@ export const HELP: HelpGroup[] = [
           '1 estrela: destruir metade. 2: derrubar a prefeitura. 3: destruir tudo, e a cidade passa a pagar tributo.',
           'Outros jogadores aparecem em vermelho. Eles também podem atacar você enquanto está fora!',
           'Entre em um clã para trocar tropas.',
+          '✨ Feitiços: cure as tropas, jogue um raio ou deixe todos mais fortes. Compre em Tropas a partir da Prefeitura nível 2.',
+          '🎲 Procurar alvo acha uma cidade do seu tamanho. 😤 Vingar, no Diário, leva até quem atacou você.',
         ],
       },
       { icon: '📖', title: 'Campanha e cenários', short: 'Histórias e desafios prontos.', lines: ['Campanha: 6 capítulos com história e objetivo. Termine um para liberar o próximo.', 'Cenários: Guerra Fria, zumbis, alienígenas e sobrevivência.', 'O objetivo fica escrito no topo do mapa.'] },
