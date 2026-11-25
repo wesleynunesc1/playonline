@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BookOpen, ChevronRight, Gamepad2, Globe2, Map, Maximize, RotateCcw, Volume2, VolumeX, Wifi } from 'lucide-react';
+import { BookOpen, ChevronRight, Gamepad2, Globe2, Map, Maximize, RefreshCw, RotateCcw, Volume2, VolumeX, Wifi } from 'lucide-react';
 import { useApp } from '../../ui';
 import { COUNTRIES } from '../../data/countries';
 import { CAMPAIGN, SCENARIOS, Scenario } from '../../data/content';
@@ -7,6 +7,7 @@ import { M, PLAYER, hooks, levelOf, loadSave, newGame, scenarioOf, titleOf, useG
 import { refreshCalendar, seasonName } from '../../engine/meta';
 import { continueGame } from '../../engine/tick';
 import { toggleFullscreen } from '../../hooks/useDevice';
+import { checkNow, isInstalled, useUpdate } from '../../hooks/useUpdate';
 import { sound } from '../../utils/audio';
 import { formatDuration } from '../../utils/formatters';
 import { Button } from '../common/Button';
@@ -32,6 +33,7 @@ export const HomeScreen: React.FC = () => {
   const [saved] = useState(loadSave);
   const [list, setList] = useState<'' | 'campanha' | 'cenarios'>('');
   const [pending, setPending] = useState<Scenario | 'livre' | null>(null);
+  const updating = useUpdate((s) => s.busy);
   const [login, setLogin] = useState(false);
 
   useEffect(() => {
@@ -65,6 +67,7 @@ export const HomeScreen: React.FC = () => {
           <span className="glass-panel rounded-2xl px-3 py-2 hidden xs:inline">🔥 {M.streak}</span>
           <span className="glass-panel rounded-2xl px-3 py-2 hidden xs:inline">🎁 {M.chests}</span>
           <span className="ml-auto flex gap-2">
+            {isInstalled && <button onClick={checkNow} disabled={updating} className="glass-btn w-11 h-11" aria-label="Atualizar o jogo" title="Atualizar o jogo"><RefreshCw size={18} className={updating ? 'animate-spin' : ''} /></button>}
             <button onClick={toggleFullscreen} className="glass-btn w-11 h-11" aria-label="Tela cheia"><Maximize size={18} /></button>
             <button onClick={toggleSound} className="glass-btn w-11 h-11" aria-label={soundEnabled ? 'Desligar som' : 'Ligar som'}>{soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}</button>
           </span>

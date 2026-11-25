@@ -1,6 +1,7 @@
 import React, { Suspense, lazy } from 'react';
 import { useApp } from './ui';
 import { AdminMenu } from './components/panels/AdminPanel';
+import { UpdateBanner } from './components/common/UpdateBanner';
 import { Toast } from './components/common/Toast';
 import { useLiteEffects } from './hooks/useDevice';
 import { HomeScreen } from './components/screens/HomeScreen';
@@ -23,6 +24,7 @@ export const App: React.FC = () => {
         {screen === 'lan' && <LanScreen />}
       </Suspense>
       <AdminMenu />
+      <UpdateBanner />
       <Toast />
     </div>
   );

@@ -18,6 +18,7 @@ import { VICTORIES, victoryProgress } from '../../engine/tick';
 import { formatDuration, formatMoney, formatNumber } from '../../utils/formatters';
 import { HumanActions } from './LanHud';
 import { L, modeOf, quit } from '../../lan/match';
+import { checkNow, isInstalled } from '../../hooks/useUpdate';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Action, Bar, Card, Row } from '../common/Kit';
@@ -356,6 +357,7 @@ const Menu: React.FC = () => {
       <Button fullWidth variant="secondary" onClick={toggleSound}>Som: {soundEnabled ? 'ligado' : 'desligado'}</Button>
       <Button fullWidth variant="secondary" onClick={() => toggle('music')}>Música: {M.music ? 'ligada' : 'desligada'}</Button>
       <Button fullWidth variant="secondary" onClick={() => toggle('voice')}>Locutor de notícias: {M.voice ? 'ligado' : 'desligado'}</Button>
+      {isInstalled && !lan && <Button fullWidth variant="secondary" onClick={checkNow}>🔄 Atualizar o jogo</Button>}
       {lan && <Confirm label={L.host ? 'Encerrar a sala para todos' : 'Sair da partida'} onConfirm={leaveLan} />}
       {!lan && <Button fullWidth variant="outline" onClick={() => setScreen('home')}>Salvar e voltar ao menu</Button>}
       {!lan && <Confirm label="Abandonar partida" onConfirm={() => { finishGame(); setScreen('home'); }} />}
