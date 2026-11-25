@@ -1,145 +1,79 @@
-import {
-  calculateEconomyUpgradeCost,
-  calculateIncomeForLevel,
-  calculateRecruitCost,
-  calculateWinChance,
-  resolveBattle,
-  getEffectiveDefense,
-  BALANCE,
-} from '../src/utils/formulas.ts';
+// Testes de jogabilidade: node scripts/test-gameplay.mjs
+import assert from 'node:assert/strict';
+import { createServer } from 'vite';
 
-import { formatMoney, formatNumber, formatDuration } from '../src/utils/formatters.ts';
-import { COUNTRIES_DATA, INITIAL_COUNTRY_IDS } from '../src/data/countries.ts';
-import { TECHNOLOGIES } from '../src/data/technologies.ts';
-import { GEOPOLITICAL_EVENTS } from '../src/data/events.ts';
-import { ACHIEVEMENTS } from '../src/data/achievements.ts';
+const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom', logLevel: 'error' });
+try {
+  // ===== Cobra =====
+  const S = await server.ssrLoadModule('/src/games/snake.ts');
+  let g = S.createSnake(true);
+  S.turn(g, 'left');
+  assert.equal(g.queue.length, 0, 'meia-volta deve ser ignorada');
+  let r;
+  for (let i = 0; i < 20 && r !== 'eat'; i++) r = S.step(g);
+  assert.equal(r, 'eat');
+  assert.equal(g.body.length, 5);
+  assert.equal(g.score, S.FOOD_POINTS);
+  g.food = { x: 0, y: 0 };
+  for (let i = 0; i < 20 && r !== 'dead'; i++) r = S.step(g);
+  assert.equal(r, 'dead', 'parede deve matar');
 
-console.log('=== TESTE EXPANDIDO DE JOGABILIDADE IMERSIVA - WORLD EMPIRE ===\n');
+  g = S.createSnake(false);
+  g.food = { x: 0, y: 0 };
+  for (let i = 0; i < 40; i++) assert.equal(S.step(g), 'move', 'sem paredes a cobra atravessa');
 
-// 1. Verificação da Base de Países
-console.log('[1/10] Verificando base de 10 países...');
-if (INITIAL_COUNTRY_IDS.length !== 10) throw new Error('Países insuficientes');
-console.log('✔ Base com 10 países completa e validada.\n');
+  g = S.createSnake(true);
+  Object.assign(g, {
+    body: [{ x: 5, y: 5 }, { x: 5, y: 6 }, { x: 6, y: 6 }, { x: 6, y: 5 }],
+    dir: 'up', queue: ['right'], food: { x: 0, y: 0 },
+  });
+  assert.equal(S.step(g), 'move', 'pode entrar na célula que a cauda libera');
+  console.log('✔ Cobra');
 
-// 2. Verificação do Catálogo de Tecnologias (P&D)
-console.log('[2/10] Verificando árvore de tecnologias...');
-if (TECHNOLOGIES.length !== 9) throw new Error('Esperado 9 tecnologias');
-const techEco = TECHNOLOGIES.find(t => t.id === 'eco_free_trade');
-if (!techEco || techEco.effects.upgradeCostDiscount !== 0.20) {
-  throw new Error('Efeito da tecnologia de comércio incorreto');
+  // ===== World Empire: um bot simples joga campanhas completas =====
+  const { useGameStore: store } = await server.ssrLoadModule('/src/stores/useGameStore.ts');
+  const F = await server.ssrLoadModule('/src/utils/formulas.ts');
+  const { TECHNOLOGIES } = await server.ssrLoadModule('/src/data/technologies.ts');
+  const { TOTAL_COUNTRIES } = await server.ssrLoadModule('/src/data/countries.ts');
+  F.BALANCE.STRIKE_DURATION_MS = 0;
+
+  for (const country of ['BRA', 'URY', 'USA']) {
+    store.getState().startNewGame(country);
+    for (let t = 0; t < 4 * 3600; t++) {
+      store.getState().gameTick(1);
+      if (store.getState().strike) await new Promise((ok) => setTimeout(ok, 5));
+      const st = store.getState();
+      if (st.victoryShown) break;
+      if (st.activeModal === 'crisis_event') {
+        const c = st.activeCrisisEvent.choices.find((x) => !x.costMoney || x.costMoney <= st.money);
+        assert.ok(c, `evento sem saída: ${st.activeCrisisEvent.id}`);
+        st.resolveCrisisEvent(c.id);
+        continue;
+      }
+      if (st.activeModal) {
+        st.closeModal();
+        continue;
+      }
+      const mods = st.getModifiers();
+      const target = Object.values(st.countries).filter((c) => c.owner !== 'player').sort((a, b) => a.defense - b.defense)[0];
+      if (target && F.calculateWinChance(F.getAttackStrength(st.militaryPower, mods), F.getEffectiveDefense(target), mods.winChanceBonus) >= 75) {
+        st.attackCountry(target.id);
+        continue;
+      }
+      const has = (id) => !id || st.unlockedTechIds.includes(id);
+      const tech = TECHNOLOGIES.find((x) => !has(x.id) && has(x.requiredTechId) && x.cost <= st.money);
+      const upgrade = Object.values(st.countries).find((c) => c.owner === 'player' && c.economyLevel < 4 && st.getUpgradeCost(c.id) <= st.money);
+      if (tech) st.unlockTech(tech.id);
+      else if (upgrade && t % 3 === 0) st.upgradeCountryEconomy(upgrade.id);
+      else if (st.money >= st.getRecruitCost()) st.recruitMilitary(1);
+      const v = store.getState();
+      assert.ok(Number.isFinite(v.money) && v.money >= 0 && v.militaryPower >= 0);
+    }
+    const end = store.getState();
+    assert.ok(end.victoryShown, `${country}: campanha não vencida (${end.getConqueredTerritoriesCount()}/${TOTAL_COUNTRIES})`);
+    console.log(`✔ ${country}: vitória em ${Math.round(end.totalPlayTimeSeconds / 60)} min (1x)`);
+  }
+} finally {
+  await server.close();
 }
-console.log(`✔ 9 tecnologias validadas em 3 ramos (Econômico, Militar, Inteligência).\n`);
-
-// 3. Verificação do Catálogo de Eventos Geopolíticos
-console.log('[3/10] Verificando eventos geopolíticos de crise...');
-if (GEOPOLITICAL_EVENTS.length < 5) throw new Error('Eventos insuficientes');
-GEOPOLITICAL_EVENTS.forEach(e => {
-  if (!e.title || e.choices.length !== 2) throw new Error(`Evento ${e.id} inválido`);
-});
-console.log(`✔ ${GEOPOLITICAL_EVENTS.length} eventos de crise com escolhas críticas validados.\n`);
-
-// 4. Verificação do Sistema de Conquistas
-console.log('[4/10] Verificando sistema de conquistas...');
-if (ACHIEVEMENTS.length < 8) throw new Error('Conquistas insuficientes');
-const firstBlood = ACHIEVEMENTS.find(a => a.id === 'ach_first_blood');
-if (!firstBlood || !firstBlood.isCompleted({ money: 0, militaryPower: 0, conqueredCount: 2, incomePerSecond: 0, unlockedTechsCount: 0 })) {
-  throw new Error('Lógica da conquista Primeiro Golpe falhou');
-}
-console.log(`✔ ${ACHIEVEMENTS.length} conquistas imperiais validadas com sucesso.\n`);
-
-// 5. Teste de Sabotagem e Defesa Efetiva
-console.log('[5/10] Testando sistema de sabotagem e defesa...');
-const argentina = {
-  id: 'ARG',
-  name: 'Argentina',
-  iso: 'AR',
-  flag: '🇦🇷',
-  income: 19,
-  militaryPower: 85,
-  defense: 80,
-  economyLevel: 1,
-  owner: null,
-  sabotagedTurns: 0,
-};
-
-const normalDef = getEffectiveDefense(argentina);
-argentina.sabotagedTurns = 3;
-const sabotagedDef = getEffectiveDefense(argentina);
-
-if (sabotagedDef >= normalDef) {
-  throw new Error('Sabotagem não reduziu a defesa inimiga!');
-}
-console.log(`✔ Defesa normal: ${normalDef} -> Defesa com agentes de sabotagem: ${sabotagedDef} (-25%).\n`);
-
-// 6. Teste de Bônus de Tecnologia no Combate
-console.log('[6/10] Testando resolução de batalha com doutrina militar...');
-const techBlitz = TECHNOLOGIES.find(t => t.id === 'mil_blitz');
-const battleWithTech = resolveBattle(150, argentina, [techBlitz]);
-if (!battleWithTech.won) {
-  console.log('Derrota inesperada com poder superior, testando novamente...');
-}
-console.log(`✔ Combate processado com Doutrina de Guerra Relâmpago. Baixas sofridas: ${battleWithTech.playerCasualties}.\n`);
-
-// 7. Teste de Descontos de P&D em Upgrades e Recrutamento
-console.log('[7/10] Testando descontos econômicos e de mobilização...');
-const normalUpgrade = calculateEconomyUpgradeCost(28, 1, 0);
-const discountedUpgrade = calculateEconomyUpgradeCost(28, 1, 0.20);
-if (discountedUpgrade >= normalUpgrade) throw new Error('Desconto de upgrade não aplicado!');
-
-const normalRecruit = calculateRecruitCost(100, 1, 0);
-const discountedRecruit = calculateRecruitCost(100, 1, 0.20);
-if (discountedRecruit >= normalRecruit) throw new Error('Desconto de recrutamento não aplicado!');
-
-console.log(`✔ Upgrade base: $${normalUpgrade} -> Com P&D: $${discountedUpgrade}`);
-console.log(`✔ Recrutamento base: $${normalRecruit} -> Com P&D: $${discountedRecruit}\n`);
-
-// 8. Teste de Formatadores
-console.log('[8/10] Testando formatadores visuais...');
-if (formatMoney(1250) !== '$ 1.250') throw new Error('formatMoney erro');
-if (formatNumber(320) !== '320') throw new Error('formatNumber erro');
-if (formatDuration(134) !== '2min 14s') throw new Error('formatDuration erro');
-console.log('✔ Formatadores validados.\n');
-
-// 9. Simulação Completa da Nova Experiência Viciante
-console.log('[9/10] Simulando ciclo completo de jogo expandido...');
-let money = 2000;
-let military = 140;
-let income = 35;
-let conquered = 1;
-const unlockedTechIds = [];
-
-// Passo A: Desbloqueia Automação Industrial
-const autoTech = TECHNOLOGIES.find(t => t.id === 'eco_automation');
-money -= autoTech.cost;
-unlockedTechIds.push(autoTech.id);
-income = Math.round(income * (1 + autoTech.effects.incomeMultiplier));
-console.log(`- Pesquisou Automação Industrial: Saldo = $${money}, Renda expandida para +$${income}/s`);
-
-// Passo B: Recebe evento de Petróleo
-const oilEvent = GEOPOLITICAL_EVENTS[0];
-const choice = oilEvent.choices[1]; // Leiloar
-money += choice.rewardMoney;
-console.log(`- Evento "${oilEvent.title}": Optou por "${choice.label}" -> +$${choice.rewardMoney}. Novo Saldo = $${money}`);
-
-// Passo C: Infiltração e Sabotagem da Argentina
-argentina.sabotagedTurns = 3;
-money -= 800;
-console.log(`- Operação de Sabotagem executada com sucesso contra Argentina!`);
-
-// Passo D: Invasão e Conquista
-const finalBattle = resolveBattle(military, argentina, [autoTech]);
-if (finalBattle.won) {
-  military -= finalBattle.playerCasualties;
-  income += argentina.income;
-  conquered += 1;
-  console.log(`- Conquistou Argentina! Renda Total = +$${income}/s, Territórios = ${conquered}`);
-}
-
-// Passo E: Conquista Desbloqueada
-const ach = ACHIEVEMENTS.find(a => a.id === 'ach_first_blood');
-if (ach.isCompleted({ money, militaryPower: military, conqueredCount: conquered, incomePerSecond: income, unlockedTechsCount: unlockedTechIds.length })) {
-  money += ach.rewardMoney;
-  console.log(`- Conquista "${ach.title}" atingida! Recompensa coletada = +$${ach.rewardMoney}`);
-}
-
-console.log('\n[10/10] TODAS AS MECÂNICAS EXPANDIDAS FORAM TESTADAS COM 100% DE SUCESSO!\n');
+process.exit(0);

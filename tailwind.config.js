@@ -6,6 +6,7 @@ export default {
   ],
   theme: {
     extend: {
+      screens: { xs: '420px' },
       colors: {
         command: {
           dark: '#0a0d14',

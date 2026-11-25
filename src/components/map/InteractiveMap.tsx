@@ -1,353 +1,430 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { geoGraticule10, geoNaturalEarth1, geoPath } from 'd3-geo';
 import { useGameStore } from '../../stores/useGameStore';
-import { COUNTRIES_DATA, INITIAL_COUNTRY_IDS } from '../../data/countries';
-import { ZoomIn, ZoomOut, RotateCcw, Crosshair } from 'lucide-react';
+import { COUNTRIES_DATA, INITIAL_COUNTRY_IDS, NUMERIC_TO_COUNTRY } from '../../data/countries';
+import { CountryId, CountryRuntimeState, Strike, Threat } from '../../types/game';
+import { useWorldGeo } from '../../services/worldGeo';
+import { ZoomIn, ZoomOut, LocateFixed, Loader2 } from 'lucide-react';
+
+const W = 1000;
+const H = 520;
+const MIN_K = 1;
+const MAX_K = 14;
+const DRAG_THRESHOLD_PX = 6;
+const MARKER_PX = 24;
+const DETAIL_PX_PER_UNIT = 1.9;
+
+interface View { k: number; x: number; y: number }
+interface Shape { key: string; d: string; countryId?: CountryId }
+type Point = [number, number];
+
+const clampView = (v: View): View => {
+  const k = Math.min(MAX_K, Math.max(MIN_K, v.k));
+  return {
+    k,
+    x: Math.min(W * 0.4, Math.max(W * (1 - k) - W * 0.4, v.x)),
+    y: Math.min(H * 0.8, Math.max(H * (1 - k) - H * 0.8, v.y)),
+  };
+};
+
+/** Polígonos dos países. Memoizado: não re-renderiza ao arrastar/zoom. */
+const CountryShapes = memo(function CountryShapes({
+  shapes,
+  countries,
+  playerCountryId,
+  selectedCountryId,
+  threatTargetId,
+}: {
+  shapes: Shape[];
+  countries: Record<CountryId, CountryRuntimeState>;
+  playerCountryId: CountryId | null;
+  selectedCountryId: CountryId | null;
+  threatTargetId?: CountryId;
+}) {
+  return (
+    <g>
+      {shapes.map(({ key, d, countryId }) => {
+        if (!countryId) {
+          return <path key={key} d={d} className="land-inert" vectorEffect="non-scaling-stroke" />;
+        }
+        const c = countries[countryId];
+        const cls = [
+          'land-playable',
+          c.owner === 'player' ? (countryId === playerCountryId ? 'land-capital' : 'land-owned') : c.sabotageSeconds > 0 ? 'land-sabotaged' : 'land-rival',
+          countryId === selectedCountryId ? 'land-selected' : '',
+          countryId === threatTargetId ? 'land-threat' : '',
+        ].join(' ');
+        return <path key={key} d={d} data-id={countryId} className={cls} vectorEffect="non-scaling-stroke" />;
+      })}
+    </g>
+  );
+});
+
+function arcPath([x1, y1]: Point, [x2, y2]: Point): string {
+  const dist = Math.hypot(x2 - x1, y2 - y1);
+  const cx = (x1 + x2) / 2;
+  const cy = (y1 + y2) / 2 - dist * 0.35;
+  return `M${x1},${y1} Q${cx},${cy} ${x2},${y2}`;
+}
+
+const SPARK_ANGLES = Array.from({ length: 14 }, (_, i) => Math.round((i * 360) / 14));
+
+const StrikeLayer = ({ strike, anchors, scale }: { strike: Strike; anchors: Record<CountryId, Point>; scale: number }) => {
+  const from = anchors[strike.fromId];
+  const to = anchors[strike.toId];
+  const d = arcPath(from, to);
+  const color = strike.hostile ? '#f43f5e' : '#fbbf24';
+  return (
+    <g key={strike.key} pointerEvents="none">
+      <path d={d} pathLength={1} className="strike-path" stroke={color} vectorEffect="non-scaling-stroke" />
+      <circle r={4 * scale} fill="#fff" style={{ filter: `drop-shadow(0 0 4px ${color})` }}>
+        <animateMotion dur="0.9s" path={d} fill="freeze" />
+      </circle>
+      <g transform={`translate(${to[0]},${to[1]}) scale(${scale})`}>
+        <circle r={46} className="strike-ring" stroke={color} />
+        {SPARK_ANGLES.map((a, i) => (
+          <g key={a} transform={`rotate(${a})`}>
+            <rect x={0} y={-1.5} width={8 + (i % 3) * 4} height={3} rx={1.5} className="strike-spark" fill={i % 2 ? '#fef08a' : color} />
+          </g>
+        ))}
+        <circle r={26} className="strike-blast" fill={color} />
+        <circle r={14} className="strike-blast strike-blast-core" fill="#fff" />
+      </g>
+    </g>
+  );
+};
+
+/** Comboios entre a capital e os territórios conquistados */
+const SupplyLayer = memo(function SupplyLayer({ capital, owned, anchors, scale }: {
+  capital: CountryId;
+  owned: string;
+  anchors: Record<CountryId, Point>;
+  scale: number;
+}) {
+  return (
+    <g pointerEvents="none">
+      {(owned ? (owned.split(',') as CountryId[]) : []).map((id, i) => {
+        const d = arcPath(anchors[capital], anchors[id]);
+        return (
+          <g key={id}>
+            <path d={d} className="supply-path" vectorEffect="non-scaling-stroke" />
+            <circle r={2.6 * scale} fill="#fde68a">
+              <animateMotion dur={`${4 + (i % 4)}s`} begin={`${-i * 0.7}s`} path={d} repeatCount="indefinite" />
+            </circle>
+          </g>
+        );
+      })}
+    </g>
+  );
+});
+
+const ThreatLayer = ({ threat, anchors }: { threat: Threat; anchors: Record<CountryId, Point> }) => (
+  <path
+    d={arcPath(anchors[threat.attackerId], anchors[threat.targetId])}
+    className="threat-path"
+    vectorEffect="non-scaling-stroke"
+    pointerEvents="none"
+  />
+);
 
 export const InteractiveMap: React.FC = () => {
-  const countriesState = useGameStore((state) => state.countries);
-  const playerCountryId = useGameStore((state) => state.playerCountryId);
-  const selectedCountryId = useGameStore((state) => state.selectedCountryId);
-  const selectCountry = useGameStore((state) => state.selectCountry);
+  const geo = useWorldGeo();
+  const countries = useGameStore((s) => s.countries);
+  const playerCountryId = useGameStore((s) => s.playerCountryId);
+  const selectedCountryId = useGameStore((s) => s.selectedCountryId);
+  const selectCountry = useGameStore((s) => s.selectCountry);
+  const strike = useGameStore((s) => s.strike);
+  const threat = useGameStore((s) => s.threat);
 
-  // Transformação do mapa (pan e zoom)
-  const [zoom, setZoom] = useState<number>(1);
-  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState<boolean>(false);
-  const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const containerRef = useRef<HTMLDivElement>(null);
-  const initialTouchDistRef = useRef<number | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [view, setView] = useState<View>({ k: 1, x: 0, y: 0 });
+  const [unitPx, setUnitPx] = useState(1);
+  const viewRef = useRef(view);
+  viewRef.current = view;
 
-  // Manipulação de Zoom
-  const handleZoomIn = () => setZoom((z) => Math.min(3, +(z + 0.25).toFixed(2)));
-  const handleZoomOut = () => setZoom((z) => Math.max(0.6, +(z - 0.25).toFixed(2)));
-  const handleReset = () => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-  };
+  // ---------- Projeção geográfica ----------
+  const projection = useMemo(() => (geo ? geoNaturalEarth1().fitExtent([[8, 8], [W - 8, H - 8]], geo) : null), [geo]);
+  const shapes = useMemo<Shape[]>(() => {
+    if (!geo || !projection) return [];
+    const path = geoPath(projection);
+    return geo.features.map((f, i) => ({
+      key: String(f.id ?? i),
+      d: path(f) ?? '',
+      countryId: NUMERIC_TO_COUNTRY[String(f.id)],
+    }));
+  }, [geo, projection]);
+  // Um único contorno de todos os continentes: relevo e brilho costeiro baratos
+  const coast = useMemo(() => shapes.map((s) => s.d).join(''), [shapes]);
+  const ownedKey = INITIAL_COUNTRY_IDS.filter((id) => countries[id].owner === 'player' && id !== playerCountryId).join(',');
+  const graticule = useMemo(() => (projection ? geoPath(projection)(geoGraticule10()) ?? '' : ''), [projection]);
+  const anchors = useMemo(() => {
+    if (!projection) return null;
+    return Object.fromEntries(
+      INITIAL_COUNTRY_IDS.map((id) => [id, (projection(COUNTRIES_DATA[id].anchor) ?? [0, 0]) as Point])
+    ) as Record<CountryId, Point>;
+  }, [projection]);
 
-  // Wheel Zoom no Desktop
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? -0.15 : 0.15;
-    setZoom((z) => {
-      const next = +(z + delta).toFixed(2);
-      return Math.min(3, Math.max(0.6, next));
+  // ---------- Medidas da tela ----------
+  const measure = useCallback(() => {
+    const svg = svgRef.current;
+    if (!svg) return { cw: W, ch: H };
+    const cw = svg.clientWidth || W;
+    const ch = svg.clientHeight || H;
+    setUnitPx(Math.min(cw / W, ch / H));
+    return { cw, ch };
+  }, []);
+
+  const focusOn = useCallback(
+    (id: CountryId | null, kOverride?: number) => {
+      if (!anchors || !id) return;
+      const { cw, ch } = measure();
+      // Em telas verticais, aproxima até preencher a altura
+      const fillK = Math.max(1.6, (ch / cw) * (W / H));
+      const k = kOverride ?? Math.min(4, fillK);
+      const [ax, ay] = anchors[id];
+      setView(clampView({ k, x: W / 2 - ax * k, y: H / 2 - ay * k }));
+    },
+    [anchors, measure]
+  );
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(svg);
+    return () => ro.disconnect();
+  }, [measure]);
+
+  // Centraliza no império ao abrir o mapa
+  const focusedOnce = useRef(false);
+  useEffect(() => {
+    if (anchors && playerCountryId && !focusedOnce.current) {
+      focusedOnce.current = true;
+      focusOn(playerCountryId);
+    }
+  }, [anchors, playerCountryId, focusOn]);
+
+  // ---------- Zoom ----------
+  const toSvgPoint = useCallback((clientX: number, clientY: number): Point => {
+    const svg = svgRef.current!;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return [0, 0];
+    const p = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
+    return [p.x, p.y];
+  }, []);
+
+  const zoomAt = useCallback((factor: number, [px, py]: Point) => {
+    setView((v) => {
+      const k = Math.min(MAX_K, Math.max(MIN_K, v.k * factor));
+      const wx = (px - v.x) / v.k;
+      const wy = (py - v.y) / v.k;
+      return clampView({ k, x: px - wx * k, y: py - wy * k });
     });
   }, []);
 
-  // Mouse Drag
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    setIsDragging(true);
-    dragStartRef.current = { x: e.clientX, y: e.clientY };
-    panStartRef.current = { ...pan };
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      zoomAt(e.deltaY > 0 ? 1 / 1.2 : 1.2, toSvgPoint(e.clientX, e.clientY));
+    };
+    svg.addEventListener('wheel', onWheel, { passive: false });
+    return () => svg.removeEventListener('wheel', onWheel);
+  }, [zoomAt, toSvgPoint]);
+
+  // ---------- Gestos: arrastar, pinça e toque ----------
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const gesture = useRef<{
+    start: View;
+    startPts: Point[];
+    startClient: { x: number; y: number };
+    moved: boolean;
+    tapId?: CountryId;
+  } | null>(null);
+
+  const beginGesture = (tapId?: CountryId) => {
+    const pts = [...pointers.current.values()];
+    gesture.current = {
+      start: viewRef.current,
+      startPts: pts.map((p) => toSvgPoint(p.x, p.y)),
+      startClient: pts[0],
+      moved: pts.length > 1,
+      tapId,
+    };
   };
 
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      if (!isDragging) return;
-      const dx = e.clientX - dragStartRef.current.x;
-      const dy = e.clientY - dragStartRef.current.y;
-      setPan({
-        x: panStartRef.current.x + dx,
-        y: panStartRef.current.y + dy,
-      });
-    },
-    [isDragging]
-  );
-
-  const handleMouseUp = () => {
-    setIsDragging(false);
+  const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const tapId = (e.target as Element).closest('[data-id]')?.getAttribute('data-id') as CountryId | undefined;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    beginGesture(pointers.current.size === 1 ? tapId : undefined);
   };
 
-  // Touch Drag & Pinch Zoom no Mobile
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (e.touches.length === 1) {
-      setIsDragging(true);
-      dragStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-      panStartRef.current = { ...pan };
-    } else if (e.touches.length === 2) {
-      setIsDragging(false);
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      initialTouchDistRef.current = dist;
+  const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!pointers.current.has(e.pointerId) || !gesture.current) return;
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const g = gesture.current;
+    const pts = [...pointers.current.values()];
+
+    if (pts.length === 1) {
+      if (!g.moved && Math.hypot(pts[0].x - g.startClient.x, pts[0].y - g.startClient.y) < DRAG_THRESHOLD_PX) return;
+      g.moved = true;
+      const [cx, cy] = toSvgPoint(pts[0].x, pts[0].y);
+      const [sx, sy] = g.startPts[0];
+      setView(clampView({ k: g.start.k, x: g.start.x + cx - sx, y: g.start.y + cy - sy }));
+    } else if (pts.length >= 2 && g.startPts.length >= 2) {
+      const [a, b] = [toSvgPoint(pts[0].x, pts[0].y), toSvgPoint(pts[1].x, pts[1].y)];
+      const [sa, sb] = g.startPts;
+      const ratio = Math.hypot(a[0] - b[0], a[1] - b[1]) / Math.max(1, Math.hypot(sa[0] - sb[0], sa[1] - sb[1]));
+      const k = Math.min(MAX_K, Math.max(MIN_K, g.start.k * ratio));
+      const mid: Point = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      const startMid: Point = [(sa[0] + sb[0]) / 2, (sa[1] + sb[1]) / 2];
+      const wx = (startMid[0] - g.start.x) / g.start.k;
+      const wy = (startMid[1] - g.start.y) / g.start.k;
+      setView(clampView({ k, x: mid[0] - wx * k, y: mid[1] - wy * k }));
     }
   };
 
-  const handleTouchMove = useCallback(
-    (e: React.TouchEvent) => {
-      if (e.touches.length === 1 && isDragging) {
-        const dx = e.touches[0].clientX - dragStartRef.current.x;
-        const dy = e.touches[0].clientY - dragStartRef.current.y;
-        setPan({
-          x: panStartRef.current.x + dx,
-          y: panStartRef.current.y + dy,
-        });
-      } else if (e.touches.length === 2 && initialTouchDistRef.current !== null) {
-        const dist = Math.hypot(
-          e.touches[0].clientX - e.touches[1].clientX,
-          e.touches[0].clientY - e.touches[1].clientY
-        );
-        const scaleChange = dist / initialTouchDistRef.current;
-        if (scaleChange > 1.05) {
-          handleZoomIn();
-          initialTouchDistRef.current = dist;
-        } else if (scaleChange < 0.95) {
-          handleZoomOut();
-          initialTouchDistRef.current = dist;
-        }
-      }
-    },
-    [isDragging]
-  );
-
-  const handleTouchEnd = () => {
-    setIsDragging(false);
-    initialTouchDistRef.current = null;
+  const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!pointers.current.has(e.pointerId)) return;
+    const g = gesture.current;
+    pointers.current.delete(e.pointerId);
+    if (g && !g.moved && g.tapId && pointers.current.size === 0) selectCountry(g.tapId);
+    // Ao soltar um dedo da pinça, reinicia o gesto com o dedo restante
+    if (pointers.current.size > 0) beginGesture();
+    else gesture.current = null;
   };
 
-  useEffect(() => {
-    const handleGlobalMouseUp = () => setIsDragging(false);
-    window.addEventListener('mouseup', handleGlobalMouseUp);
-    return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
-  }, []);
+  const center = (): Point => [W / 2, H / 2];
+  const pxPerUnit = unitPx * view.k;
+  const markerScale = 1 / pxPerUnit;
+  const showDetails = pxPerUnit >= DETAIL_PX_PER_UNIT;
 
   return (
     <div
-      ref={containerRef}
-      className="relative w-full h-full overflow-hidden bg-[#060911] cursor-grab active:cursor-grabbing select-none"
-      onWheel={handleWheel}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
+      className={`map-ocean relative w-full h-full overflow-hidden select-none ${strike ? 'map-shake' : ''} ${threat ? 'map-alert' : ''}`}
     >
-      {/* Background tático estilo centro de comando com grade sutil */}
-      <div className="absolute inset-0 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px] opacity-35 pointer-events-none" />
+      <div className="ocean-light" />
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="xMidYMid meet"
+        className="map-layer absolute inset-0 w-full h-full touch-none cursor-grab active:cursor-grabbing"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        <defs>
+          <linearGradient id="gradRival" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#7c8ba1" />
+            <stop offset="100%" stopColor="#3f4c5f" />
+          </linearGradient>
+          <linearGradient id="gradOwned" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#3b82f6" />
+            <stop offset="100%" stopColor="#1e40af" />
+          </linearGradient>
+          <linearGradient id="gradCapital" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#60a5fa" />
+            <stop offset="100%" stopColor="#2563eb" />
+          </linearGradient>
+        </defs>
 
-      {/* Linhas de grade geopolítica */}
-      <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-15 stroke-slate-500">
-        <line x1="0" y1="25%" x2="100%" y2="25%" strokeDasharray="4 8" />
-        <line x1="0" y1="50%" x2="100%" y2="50%" strokeDasharray="4 8" />
-        <line x1="0" y1="75%" x2="100%" y2="75%" strokeDasharray="4 8" />
-        <line x1="25%" y1="0" x2="25%" y2="100%" strokeDasharray="4 8" />
-        <line x1="50%" y1="0" x2="50%" y2="100%" strokeDasharray="4 8" />
-        <line x1="75%" y1="0" x2="75%" y2="100%" strokeDasharray="4 8" />
+        <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
+          <path d={graticule} className="graticule" vectorEffect="non-scaling-stroke" />
+          <path d={coast} className="coast coast-far" vectorEffect="non-scaling-stroke" />
+          <path d={coast} className="coast coast-near" vectorEffect="non-scaling-stroke" />
+          <path d={coast} className="land-depth" transform={`translate(0,${2.6 / Math.sqrt(view.k)})`} />
+          <CountryShapes
+            shapes={shapes}
+            countries={countries}
+            playerCountryId={playerCountryId}
+            selectedCountryId={selectedCountryId}
+            threatTargetId={threat?.targetId}
+          />
+
+          {/* Marcadores com tamanho constante na tela */}
+          {anchors &&
+            INITIAL_COUNTRY_IDS.map((id) => {
+              const c = countries[id];
+              const [x, y] = anchors[id];
+              const owned = c.owner === 'player';
+              const selected = id === selectedCountryId;
+              const ring = selected ? '#fbbf24' : owned ? '#60a5fa' : c.sabotageSeconds > 0 ? '#f43f5e' : '#64748b';
+              return (
+                <g key={id} data-id={id} transform={`translate(${x},${y}) scale(${markerScale})`} className="cursor-pointer">
+                  <circle r={MARKER_PX / 2} fill="#0b1220" fillOpacity={0.9} stroke={ring} strokeWidth={selected ? 2.5 : 1.5} />
+                  <text y={4.5} textAnchor="middle" fontSize={13} className="emoji-text" pointerEvents="none">
+                    {COUNTRIES_DATA[id].flag}
+                  </text>
+                  {(showDetails || selected) && (
+                    <g pointerEvents="none">
+                      <rect x={-42} y={15} width={84} height={30} rx={7} fill="#0b1220" fillOpacity={0.88} stroke={ring} strokeOpacity={0.6} />
+                      <text y={28} textAnchor="middle" fontSize={10.5} fontWeight={700} fill="#f1f5f9" className="font-sans">
+                        {COUNTRIES_DATA[id].name}
+                      </text>
+                      <text y={40} textAnchor="middle" fontSize={9} fontWeight={600} fill={owned ? '#34d399' : '#fda4af'} className="font-mono">
+                        {owned ? `+$${c.income}/s` : `🛡 ${c.defense}`}
+                      </text>
+                    </g>
+                  )}
+                </g>
+              );
+            })}
+        </g>
       </svg>
 
-      {/* Radar de Varredura Circular Animado */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] rounded-full border border-cyan-500/10 pointer-events-none flex items-center justify-center">
-        <div className="w-[500px] h-[500px] rounded-full border border-cyan-500/10" />
-        <div className="w-[300px] h-[300px] rounded-full border border-cyan-500/10" />
-        <div className="w-[120px] h-[120px] rounded-full border border-cyan-500/10" />
-        {/* Linha de varredura rotativa de sonar */}
-        <div className="absolute inset-0 rounded-full bg-[conic-gradient(from_0deg,transparent_0_310deg,rgba(56,189,248,0.12)_360deg)] animate-[spin_10s_linear_infinite]" />
-      </div>
-
-      {/* SVG Canvas dos Países com transformação de Pan e Zoom */}
-      <div
-        className="w-full h-full flex items-center justify-center transition-transform duration-75 ease-out"
-        style={{
-          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-          transformOrigin: 'center center',
-        }}
-      >
-        <svg
-          viewBox="0 0 1000 620"
-          className="w-full max-w-[1100px] h-auto drop-shadow-[0_25px_60px_rgba(0,0,0,0.85)]"
-        >
-          <defs>
-            {/* Gradiente para o Território Soberano do Jogador */}
-            <linearGradient id="playerTerritoryGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#2563eb" />
-              <stop offset="100%" stopColor="#1d4ed8" />
-            </linearGradient>
-
-            {/* Gradiente para Territórios Conquistados pelo Jogador */}
-            <linearGradient id="conqueredTerritoryGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#3b82f6" />
-              <stop offset="100%" stopColor="#1e40af" />
-            </linearGradient>
-
-            {/* Gradiente para Territórios Neutros */}
-            <linearGradient id="neutralTerritoryGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#1e293b" />
-              <stop offset="100%" stopColor="#0f172a" />
-            </linearGradient>
-
-            {/* Filtro de Glow para Seleção */}
-            <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-              <feDropShadow dx="0" dy="0" stdDeviation="6" floodColor="#f59e0b" floodOpacity="0.8" />
-            </filter>
-            
-            <filter id="playerGlow" x="-20%" y="-20%" width="140%" height="140%">
-              <feDropShadow dx="0" dy="0" stdDeviation="5" floodColor="#38bdf8" floodOpacity="0.5" />
-            </filter>
-          </defs>
-
-          {/* Oceanos & Rótulos Continentais */}
-          <text x="210" y="30" fill="#475569" fontSize="13" fontWeight="bold" letterSpacing="4" opacity="0.35">
-            AMÉRICA DO NORTE
-          </text>
-          <text x="320" y="280" fill="#475569" fontSize="13" fontWeight="bold" letterSpacing="4" opacity="0.35">
-            AMÉRICA DO SUL
-          </text>
-          <text x="730" y="120" fill="#475569" fontSize="13" fontWeight="bold" letterSpacing="4" opacity="0.35">
-            ÁSIA PACÍFICO
-          </text>
-
-          {/* Renderização dos Países */}
-          {INITIAL_COUNTRY_IDS.map((id) => {
-            const base = COUNTRIES_DATA[id];
-            const state = countriesState[id];
-            const isPlayerOrigin = playerCountryId === id;
-            const isConqueredByPlayer = state?.owner === 'player';
-            const isSelected = selectedCountryId === id;
-            const isSabotaged = state?.sabotagedTurns && state.sabotagedTurns > 0;
-
-            // Determinar cores
-            let fill = 'url(#neutralTerritoryGrad)';
-            let stroke = '#334155';
-            let strokeWidth = '1.8';
-            let filter = undefined;
-
-            if (isPlayerOrigin) {
-              fill = 'url(#playerTerritoryGrad)';
-              stroke = '#60a5fa';
-              strokeWidth = '2.5';
-              filter = 'url(#playerGlow)';
-            } else if (isConqueredByPlayer) {
-              fill = 'url(#conqueredTerritoryGrad)';
-              stroke = '#38bdf8';
-              strokeWidth = '2.2';
-            }
-
-            if (isSelected) {
-              stroke = '#fbbf24';
-              strokeWidth = '3.5';
-              filter = 'url(#glow)';
-            }
-
-            return (
-              <g
-                key={id}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  selectCountry(id);
-                }}
-                className="cursor-pointer transition-transform duration-150 group"
-              >
-                {/* Caminho do Território */}
-                <path
-                  d={base.svg.path}
-                  fill={fill}
-                  stroke={stroke}
-                  strokeWidth={strokeWidth}
-                  filter={filter}
-                  className="transition-colors duration-200 group-hover:brightness-125"
-                />
-
-                {/* Marcador e Nome do País */}
-                <g transform={`translate(${base.svg.center[0]}, ${base.svg.center[1]})`} pointerEvents="none">
-                  {/* Badge de fundo para legibilidade */}
-                  <rect
-                    x="-34"
-                    y="-16"
-                    width="68"
-                    height="29"
-                    rx="6"
-                    fill="#090d16"
-                    fillOpacity="0.88"
-                    stroke={
-                      isSelected
-                        ? '#f59e0b'
-                        : isConqueredByPlayer
-                        ? '#3b82f6'
-                        : isSabotaged
-                        ? '#ef4444'
-                        : '#334155'
-                    }
-                    strokeWidth="1.2"
-                  />
-                  <text
-                    x="0"
-                    y="-3"
-                    textAnchor="middle"
-                    fill="#ffffff"
-                    fontSize="11"
-                    fontWeight="700"
-                    className="font-sans"
-                  >
-                    {base.flag} {base.iso} {isSabotaged ? '💀' : ''}
-                  </text>
-                  <text
-                    x="0"
-                    y="8"
-                    textAnchor="middle"
-                    fill={isConqueredByPlayer ? '#38bdf8' : isSabotaged ? '#f87171' : '#94a3b8'}
-                    fontSize="8.5"
-                    fontWeight="600"
-                    className="font-mono"
-                  >
-                    {isConqueredByPlayer ? `+$${state?.income}/s` : `Def: ${state?.defense}`}
-                  </text>
-                </g>
+      {/* Efeitos animados em camada própria: o terreno não é repintado a cada quadro */}
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" className="map-layer absolute inset-0 w-full h-full pointer-events-none">
+        <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
+          {anchors && playerCountryId && (
+            <>
+              <SupplyLayer capital={playerCountryId} owned={ownedKey} anchors={anchors} scale={markerScale} />
+              <g transform={`translate(${anchors[playerCountryId].join(',')}) scale(${markerScale})`} pointerEvents="none">
+                <circle r={60} className="radar-ring" />
+                <circle r={60} className="radar-ring radar-ring-late" />
+                <path d="M0,0 L60,0 A60,60 0 0 0 42,-42 Z" className="radar-sweep" />
               </g>
-            );
-          })}
-        </svg>
+            </>
+          )}
+
+          {anchors && threat && <ThreatLayer threat={threat} anchors={anchors} />}
+
+          {anchors && strike && <StrikeLayer strike={strike} anchors={anchors} scale={markerScale} />}
+        </g>
+      </svg>
+
+      <div className="cloud-layer" />
+      <div className="map-vignette" />
+      {strike && <div key={strike.key} className={`impact-flash ${strike.hostile ? 'impact-hostile' : ''}`} />}
+
+      {!geo && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-400 text-xs font-mono">
+          <Loader2 className="animate-spin text-cyan-400" size={28} />
+          ESTABELECENDO LINK DE SATÉLITE...
+        </div>
+      )}
+
+      {/* Controles */}
+      <div className="absolute right-3 bottom-3 z-20 flex flex-col gap-2">
+        {[
+          { icon: <ZoomIn size={18} />, label: 'Aproximar', fn: () => zoomAt(1.5, center()) },
+          { icon: <ZoomOut size={18} />, label: 'Afastar', fn: () => zoomAt(1 / 1.5, center()) },
+          { icon: <LocateFixed size={17} />, label: 'Centralizar no império', fn: () => focusOn(playerCountryId) },
+        ].map((b) => (
+          <button key={b.label} onClick={b.fn} title={b.label} aria-label={b.label} className="glass-btn w-11 h-11">
+            {b.icon}
+          </button>
+        ))}
       </div>
 
-      {/* Controles Flutuantes de Zoom e Centralização */}
-      <div className="absolute bottom-5 right-4 z-20 flex flex-col gap-2">
-        <button
-          onClick={handleZoomIn}
-          className="w-10 h-10 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-slate-200 flex items-center justify-center shadow-lg active:scale-95 transition-all"
-          title="Aumentar Zoom"
-        >
-          <ZoomIn size={18} />
-        </button>
-        <button
-          onClick={handleZoomOut}
-          className="w-10 h-10 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-slate-200 flex items-center justify-center shadow-lg active:scale-95 transition-all"
-          title="Diminuir Zoom"
-        >
-          <ZoomOut size={18} />
-        </button>
-        <button
-          onClick={handleReset}
-          className="w-10 h-10 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-slate-200 flex items-center justify-center shadow-lg active:scale-95 transition-all"
-          title="Redefinir Visão"
-        >
-          <RotateCcw size={16} />
-        </button>
-      </div>
-
-      {/* Mira Tática / Coordenadas de Satélite */}
-      <div className="absolute top-16 left-4 z-20 hidden md:flex items-center gap-2 bg-slate-950/70 border border-slate-800/80 px-2.5 py-1 rounded-xl text-[10px] font-mono text-slate-400 pointer-events-none">
-        <Crosshair size={12} className="text-cyan-400" />
-        <span>RADAR TÁTICO ATIVO // ESCALA 1:1.000.000</span>
-      </div>
-
-      {/* Legenda Tática Inferior Esquerda */}
-      <div className="absolute bottom-5 left-4 z-20 hidden sm:flex items-center gap-3 bg-slate-950/85 backdrop-blur-md border border-slate-800/90 px-3.5 py-2 rounded-xl text-[11px] text-slate-300 pointer-events-none">
-        <div className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-sm bg-blue-600 border border-blue-400" />
-          <span>Seu Império</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-sm bg-slate-800 border border-slate-600" />
-          <span>Rival</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-sm border-2 border-amber-400" />
-          <span>Alvo</span>
-        </div>
+      <div className="absolute left-3 bottom-3 z-20 hidden sm:flex items-center gap-3 glass-panel px-3 py-2 rounded-xl text-[11px] text-slate-300 pointer-events-none">
+        <span className="flex items-center gap-1.5"><i className="w-3 h-3 rounded-sm bg-blue-500" />Seu império</span>
+        <span className="flex items-center gap-1.5"><i className="w-3 h-3 rounded-sm bg-slate-600" />Rival</span>
+        <span className="flex items-center gap-1.5"><i className="w-3 h-3 rounded-sm bg-rose-600" />Sabotado</span>
+        <span className="text-slate-500">• Pinça/roda para zoom</span>
       </div>
     </div>
   );

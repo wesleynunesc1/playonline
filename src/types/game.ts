@@ -1,25 +1,16 @@
 export type CountryId =
-  | 'BRA'
-  | 'ARG'
-  | 'CHL'
-  | 'COL'
-  | 'PER'
-  | 'MEX'
-  | 'USA'
-  | 'CAN'
-  | 'CHN'
-  | 'JPN';
-
-export interface CountrySvgData {
-  path: string;
-  center: [number, number]; // [x, y] para rótulo ou pino
-  namePosition?: [number, number];
-}
+  | 'BRA' | 'ARG' | 'CHL' | 'COL' | 'PER' | 'VEN' | 'BOL' | 'URY'
+  | 'MEX' | 'USA' | 'CAN' | 'CUB'
+  | 'GBR' | 'FRA' | 'DEU' | 'RUS'
+  | 'EGY' | 'NGA' | 'ZAF'
+  | 'CHN' | 'JPN' | 'KOR' | 'IND' | 'AUS';
 
 export interface CountryBaseData {
   id: CountryId;
   name: string;
   iso: string;
+  /** Código ISO 3166 numérico, usado para ligar o país ao mapa vetorial real (world-atlas) */
+  numericId: string;
   flag: string;
   baseIncome: number;
   initialMilitary: number;
@@ -27,36 +18,60 @@ export interface CountryBaseData {
   population: string;
   region: string;
   description: string;
-  svg: CountrySvgData;
+  /** [longitude, latitude] do ponto de referência (rótulo e origem de ataques) */
+  anchor: [number, number];
 }
 
 export interface CountryRuntimeState {
   id: CountryId;
-  name: string;
-  iso: string;
-  flag: string;
-  income: number;           // Renda atual gerada por este país/segundo
-  militaryPower: number;    // Guarnição/Poder do país se independente
-  defense: number;          // Defesa para cálculo de batalha
-  economyLevel: number;     // Nível econômico atual
-  owner: 'player' | null;   // null = independente/neutro, 'player' = controlado pelo jogador
-  sabotagedTurns?: number;  // Quantas rodadas este país está com defesas sabotadas por espionagem
+  income: number;
+  defense: number;
+  economyLevel: number;
+  owner: 'player' | null;
+  /** Segundos restantes de sabotagem ativa */
+  sabotageSeconds: number;
 }
 
-export type ScreenType = 'home' | 'country_select' | 'game';
+export type ScreenType = 'home' | 'country_select' | 'game' | 'snake';
 
 export interface BattleResult {
   won: boolean;
+  /** true quando o jogador foi o defensor */
+  defensive: boolean;
   targetCountryId: CountryId;
+  attackerId?: CountryId;
   playerCasualties: number;
-  enemyDefenseInitial: number;
-  playerAttackRoll: number;
-  enemyDefenseRoll: number;
-  territoryConquered: boolean;
+  playerStrength: number;
+  enemyStrength: number;
+  winChance: number;
   incomeGained: number;
 }
 
+export interface Strike {
+  fromId: CountryId;
+  toId: CountryId;
+  hostile: boolean;
+  key: number;
+}
+
+export interface Threat {
+  attackerId: CountryId;
+  targetId: CountryId;
+  secondsLeft: number;
+}
+
 export type TechBranch = 'economy' | 'military' | 'intelligence';
+
+export interface TechEffects {
+  incomeMultiplier?: number;
+  upgradeCostDiscount?: number;
+  recruitCostDiscount?: number;
+  attackPowerBonus?: number;
+  casualtyReduction?: number;
+  defenseBonus?: number;
+  winChanceBonus?: number;
+  spySuccessBonus?: number;
+}
 
 export interface TechNode {
   id: string;
@@ -67,16 +82,7 @@ export interface TechNode {
   cost: number;
   requiredTechId?: string;
   unlocked: boolean;
-  effects: {
-    incomeMultiplier?: number;      // Multiplicador percentual de renda (ex: +0.15)
-    upgradeCostDiscount?: number;   // Desconto no custo de upgrade econômico (ex: 0.20)
-    recruitCostDiscount?: number;   // Desconto no custo de recrutamento (ex: 0.20)
-    attackPowerBonus?: number;      // Bônus percentual no ataque militar (ex: 0.20)
-    casualtyReduction?: number;     // Redução percentual de baixas (ex: 0.25)
-    defenseBonus?: number;          // Aumento percentual de defesa (ex: 0.20)
-    winChanceBonus?: number;        // Bônus plano na chance de vitória (ex: 10%)
-    spySuccessBonus?: number;       // Bônus no sucesso de operações de espionagem
-  };
+  effects: TechEffects;
 }
 
 export interface EventChoice {
@@ -88,7 +94,6 @@ export interface EventChoice {
   rewardMoney?: number;
   rewardMilitary?: number;
   rewardIncomeBonus?: number;
-  defensePenaltyTargetId?: CountryId;
   soundEffect?: 'buy' | 'recruit' | 'victory' | 'sabotage';
 }
 
@@ -101,6 +106,14 @@ export interface GeopoliticalEvent {
   choices: [EventChoice, EventChoice];
 }
 
+export interface AchievementProgress {
+  money: number;
+  militaryPower: number;
+  conqueredCount: number;
+  incomePerSecond: number;
+  unlockedTechsCount: number;
+}
+
 export interface Achievement {
   id: string;
   title: string;
@@ -109,13 +122,7 @@ export interface Achievement {
   unlocked: boolean;
   rewardMoney: number;
   rewardMilitary: number;
-  isCompleted: (state: {
-    money: number;
-    militaryPower: number;
-    conqueredCount: number;
-    incomePerSecond: number;
-    unlockedTechsCount: number;
-  }) => boolean;
+  isCompleted: (state: AchievementProgress) => boolean;
 }
 
 export interface NewsItem {
@@ -132,13 +139,15 @@ export interface GameSaveData {
   playerCountryId: CountryId;
   money: number;
   militaryPower: number;
-  countries: Record<CountryId, CountryRuntimeState>;
+  countries: Partial<Record<CountryId, Partial<CountryRuntimeState>>>;
   conqueredCount: number;
   totalPlayTimeSeconds: number;
   lastSaveTimestamp: number;
   unlockedTechIds: string[];
   unlockedAchievementIds: string[];
   gameSpeed: GameSpeed;
+  bonusIncomePerSecond: number;
+  victoryShown: boolean;
 }
 
 export interface OfflineProgressInfo {

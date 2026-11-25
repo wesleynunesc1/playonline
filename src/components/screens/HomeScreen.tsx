@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useGameStore } from '../../stores/useGameStore';
 import { Button } from '../common/Button';
+import { sound } from '../../utils/audio';
+import { Globe } from '../common/Globe';
 import { Modal } from '../common/Modal';
-import { Play, RotateCcw, Settings, Globe2, Volume2, VolumeX, ShieldCheck } from 'lucide-react';
+import { Play, Gamepad2, RotateCcw, Settings, Globe2, Volume2, VolumeX, ShieldCheck } from 'lucide-react';
 
 export const HomeScreen: React.FC = () => {
   const setScreen = useGameStore((state) => state.setScreen);
@@ -40,16 +42,14 @@ export const HomeScreen: React.FC = () => {
   };
 
   return (
-    <div className="relative w-full h-full flex flex-col items-center justify-between p-6 sm:p-10 overflow-hidden bg-[#070a12] select-none">
-      {/* Background Decorativo com grade militar sutil e esferas de luz */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-950/40 via-slate-950/80 to-[#070a12] pointer-events-none" />
-      <div className="absolute inset-0 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:32px_32px] opacity-25 pointer-events-none" />
+    <div className="relative w-full h-full flex flex-col items-center justify-between p-6 sm:p-10 overflow-x-hidden overflow-y-auto bg-[#05070f] select-none">
+      <Globe />
 
       {/* Topo / Status */}
       <div className="relative z-10 w-full flex items-center justify-between text-xs text-slate-400">
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="font-mono tracking-wider">COMMAND READY // V0.1</span>
+          <span className="font-mono tracking-wider">PLAY ONLINE</span>
         </div>
         <button
           onClick={() => setShowSettingsModal(true)}
@@ -67,7 +67,7 @@ export const HomeScreen: React.FC = () => {
             <Globe2 size={15} /> Estratégia Geopolítica
           </div>
 
-          <h1 className="text-4xl sm:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white via-slate-100 to-slate-400 tracking-tight leading-none">
+          <h1 className="text-4xl sm:text-6xl font-black title-glow text-transparent bg-clip-text bg-gradient-to-b from-white via-slate-100 to-slate-400 tracking-tight leading-none">
             WORLD EMPIRE
           </h1>
 
@@ -109,11 +109,27 @@ export const HomeScreen: React.FC = () => {
             CONFIGURAÇÕES
           </Button>
         </div>
+
+        {/* Cobra */}
+        <button
+          onClick={() => {
+            sound.playClick();
+            setScreen('snake');
+          }}
+          className="shine w-full max-w-xs flex items-center gap-4 p-4 rounded-2xl text-left bg-emerald-950/70 hover:bg-emerald-900/70 border border-emerald-500/50 active:scale-95 transition-all"
+        >
+          <span className="text-3xl">🐍</span>
+          <span className="flex-1">
+            <span className="block font-black text-emerald-300">JOGO DA COBRA</span>
+            <span className="block text-xs text-slate-300">Partida rápida • bata seu recorde</span>
+          </span>
+          <Gamepad2 size={22} className="text-emerald-400" />
+        </button>
       </div>
 
       {/* Rodapé Informativo */}
       <div className="relative z-10 text-center text-xs text-slate-400">
-        <p>Inspirado em estratégia geopolítica clássica • 100% Funcional</p>
+        <p>Grátis • Sem cadastro • Progresso salvo no navegador</p>
       </div>
 
       {/* Modal de Confirmação para Novo Jogo caso já exista save */}

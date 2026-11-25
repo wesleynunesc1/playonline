@@ -20,9 +20,9 @@ export const NotificationToast: React.FC = () => {
   };
 
   return (
-    <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 max-w-sm w-[90%] pointer-events-none transition-all duration-300">
+    <div className="fixed top-28 left-1/2 -translate-x-1/2 z-[60] max-w-sm w-[90%] toast-in pointer-events-none transition-all duration-300">
       <div
-        className={`flex items-center gap-3 px-4 py-3 rounded-xl border shadow-xl shadow-black/60 backdrop-blur-md text-xs sm:text-sm font-medium ${borders[notification.type]}`}
+        className={`flex items-center gap-3 px-4 py-3 rounded-xl border shadow-xl shadow-black/60 text-xs sm:text-sm font-medium ${borders[notification.type]}`}
       >
         {icons[notification.type]}
         <div className="flex-1 leading-snug">{notification.message}</div>

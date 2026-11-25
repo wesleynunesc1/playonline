@@ -2,8 +2,8 @@ import React from 'react';
 import { useGameStore } from '../../stores/useGameStore';
 import { formatMoney, formatNumber } from '../../utils/formatters';
 import { Menu, Shield, Plus, Cpu, Trophy } from 'lucide-react';
-import { COUNTRIES_DATA } from '../../data/countries';
-import { calculateRecruitCost } from '../../utils/formulas';
+import { COUNTRIES_DATA, TOTAL_COUNTRIES } from '../../data/countries';
+import { useAnimatedNumber } from '../../hooks/useAnimatedNumber';
 import { IntelligenceTicker } from './IntelligenceTicker';
 import { TimeSpeedControls } from './TimeSpeedControls';
 
@@ -18,20 +18,22 @@ export const TopHUD: React.FC = () => {
   const unlockedTechIds = useGameStore((state) => state.unlockedTechIds);
   const unlockedAchievementIds = useGameStore((state) => state.unlockedAchievementIds);
 
+  const shownMoney = useAnimatedNumber(money);
+  const shownMilitary = useAnimatedNumber(militaryPower);
   const income = getTotalIncomePerSecond();
   const territories = getConqueredTerritoriesCount();
   const playerCountry = playerCountryId ? COUNTRIES_DATA[playerCountryId] : null;
 
-  const recruitCost = calculateRecruitCost(militaryPower, 1);
+  const recruitCost = useGameStore((state) => state.getRecruitCost());
   const canRecruit = money >= recruitCost;
 
   return (
-    <div className="fixed top-0 left-0 right-0 z-40 flex flex-col select-none">
+    <div className="relative z-30 shrink-0 flex flex-col select-none">
       {/* Ticker de Inteligência e Data de Operações */}
       <IntelligenceTicker />
 
       {/* Barra Principal de Recursos */}
-      <header className="bg-slate-950/90 backdrop-blur-md border-b border-slate-800/80 px-2 sm:px-4 py-2">
+      <header className="bg-slate-950/90 border-b border-slate-800/80 px-2 sm:px-4 py-2">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-1.5 sm:gap-3">
           {/* Jogador / Soberano & Territórios */}
           <div className="flex items-center gap-1.5 sm:gap-2">
@@ -53,7 +55,7 @@ export const TopHUD: React.FC = () => {
               <span className="text-base sm:text-lg">🌎</span>
               <div>
                 <span className="text-xs sm:text-sm font-extrabold text-slate-100">{territories}</span>
-                <span className="text-[10px] text-slate-400 hidden lg:inline ml-1">/ 10</span>
+                <span className="text-[10px] text-slate-400 hidden lg:inline ml-1">/ {TOTAL_COUNTRIES}</span>
               </div>
             </div>
           </div>
@@ -65,7 +67,7 @@ export const TopHUD: React.FC = () => {
               <span className="text-base sm:text-lg">💰</span>
               <div className="flex flex-col text-left">
                 <span className="text-xs sm:text-sm font-bold text-amber-300 font-mono tracking-tight leading-tight">
-                  {formatMoney(money)}
+                  {formatMoney(shownMoney)}
                 </span>
                 <span className="text-[10px] sm:text-xs font-semibold text-emerald-400 font-mono leading-tight">
                   +${income}/s
@@ -78,7 +80,7 @@ export const TopHUD: React.FC = () => {
               <Shield className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-400" />
               <div className="flex flex-col text-left">
                 <span className="text-xs sm:text-sm font-bold text-blue-300 font-mono leading-tight">
-                  ⚔ {formatNumber(militaryPower)}
+                  ⚔ {formatNumber(Math.round(shownMilitary))}
                 </span>
                 <span className="text-[10px] text-slate-400 leading-tight hidden xs:inline">Tropas</span>
               </div>
@@ -88,7 +90,7 @@ export const TopHUD: React.FC = () => {
                 onClick={() => recruitMilitary(1)}
                 disabled={!canRecruit}
                 title={`Recrutar +10 tropas (${formatMoney(recruitCost)})`}
-                className={`ml-0.5 sm:ml-1 flex items-center justify-center w-6 h-6 rounded-lg transition-all ${
+                className={`ml-0.5 sm:ml-1 hidden sm:flex items-center justify-center w-6 h-6 rounded-lg transition-all ${
                   canRecruit
                     ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm'
                     : 'bg-slate-800 text-slate-500 cursor-not-allowed'
@@ -109,7 +111,7 @@ export const TopHUD: React.FC = () => {
             {/* P&D Tecnológico */}
             <button
               onClick={() => openModal('tech_tree')}
-              className="relative flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-cyan-400 px-2 sm:px-2.5 py-1.5 rounded-xl transition-colors"
+              className="relative hidden sm:flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-cyan-400 px-2 sm:px-2.5 py-1.5 rounded-xl transition-colors"
               title="Pesquisa & Desenvolvimento Tecnológico"
             >
               <Cpu size={16} />
@@ -124,7 +126,7 @@ export const TopHUD: React.FC = () => {
             {/* Conquistas Imperiais */}
             <button
               onClick={() => openModal('achievements')}
-              className="relative flex items-center gap-1 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-amber-400 px-2 sm:px-2.5 py-1.5 rounded-xl transition-colors"
+              className="relative hidden sm:flex items-center gap-1 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-amber-400 px-2 sm:px-2.5 py-1.5 rounded-xl transition-colors"
               title="Insígnias e Conquistas"
             >
               <Trophy size={16} />

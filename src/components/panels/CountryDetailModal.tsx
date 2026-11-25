@@ -4,6 +4,9 @@ import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { COUNTRIES_DATA } from '../../data/countries';
 import {
+  BALANCE,
+  getAttackStrength,
+  getModifiers,
   calculateEconomyUpgradeCost,
   calculateIncomeForLevel,
   calculateWinChance,
@@ -25,7 +28,9 @@ export const CountryDetailModal: React.FC = () => {
   const attackCountry = useGameStore((state) => state.attackCountry);
   const recruitMilitary = useGameStore((state) => state.recruitMilitary);
   const sabotageCountry = useGameStore((state) => state.sabotageCountry);
-  const getUnlockedTechs = useGameStore((state) => state.getUnlockedTechs);
+  const unlockedTechIds = useGameStore((state) => state.unlockedTechIds);
+
+  const strike = useGameStore((state) => state.strike);
 
   if (activeModal !== 'country_detail' || !selectedCountryId) {
     return null;
@@ -38,32 +43,23 @@ export const CountryDetailModal: React.FC = () => {
   const isPlayerOwner = runtime.owner === 'player';
   const isCapital = selectedCountryId === playerCountryId;
 
-  // Desconto de tecnologia econômica
-  let upgradeDiscount = 0;
-  let recruitDiscount = 0;
-  let attackBonus = 0;
-  let flatWinChanceBonus = 0;
-
-  getUnlockedTechs().forEach((t) => {
-    if (t.effects.upgradeCostDiscount) upgradeDiscount += t.effects.upgradeCostDiscount;
-    if (t.effects.recruitCostDiscount) recruitDiscount += t.effects.recruitCostDiscount;
-    if (t.effects.attackPowerBonus) attackBonus += t.effects.attackPowerBonus;
-    if (t.effects.winChanceBonus) flatWinChanceBonus += t.effects.winChanceBonus;
-  });
+  const mods = getModifiers(unlockedTechIds);
 
   // Cálculos para upgrade econômico
-  const upgradeCost = calculateEconomyUpgradeCost(base.baseIncome, runtime.economyLevel, upgradeDiscount);
+  const upgradeCost = calculateEconomyUpgradeCost(base.baseIncome, runtime.economyLevel, mods.upgradeDiscount);
   const nextLevel = runtime.economyLevel + 1;
   const nextIncome = calculateIncomeForLevel(base.baseIncome, nextLevel);
   const canAffordUpgrade = money >= upgradeCost;
 
   // Cálculos para ataque
   const effectiveDef = getEffectiveDefense(runtime);
-  const winChance = calculateWinChance(militaryPower, effectiveDef, attackBonus, flatWinChanceBonus);
-  const recruitCost = calculateRecruitCost(militaryPower, 1, recruitDiscount);
+  const attackStrength = getAttackStrength(militaryPower, mods);
+  const winChance = calculateWinChance(attackStrength, effectiveDef, mods.winChanceBonus);
+  const recruitCost = calculateRecruitCost(militaryPower, 1, mods.recruitDiscount);
   const canAffordRecruit = money >= recruitCost;
-  const canAffordSabotage = money >= 800;
-  const isSabotaged = runtime.sabotagedTurns && runtime.sabotagedTurns > 0;
+  const canAffordSabotage = money >= BALANCE.SABOTAGE_COST;
+  const isSabotaged = runtime.sabotageSeconds > 0;
+  const canAttack = !strike && militaryPower >= BALANCE.MIN_ATTACK_POWER;
 
   // Helper de probabilidade
   const getChanceBadge = (chance: number) => {
@@ -178,7 +174,7 @@ export const CountryDetailModal: React.FC = () => {
             {isSabotaged && (
               <div className="p-2.5 bg-rose-950/40 border border-rose-500/40 rounded-xl flex items-center gap-2 text-xs text-rose-300 font-mono">
                 <Skull size={15} className="text-rose-400 shrink-0" />
-                <span>DEFESAS SABOTADAS POR AGENTES: -25% de resistência!</span>
+                <span>DEFESAS SABOTADAS: -25% por mais {Math.ceil(runtime.sabotageSeconds)}s</span>
               </div>
             )}
 
@@ -194,7 +190,7 @@ export const CountryDetailModal: React.FC = () => {
 
               <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                 <div className="text-xs text-slate-400">Seu Efetivo de Ofensiva</div>
-                <div className="text-sm font-bold text-blue-400 font-mono">⚔ {formatNumber(militaryPower)}</div>
+                <div className="text-sm font-bold text-blue-400 font-mono">⚔ {formatNumber(attackStrength)}</div>
               </div>
 
               {/* Barra de Probabilidade */}
@@ -226,10 +222,11 @@ export const CountryDetailModal: React.FC = () => {
                 variant="danger"
                 size="lg"
                 fullWidth
+                disabled={!canAttack}
                 onClick={() => attackCountry(selectedCountryId)}
                 icon={<Swords size={18} />}
               >
-                AUTORIZAR INVASÃO MILITAR
+                {strike ? 'ATAQUE EM ANDAMENTO...' : 'AUTORIZAR INVASÃO MILITAR'}
               </Button>
 
               {/* Operação de Sabotagem Encoberta */}
@@ -238,12 +235,12 @@ export const CountryDetailModal: React.FC = () => {
                   <span className="text-slate-200 block font-bold flex items-center gap-1.5">
                     <Eye size={13} className="text-cyan-400" /> Operação de Sabotagem
                   </span>
-                  <span className="text-[11px] text-slate-400">Reduz defesas em 25% (Custo: $800)</span>
+                  <span className="text-[11px] text-slate-400">Reduz defesas em 25% (Custo: {formatMoney(BALANCE.SABOTAGE_COST)})</span>
                 </div>
                 <Button
                   size="sm"
                   variant={canAffordSabotage && !isSabotaged ? 'secondary' : 'outline'}
-                  disabled={!canAffordSabotage || !!isSabotaged}
+                  disabled={!canAffordSabotage || isSabotaged}
                   onClick={() => sabotageCountry(selectedCountryId)}
                 >
                   {isSabotaged ? 'Sabotado' : 'Infiltrar'}

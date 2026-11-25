@@ -35,6 +35,8 @@ export const BattleModal: React.FC = () => {
 
   const targetCountry = COUNTRIES_DATA[lastBattleResult.targetCountryId];
   if (!targetCountry) return null;
+  const { defensive, attackerId } = lastBattleResult;
+  const attackerName = attackerId ? COUNTRIES_DATA[attackerId].name : 'um rival';
 
   return (
     <Modal
@@ -51,11 +53,11 @@ export const BattleModal: React.FC = () => {
               <Trophy size={36} />
             </div>
             <h2 className="text-xl font-extrabold text-emerald-400 tracking-wide uppercase">
-              Território Conquistado!
+              {defensive ? 'Invasão Repelida!' : 'Território Conquistado!'}
             </h2>
             <p className="text-sm text-slate-300">
               <span className="text-lg mr-1">{targetCountry.flag}</span>
-              <strong>{targetCountry.name}</strong> agora faz parte do seu império.
+              <strong>{targetCountry.name}</strong> {defensive ? `resistiu ao ataque de ${attackerName}.` : 'agora faz parte do seu império.'}
             </p>
           </div>
         ) : (
@@ -64,10 +66,10 @@ export const BattleModal: React.FC = () => {
               <Skull size={36} />
             </div>
             <h2 className="text-xl font-extrabold text-rose-400 tracking-wide uppercase">
-              Invasão Fracassou!
+              {defensive ? 'Território Perdido!' : 'Invasão Fracassou!'}
             </h2>
             <p className="text-sm text-slate-300">
-              Suas tropas foram rechaçadas pelas defesas de{' '}
+              {defensive ? `${attackerName} rompeu suas defesas em ` : 'Suas tropas foram rechaçadas pelas defesas de '}
               <span className="font-semibold text-slate-100">{targetCountry.name}</span>.
             </p>
           </div>
@@ -85,13 +87,13 @@ export const BattleModal: React.FC = () => {
           </div>
 
           <div className="flex items-center justify-between text-slate-300">
-            <span>Ataque Efetivo de Suas Forças:</span>
-            <span className="font-mono font-bold text-blue-400">{lastBattleResult.playerAttackRoll}</span>
+            <span>Força das Suas Tropas:</span>
+            <span className="font-mono font-bold text-blue-400">{formatNumber(lastBattleResult.playerStrength)}</span>
           </div>
 
           <div className="flex items-center justify-between text-slate-300">
-            <span>Resistência Defensiva Inimiga:</span>
-            <span className="font-mono font-bold text-rose-400">{lastBattleResult.enemyDefenseRoll}</span>
+            <span>Força Inimiga:</span>
+            <span className="font-mono font-bold text-rose-400">{formatNumber(lastBattleResult.enemyStrength)}</span>
           </div>
 
           <div className="flex items-center justify-between text-slate-300">
@@ -99,10 +101,10 @@ export const BattleModal: React.FC = () => {
             <span className="font-mono font-bold text-amber-400">-{formatNumber(lastBattleResult.playerCasualties)} tropas</span>
           </div>
 
-          {lastBattleResult.won && (
-            <div className="flex items-center justify-between text-emerald-300 font-semibold pt-1 border-t border-slate-800">
-              <span>Renda Incorporada ao Tesouro:</span>
-              <span className="font-mono text-sm">+${lastBattleResult.incomeGained}/s</span>
+          {lastBattleResult.incomeGained !== 0 && (
+            <div className={`flex items-center justify-between font-semibold pt-1 border-t border-slate-800 ${lastBattleResult.won ? 'text-emerald-300' : 'text-rose-300'}`}>
+              <span>{lastBattleResult.won ? 'Renda Incorporada:' : 'Renda Perdida:'}</span>
+              <span className="font-mono text-sm">{lastBattleResult.won ? '+' : '-'}${Math.abs(lastBattleResult.incomeGained)}/s</span>
             </div>
           )}
 
@@ -120,7 +122,7 @@ export const BattleModal: React.FC = () => {
           onClick={closeModal}
           icon={<ArrowRight size={18} />}
         >
-          {lastBattleResult.won ? 'Continuar Expansão' : 'Reagrupar Tropas'}
+          {lastBattleResult.won ? 'Continuar' : 'Reagrupar Tropas'}
         </Button>
       </div>
     </Modal>

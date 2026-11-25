@@ -1,42 +1,53 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useGameStore } from '../stores/useGameStore';
+import { BALANCE } from '../utils/formulas';
 
 /**
- * Loop central do jogo:
- * - Executa gameTick a cada 1000ms de forma precisa e sem derivas
- * - Salva periodicamente o estado a cada 15 segundos
- * - Reage ao estado da aba (visibilitychange) para pausar / calcular offline suavemente
+ * Loop central único do jogo.
+ * - Usa tempo real decorrido (o navegador limita timers em segundo plano)
+ * - Lacunas longas (app minimizado no celular) viram progresso offline
+ * - Salva periodicamente e sempre que o app vai para segundo plano
  */
 export function useGameLoop() {
-  const gameTick = useGameStore((state) => state.gameTick);
-  const saveGame = useGameStore((state) => state.saveGame);
-  const screen = useGameStore((state) => state.screen);
-
-  const saveCounterRef = useRef<number>(0);
+  const screen = useGameStore((s) => s.screen);
 
   useEffect(() => {
     if (screen !== 'game') return;
+    const { gameTick, saveGame, grantOfflineProgress } = useGameStore.getState();
+    let last = Date.now();
+    let sinceSave = 0;
 
     const interval = setInterval(() => {
-      gameTick(1);
-      saveCounterRef.current += 1;
+      const now = Date.now();
+      const elapsed = (now - last) / 1000;
+      last = now;
 
-      // Salva automaticamente a cada 15 segundos
-      if (saveCounterRef.current >= 15) {
+      if (elapsed > BALANCE.BACKGROUND_GAP_S) {
+        grantOfflineProgress(elapsed);
+      } else {
+        gameTick(elapsed);
+      }
+
+      sinceSave += elapsed;
+      if (sinceSave >= BALANCE.AUTOSAVE_INTERVAL_S) {
         saveGame();
-        saveCounterRef.current = 0;
+        sinceSave = 0;
       }
     }, 1000);
 
-    const handleBeforeUnload = () => {
-      saveGame();
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') saveGame();
     };
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', saveGame);
+    window.addEventListener('beforeunload', saveGame);
 
     return () => {
       clearInterval(interval);
-      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', saveGame);
+      window.removeEventListener('beforeunload', saveGame);
     };
-  }, [screen, gameTick, saveGame]);
+  }, [screen]);
 }

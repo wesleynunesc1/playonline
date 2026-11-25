@@ -30,13 +30,13 @@ export const Button: React.FC<ButtonProps> = ({
 
   const variantStyles = {
     primary:
-      'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/30 border border-blue-500/40 hover:shadow-blue-600/30',
+      'shine bg-gradient-to-b from-blue-500 to-blue-700 hover:from-blue-400 hover:to-blue-600 text-white shadow-blue-900/30 border border-blue-500/40 hover:shadow-blue-600/30',
     secondary:
       'bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700/80 shadow-slate-900/40',
     danger:
-      'bg-red-600 hover:bg-red-500 text-white border border-red-500/40 shadow-red-900/30',
+      'shine bg-gradient-to-b from-red-500 to-red-800 hover:from-red-400 hover:to-red-700 text-white border border-red-500/40 shadow-red-900/30',
     gold:
-      'bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold border border-amber-300 shadow-amber-900/20',
+      'shine bg-gradient-to-b from-amber-300 to-amber-500 hover:from-amber-200 hover:to-amber-400 text-slate-950 font-bold border border-amber-300 shadow-amber-900/20',
     outline:
       'bg-transparent hover:bg-slate-800/60 text-slate-200 border border-slate-700',
     ghost:

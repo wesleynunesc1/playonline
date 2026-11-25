@@ -118,9 +118,84 @@ export const GEOPOLITICAL_EVENTS: GeopoliticalEvent[] = [
       },
       {
         id: 'cash_in',
-        label: 'Liquidars Estoques e Lucrar Imediatamente',
+        label: 'Liquidar Estoques e Lucrar Imediatamente',
         description: 'Vende excedentes a preços de pico: adiciona +$2.800 diretamente ao tesouro.',
         rewardMoney: 2800,
+        soundEffect: 'buy',
+      },
+    ],
+  },
+  {
+    id: 'event_pandemic',
+    title: 'Surto Epidêmico Regional',
+    subtitle: 'Ministério da Saúde e Defesa Civil',
+    category: 'crise',
+    description:
+      'Um vírus respiratório se espalha por centros urbanos. O mercado reage com nervosismo e a população exige uma resposta firme.',
+    choices: [
+      {
+        id: 'lockdown',
+        label: 'Mobilização Sanitária Total',
+        description: 'Investe $900 em hospitais de campanha. Moral nacional sobe e reservistas se alistam (+40 tropas).',
+        costMoney: 900,
+        rewardMilitary: 40,
+        soundEffect: 'recruit',
+      },
+      {
+        id: 'keep_open',
+        label: 'Manter a Economia Aberta',
+        description: 'Evita paralisações: a indústria continua operando e o tesouro arrecada +$1.500.',
+        rewardMoney: 1500,
+        soundEffect: 'buy',
+      },
+    ],
+  },
+  {
+    id: 'event_defector',
+    title: 'General Rival Pede Asilo',
+    subtitle: 'Agência de Inteligência Nacional',
+    category: 'militar',
+    description:
+      'Um general de alta patente de uma nação rival atravessou a fronteira com documentos sigilosos e oferece seus serviços.',
+    choices: [
+      {
+        id: 'recruit_general',
+        label: 'Integrar ao Estado-Maior',
+        description: 'Custa $700 em proteção e salário, mas sua liderança traz +70 tropas leais.',
+        costMoney: 700,
+        rewardMilitary: 70,
+        soundEffect: 'recruit',
+      },
+      {
+        id: 'sell_intel',
+        label: 'Negociar os Documentos',
+        description: 'Vende a inteligência a aliados e embolsa +$2.200.',
+        rewardMoney: 2200,
+        soundEffect: 'sabotage',
+      },
+    ],
+  },
+  {
+    id: 'event_tech_summit',
+    title: 'Cúpula Global de Tecnologia',
+    subtitle: 'Ministério da Ciência e Inovação',
+    category: 'diplomacia',
+    description:
+      'Gigantes de tecnologia avaliam instalar data centers e fábricas de chips no seu território, em troca de incentivos.',
+    choices: [
+      {
+        id: 'subsidize',
+        label: 'Conceder Incentivos Fiscais',
+        description: 'Investe $1.500 em infraestrutura e garante +$40/s de renda permanente.',
+        costMoney: 1500,
+        rewardIncomeBonus: 40,
+        soundEffect: 'buy',
+      },
+      {
+        id: 'tax_them',
+        label: 'Cobrar Licenças de Operação',
+        description: 'Exige taxas de entrada: +$2.000 imediatos, sem compromisso de longo prazo.',
+        rewardMoney: 2000,
         soundEffect: 'buy',
       },
     ],

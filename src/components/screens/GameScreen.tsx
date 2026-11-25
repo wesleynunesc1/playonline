@@ -10,6 +10,9 @@ import { DebugPanel } from '../panels/DebugPanel';
 import { TechTreeModal } from '../panels/TechTreeModal';
 import { CrisisEventModal } from '../panels/CrisisEventModal';
 import { AchievementsModal } from '../panels/AchievementsModal';
+import { VictoryModal } from '../panels/VictoryModal';
+import { ThreatBanner } from '../hud/ThreatBanner';
+import { TimeSpeedControls } from '../hud/TimeSpeedControls';
 import { NotificationToast } from '../hud/NotificationToast';
 import { useGameStore } from '../../stores/useGameStore';
 import { Shield, TrendingUp, Cpu, Trophy, Swords } from 'lucide-react';
@@ -18,7 +21,6 @@ export const GameScreen: React.FC = () => {
   // Ativa o loop central do jogo e autosave
   useGameLoop();
 
-  const selectedCountryId = useGameStore((state) => state.selectedCountryId);
   const playerCountryId = useGameStore((state) => state.playerCountryId);
   const selectCountry = useGameStore((state) => state.selectCountry);
   const openModal = useGameStore((state) => state.openModal);
@@ -32,12 +34,16 @@ export const GameScreen: React.FC = () => {
       <NotificationToast />
 
       {/* Mapa Central Interativo */}
-      <main className="flex-1 w-full h-full pt-20 sm:pt-24 pb-14 sm:pb-0 relative overflow-hidden">
+      <main className="flex-1 min-h-0 w-full relative overflow-hidden">
         <InteractiveMap />
+        <ThreatBanner />
+        <div className="absolute left-3 bottom-3 sm:bottom-16 z-20 md:hidden">
+          <TimeSpeedControls />
+        </div>
       </main>
 
       {/* Barra de Ação Rápida Inferior (Mobile Friendly com Safe Area) */}
-      <footer className="fixed bottom-0 left-0 right-0 z-30 bg-slate-950/95 backdrop-blur-md border-t border-slate-800/80 px-2 py-1.5 sm:hidden flex items-center justify-around">
+      <footer className="relative z-30 shrink-0 bg-slate-950/95 border-t border-slate-800/80 px-2 py-1.5 sm:hidden flex items-center justify-around">
         <button
           onClick={() => playerCountryId && selectCountry(playerCountryId)}
           className="flex flex-col items-center gap-0.5 text-[10px] text-slate-300 active:scale-95 transition-transform"
@@ -75,11 +81,10 @@ export const GameScreen: React.FC = () => {
 
         <button
           onClick={() => {
-            if (selectedCountryId) {
-              selectCountry(selectedCountryId);
-            } else if (playerCountryId) {
-              selectCountry(playerCountryId);
-            }
+            const weakest = Object.values(useGameStore.getState().countries)
+              .filter((c) => c.owner !== 'player')
+              .sort((a, b) => a.defense - b.defense)[0];
+            if (weakest) selectCountry(weakest.id);
           }}
           className="flex flex-col items-center gap-0.5 text-[10px] text-rose-300 active:scale-95 transition-transform"
         >
@@ -97,6 +102,7 @@ export const GameScreen: React.FC = () => {
       <TechTreeModal />
       <CrisisEventModal />
       <AchievementsModal />
+      <VictoryModal />
     </div>
   );
 };

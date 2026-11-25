@@ -40,14 +40,14 @@ export const Modal: React.FC<ModalProps> = ({
   }[maxWidth];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 animate-in fade-in duration-200">
       <div
         className="fixed inset-0 -z-10"
         onClick={onClose}
         aria-hidden="true"
       />
       <div
-        className={`relative w-full ${widthClass} bg-slate-900/95 border border-slate-700/80 rounded-2xl shadow-2xl shadow-black/80 overflow-hidden flex flex-col max-h-[92vh]`}
+        className={`relative w-full ${widthClass} bg-slate-900/95 modal-pop border border-slate-600/80 rounded-2xl shadow-2xl shadow-black/80 overflow-hidden flex flex-col max-h-[92vh]`}
       >
         {/* Header */}
         {(title || showCloseButton) && (

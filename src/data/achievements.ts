@@ -1,4 +1,5 @@
 import { Achievement } from '../types/game';
+import { TOTAL_COUNTRIES } from './countries';
 
 export const ACHIEVEMENTS: Achievement[] = [
   {
@@ -72,13 +73,23 @@ export const ACHIEVEMENTS: Achievement[] = [
     isCompleted: ({ money }) => money >= 20000,
   },
   {
+    id: 'ach_hegemon',
+    title: 'Hegemonia Intercontinental',
+    description: 'Controle 12 territórios ao redor do globo.',
+    icon: 'Globe',
+    unlocked: false,
+    rewardMoney: 12000,
+    rewardMilitary: 150,
+    isCompleted: ({ conqueredCount }) => conqueredCount >= 12,
+  },
+  {
     id: 'ach_world_empire',
     title: 'Dominação Planetária Absoluta',
-    description: 'Unifique todos os 10 territórios sob o estandarte do World Empire!',
+    description: `Unifique todos os ${TOTAL_COUNTRIES} territórios sob o estandarte do World Empire!`,
     icon: 'Crown',
     unlocked: false,
     rewardMoney: 25000,
     rewardMilitary: 300,
-    isCompleted: ({ conqueredCount }) => conqueredCount >= 10,
+    isCompleted: ({ conqueredCount }) => conqueredCount >= TOTAL_COUNTRIES,
   },
 ];

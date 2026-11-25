@@ -113,15 +113,14 @@ export const PauseMenuModal: React.FC = () => {
               Reiniciar Partida
             </Button>
 
-            {/* Acesso rápido ao Painel de Testes/Debug */}
-            <div className="pt-2 border-t border-slate-800">
+            {import.meta.env.DEV && (
               <button
                 onClick={() => openModal('debug')}
-                className="w-full flex items-center justify-center gap-1.5 py-2 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                className="w-full flex items-center justify-center gap-1.5 py-2 text-xs text-slate-400 hover:text-slate-200 border-t border-slate-800"
               >
-                <Bug size={14} /> Painel de Testes / Sandbox
+                <Bug size={14} /> Painel de Testes
               </button>
-            </div>
+            )}
           </>
         )}
       </div>

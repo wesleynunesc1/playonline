@@ -10,16 +10,22 @@
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",
+    "d3-geo": "^3.1.1",
     "lucide-react": "^1.16.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "topojson-client": "^3.1.0",
+    "world-atlas": "^2.0.2",
     "zustand": "^4.5.5"
   },
   "devDependencies": {
     "@types/canvas-confetti": "^1.9.0",
+    "@types/d3-geo": "^3.1.1",
+    "@types/geojson": "^7946.0.16",
     "@types/node": "^22.5.4",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
+    "@types/topojson-client": "^3.1.5",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.47",
