@@ -10,14 +10,16 @@ import { Cmd, Fx, Pack, STEP, Setup, World, cityAt, command, createWorld, mods, 
 export interface Seat { id: string; name: string; emblem: string; start: number; ready: boolean }
 export interface Bubble { i: number; text: string; at: number }
 interface Options { mode: ModeId; minutes: number; rules: string[]; bots: number; skill: number }
+/** Trecho gravado da maior batalha */
+interface Tape { packs: Pack[]; score: number; x: number; z: number }
 interface State extends Options {
   phase: 'menu' | 'joining' | 'lobby' | 'play'; host: boolean; solo: boolean; code: string; seats: Seat[]; seat: string; me: number; world: World | null;
-  error: string; paused: boolean; frozen: boolean; speed: number; lost: boolean; pings: { i: number; x: number; z: number; at: number }[]; chat: Bubble[];
+  error: string; paused: boolean; frozen: boolean; speed: number; lost: boolean; replay: boolean; best: Tape | null; pings: { i: number; x: number; z: number; at: number }[]; chat: Bubble[];
 }
 const FORTALEZA = 2304400;
 export const W: State = {
-  phase: 'menu', host: false, solo: false, code: '', seats: [], seat: '', me: 0, world: null, error: '', paused: false, frozen: false, speed: 1, lost: false, pings: [], chat: [],
-  mode: 'dominio', minutes: 25, rules: [], bots: 3, skill: 2,
+  phase: 'menu', host: false, solo: false, code: '', seats: [], seat: '', me: 0, world: null, error: '', paused: false, frozen: false, speed: 1, lost: false, replay: false, best: null, pings: [], chat: [],
+  mode: 'dominio', minutes: 40, rules: [], bots: 3, skill: 1,
 };
 /** Efeitos à espera da cena 3D */
 export const fxQueue: Fx[] = [];
@@ -206,12 +208,15 @@ function fromHost(m: Record<string, unknown>) {
     if (W.me < 0) return leave('Você não está nesta partida.');
     W.world = createWorld(setups, W.mode, W.minutes, W.rules);
     W.phase = 'play';
+    film = [];
+    W.best = null;
     fxQueue.length = 0;
     touch();
   } else if (m.t === 's' && W.world) {
     const over = !!W.world.over;
     unpack(W.world, m.p as Pack);
     queue(W.world.fx);
+    tape(m.p as Pack);
     if (W.world.over && !over) record(W.world);
     touch();
   } else if (m.t === 'err') hooks.toast(clip(m.text, 80), 'danger');
@@ -269,11 +274,14 @@ export function startWar() {
   Object.assign(W, { me: W.seats.findIndex((s) => s.id === W.seat), phase: 'play', paused: false, frozen: false, speed: 1, chat: [], pings: [] });
   mods.clear();
   fxQueue.length = 0;
+  film = [];
+  W.best = null;
   broadcast(startMessage());
   runLoop();
   touch();
 }
 export function backToLobby() {
+  stopReplay();
   if (!W.host) return quitWar();
   clearInterval(timer);
   Object.assign(W, { phase: 'lobby', world: null });
@@ -283,6 +291,7 @@ export function backToLobby() {
   syncLobby();
 }
 export function quitWar() {
+  stopReplay();
   clearInterval(timer);
   room?.close();
   room = null;
@@ -293,6 +302,47 @@ export function quitWar() {
   mods.clear();
   Object.assign(W, { phase: 'menu', world: null, seats: [], code: '', error: '', chat: [], pings: [], paused: false, lost: false });
   s?.close();
+  touch();
+}
+
+// ===== Replay =====
+let film: Pack[] = [];
+let film0: World | null = null;
+const BIG: Record<string, number> = { bum: 1, destroco: 2, queda: 2, tomada: 3, aereo: 6, barragem: 4, nuclear: 40 };
+const heat = (p: Pack) => p.fx.reduce((s, f) => s + (BIG[f[0]] ?? 0), 0);
+/** Guarda os últimos 12 segundos e separa o trecho mais intenso */
+function tape({ t, l, u, fx, z, r }: Pack) {
+  film.push({ t, l, u, fx, z, r });
+  if (film.length > 60) film.shift();
+  const score = film.reduce((s, p) => s + heat(p), 0);
+  if (film.length < 30 || score < 8 || score <= (W.best?.score ?? 0)) return;
+  const all = film.flatMap((p) => p.fx).filter((f) => BIG[f[0]]);
+  const top = all.reduce((b, f) => (BIG[f[0]] > BIG[b[0]] ? f : b));
+  W.best = { packs: [...film], score, x: top[3], z: top[4] };
+}
+let reel = 0;
+export function playReplay() {
+  if (!W.best || !W.world || W.replay) return;
+  film0 = W.world;
+  W.world = { ...structuredClone(film0), over: null, units: [] };
+  W.replay = true;
+  fxQueue.length = 0;
+  let i = 0;
+  clearInterval(reel);
+  reel = window.setInterval(() => {
+    const p = W.best?.packs[i++];
+    if (!p || !W.world) return stopReplay();
+    unpack(W.world, p);
+    queue(p.fx);
+    touch();
+  }, 200);
+  touch();
+}
+export function stopReplay() {
+  clearInterval(reel);
+  if (film0) W.world = film0;
+  film0 = null;
+  W.replay = false;
   touch();
 }
 
@@ -324,12 +374,14 @@ function runLoop() {
       ticks++;
       for (const p of w.players) if ((p.bot || !p.online) && !W.frozen && (ticks + p.i * 3) % 15 === 0) think(w, p.i);
       queue(w.fx);
-      if (guests.size) net.push(...w.fx);
+      net.push(...w.fx);
     }
     if (!moved) return;
-    if (guests.size && ticks % 2 === 0) {
+    if (ticks % 2 === 0) {
       w.fx = net;
-      broadcast({ t: 's', p: pack(w, ticks % 10 === 0 || !!w.over) });
+      const p = pack(w, guests.size > 0 && (ticks % 10 === 0 || !!w.over));
+      if (guests.size) broadcast({ t: 's', p });
+      tape(p);
       net = [];
     }
     if (ticks % 2 === 0) touch();

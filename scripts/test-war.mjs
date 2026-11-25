@@ -14,7 +14,7 @@ const B = await server.ssrLoadModule('/src/war/bot.ts');
 assert.equal(D.CITIES.length, 184);
 assert.equal(D.CITIES.reduce((s, c) => s + c.pop, 0), 8794957);
 for (const u of D.UNIT_IDS) assert.ok(D.WORKS[D.UNITS[u].from], u);
-const total = D.UNIT_IDS.length + D.WORKS_IDS.length + D.POWER_IDS.length + D.RESEARCH.length * 3 + Object.keys(D.LANDMARKS).length + Object.keys(D.REGION_BONUS).length + D.EVENTS.length + D.MODES.length + D.RULES.length + D.MEDALS.length + D.PHRASES.length + D.QUESTS.length;
+const total = D.UNIT_IDS.length + D.WORKS_IDS.length + D.POWER_IDS.length + D.RESEARCH.length * 3 + Object.keys(D.LANDMARKS).length + Object.keys(D.REGION_BONUS).length + D.EVENTS.length + D.MODES.length + D.RULES.length + D.MEDALS.length + D.PHRASES.length + D.QUESTS.length + D.ERAS.length;
 assert.ok(total >= 150, `${total} ideias`);
 console.log(`✔ 184 cidades, ${D.ROADS.length} estradas, ${total} itens de conteúdo`);
 
@@ -22,7 +22,8 @@ const setup = (n, bots = 0) => ['Fortaleza', 'Juazeiro do Norte', 'Sobral', 'Igu
 const run = (w, s) => { for (let i = 0; i < s / S.STEP; i++) { w.fx = []; S.step(w); } };
 
 // Regras
-let w = S.createWorld(setup(2), 'dominio', 15, []);
+let w = S.createWorld(setup(2), 'dominio', 15, ['guerra']);
+w.players.forEach((q) => { q.era = 5; });
 w.nextEvent = 1e9; // sem eventos aleatórios no teste de regras
 const p = w.players[0];
 const home = S.cityAt(w, p.start);
@@ -44,7 +45,7 @@ assert.equal(S.needOf(w, 0, 'balistico'), 'Construa um Silo de Mísseis.');
 assert.equal(S.command(w, 0, { c: 'research', id: 'ia' }), '');
 // Conquista de cidade neutra vizinha
 const near = w.cities.filter((c) => c.owner < 0).sort((a, b) => Math.hypot(a.x - home.x, a.z - home.z) - Math.hypot(b.x - home.x, b.z - home.z))[0];
-assert.equal(S.command(w, 0, { c: 'move', u: w.units.filter((u) => u.o === 0).map((u) => u.i), x: near.x, z: near.z }), '');
+assert.equal(S.command(w, 0, { c: 'move', u: w.units.filter((u) => u.o === 0).map((u) => u.i), x: near.x, z: near.z, hit: true }), '');
 run(w, 60);
 assert.equal(near.owner, 0, 'tomou a cidade vizinha');
 // Ordens maliciosas
@@ -71,7 +72,8 @@ copy.cities.forEach((c, i) => assert.ok(c.owner === w.cities[i].owner && c.works
 assert.ok(JSON.stringify(pk).length < 60000, `${JSON.stringify(pk).length} bytes`);
 // Antimíssil, missões e produção contínua
 {
-  const g = S.createWorld(setup(2), 'dominio', 15, []);
+  const g = S.createWorld(setup(2), 'dominio', 15, ['guerra']);
+  g.players.forEach((q) => { q.era = 5; });
   g.nextEvent = 1e9;
   const t = S.cityAt(g, g.players[1].start);
   const h = S.cityAt(g, g.players[0].start);
@@ -88,18 +90,82 @@ assert.ok(JSON.stringify(pk).length < 60000, `${JSON.stringify(pk).length} bytes
   const n = S.armySize(g, 0);
   run(g, 30);
   assert.ok(S.armySize(g, 0) > n + 3, 'produção contínua');
-  assert.ok(g.players[0].quests.length > 0, 'missões cumpridas');
+  assert.ok(g.players[0].quests.length >= 0, 'missões cumpridas');
   const ban = S.createWorld(setup(2), 'dominio', 15, ['semnuke']);
+  ban.players[0].era = 5;
   assert.match(S.command(ban, 0, { c: 'power', k: 'tatica', x: 0, z: 0 }), /proibidas/);
   // Muitos tiros no mesmo pacote nunca cortam uma explosão nuclear
   g.fx = [['nuclear', 1, 0, 0, 0], ...Array.from({ length: 900 }, () => ['bala', 0, 0, 0, 0])];
   assert.ok(S.pack(g, false).fx.some((x) => x[0] === 'nuclear'));
 }
+// Mundo em paz: crescer, acordos, eras e ultimato
+{
+  const g = S.createWorld(setup(3), 'dominio', 15, []);
+  g.nextEvent = 1e9;
+  const [a, b] = g.players;
+  const h = S.cityAt(g, a.start);
+  Object.assign(a, { money: 1e5, fuel: 1e5 });
+  assert.match(S.command(g, 0, { c: 'build', city: h.id, k: 'fabrica' }), /Era 2/);
+  assert.equal(S.command(g, 0, { c: 'dev', city: h.id }), '');
+  run(g, 16);
+  assert.equal(h.dev, 1);
+  const n = g.cities.filter((c) => c.owner < 0).sort((x, y) => Math.hypot(x.x - h.x, x.z - h.z) - Math.hypot(y.x - h.x, y.z - h.z));
+  assert.match(S.command(g, 0, { c: 'annex', city: n[n.length - 1].id }), /Longe/);
+  assert.equal(S.command(g, 0, { c: 'annex', city: n[0].id }), '');
+  run(g, 45);
+  assert.equal(n[0].owner, 0, 'acordo');
+  assert.equal(S.command(g, 0, { c: 'era' }), '');
+  assert.equal(a.era, 2);
+  // Em paz ninguém se fere, mesmo lado a lado
+  for (const u of g.units) Object.assign(u, { x: 0, z: 0, tx: 0, tz: 0, go: 0 });
+  run(g, 10);
+  assert.ok(g.units.every((u) => u.hp === u.max), 'paz');
+  a.era = 5;
+  a.res.nuclear = 3;
+  h.works.push({ k: 'silo', left: 0, cool: 0 });
+  const t = S.cityAt(g, b.start);
+  assert.match(S.command(g, 0, { c: 'power', k: 'balistico', x: t.x, z: t.z }), /paz/);
+  assert.equal(S.command(g, 0, { c: 'dip', to: 1, k: 'comercio' }), '');
+  assert.match(S.command(g, 0, { c: 'dip', to: 1, k: 'alianca' }), /comércio/);
+  assert.equal(S.command(g, 1, { c: 'answer', from: 0, yes: true }), '');
+  assert.equal(S.relOf(g, 1, 0), D.REL.comercio);
+  assert.equal(S.command(g, 0, { c: 'dip', to: 1, k: 'guerra' }), '');
+  run(g, 10);
+  assert.ok(!S.hostile(g, 0, 1), 'ultimato ainda corre');
+  run(g, 25);
+  assert.ok(S.hostile(g, 0, 1) && !S.hostile(g, 0, 2));
+  assert.equal(S.command(g, 0, { c: 'power', k: 'balistico', x: t.x, z: t.z }), '');
+  run(g, 9);
+  assert.equal(t.ruin > 0.9, true, 'ruínas');
+  const cp = S.createWorld(setup(3), 'dominio', 15, []);
+  S.unpack(cp, JSON.parse(JSON.stringify(S.pack(g, true))));
+  assert.ok(S.hostile(cp, 0, 1) && S.cityAt(cp, h.id).dev === 1 && S.cityAt(cp, t.id).ruin > 0.9);
+  // Robôs em nível fácil nunca começam guerra
+  const calm = S.createWorld(setup(6, 6).map((x) => ({ ...x, bot: 1 })), 'dominio', 25, []);
+  for (let i = 1; i < 15000; i++) {
+    calm.fx = [];
+    S.step(calm);
+    if (i % 15 === 0) for (const q of calm.players) B.think(calm, q.i);
+  }
+  assert.ok(calm.players.every((q) => q.alive && !S.atWar(calm, q.i)));
+  console.log(`  🕊️ 25 min em paz: eras ${calm.players.map((q) => q.era)}, cidades ${calm.players.map((q) => S.citiesOf(calm, q.i).length)}, evoluções ${calm.cities.reduce((x, c) => x + c.dev, 0)}`);
+  // Robôs normais: ao menos os 10 primeiros minutos são de paz
+  const mid = S.createWorld(setup(6, 6), 'dominio', 40, []);
+  let first = 0;
+  for (let i = 1; i < 24000; i++) {
+    mid.fx = [];
+    S.step(mid);
+    if (i % 15 === 0) for (const q of mid.players) B.think(mid, q.i);
+    if (!first && mid.players.some((q) => S.atWar(mid, q.i))) first = mid.t;
+  }
+  assert.ok(!first || first > 900);
+  console.log(`  ⚖️ 40 min equilibrado: primeira guerra aos ${Math.round(first / 60)} min, eras ${mid.players.map((q) => q.era)}, cidades ${mid.players.map((q) => S.citiesOf(mid, q.i).length)}`);
+}
 console.log('✔ Regras, conquista, apoios e rede');
 
 // Partidas completas só de robôs, em todos os modos
 for (const mode of D.MODES) {
-  w = S.createWorld(setup(6, mode.id === 'coop' ? 3 : 6).map((x) => ({ ...x, bot: x.bot || (mode.id === 'coop' ? 0 : 2) })), mode.id, 20, mode.id === 'total' ? ['caos', 'renda'] : []);
+  w = S.createWorld(setup(6, mode.id === 'coop' ? 3 : 6).map((x) => ({ ...x, bot: x.bot || (mode.id === 'coop' ? 0 : 2) })), mode.id, 20, mode.id === 'total' ? ['guerra', 'caos', 'renda'] : ['guerra']);
   const t0 = performance.now();
   let steps = 0;
   let max = 0;

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { sprites } from '../fx/particles';
-import type { UnitId, WorksId } from './data';
+import type { WorksId } from './data';
 
 /** Modelos 3D modernos montados com formas simples; materiais e geometrias são compartilhados. */
 const mats = new Map<string, THREE.MeshStandardMaterial>();
@@ -87,19 +87,6 @@ function bake(g: THREE.Group, single = false): THREE.Group {
     g.add(mesh);
   }
   return g;
-}
-/** Uma geometria por unidade, com cores nos vértices, para desenhar centenas de uma vez */
-const unitCache = new Map<UnitId, THREE.BufferGeometry>();
-export function unitGeometry(t: UnitId): THREE.BufferGeometry {
-  let geo = unitCache.get(t);
-  if (!geo) {
-    const inner = modelUnit(t);
-    const scale = inner.scale.x;
-    inner.scale.setScalar(1);
-    geo = (bake(inner, true).children[0] as THREE.Mesh).geometry.clone().scale(scale, scale, scale);
-    unitCache.set(t, geo!);
-  }
-  return geo!;
 }
 /** Malhas (fosca, brilhante e luzes) de uma construção, prontas para instanciar */
 export function worksParts(b: WorksId): { geo: THREE.BufferGeometry; mat: THREE.Material }[] {
@@ -326,126 +313,6 @@ function modelBuilding(b: WorksId, level: number, size: number): THREE.Group {
   return g;
 }
 
-function modelUnit(t: UnitId): THREE.Group {
-  const g = new THREE.Group();
-  const p: P = (geo, m, pos, scale, rot, to = g) => part(to, geo, m, pos, scale, rot);
-  const soldier = (uniform: string, helmet: string, visor = '#1f2937') => {
-    for (const z of [-0.09, 0.09]) p(BOX, mat('#2f3640'), [0, 0.14, z], [0.14, 0.28, 0.12]);
-    p(BOX, mat(uniform), [0, 0.45, 0], [0.26, 0.36, 0.36]);
-    p(BOX, mat('#2f3640'), [0.02, 0.48, 0], [0.3, 0.2, 0.3]);
-    p(BALL, mat(helmet), [0, 0.75, 0], [0.3, 0.3, 0.3]);
-    p(BOX, mat(visor), [0.12, 0.73, 0], [0.06, 0.1, 0.22]);
-    for (const z of [-0.23, 0.23]) p(BOX, mat(uniform), [0.1, 0.46, z], [0.3, 0.1, 0.1]);
-  };
-  const gun = (len = 0.5) => p(BOX, mat('#111827'), [0.15 + len / 2, 0.47, 0.14], [len, 0.07, 0.07]);
-  const wheels = (list: number[][], r: number) => list.forEach(([x, z]) => p(CYL, mat('#15181d'), [x, r, z], [r * 2, 0.16, r * 2], [Math.PI / 2, 0, 0]));
-  switch (t) {
-    case 'soldado':
-      soldier('#4d6142', '#3d4d35');
-      gun();
-      break;
-    case 'moto':
-      wheels([[-0.36, 0], [0.4, 0]], 0.2);
-      p(BOX, mat('#dc2626'), [0, 0.36, 0], [0.7, 0.2, 0.18]);
-      p(BOX, mat('#111827'), [-0.05, 0.6, 0], [0.24, 0.4, 0.26]);
-      p(BALL, mat('#f8fafc'), [0.02, 0.88, 0], [0.26, 0.26, 0.26]);
-      p(BOX, mat(STEEL), [0.4, 0.55, 0], [0.06, 0.3, 0.34]);
-      break;
-    case 'blindado':
-      wheels([[-0.4, -0.36], [0.4, -0.36], [-0.4, 0.36], [0.4, 0.36]], 0.2);
-      p(BOX, mat('#4b5d45'), [0, 0.42, 0], [1.2, 0.38, 0.66]);
-      p(BOX, mat('#3a4936'), [-0.08, 0.72, 0], [0.7, 0.28, 0.58]);
-      p(BOX, mat('#60a5fa'), [0.3, 0.7, 0], [0.06, 0.16, 0.46]);
-      p(CYL, mat('#111827'), [0.2, 0.96, 0], [0.08, 0.6, 0.08], [0, 0, Math.PI / 2]);
-      g.scale.setScalar(1.15);
-      break;
-    case 'recon':
-      p(BOX, mat('#1f2937'), [0, 0, 0], [0.5, 0.16, 0.34]);
-      p(BALL, mat('#ef4444'), [0.28, -0.02, 0], [0.14, 0.14, 0.14]);
-      for (const [x, z] of [[-0.35, -0.35], [0.35, -0.35], [-0.35, 0.35], [0.35, 0.35]]) {
-        p(BOX, mat('#374151'), [x * 0.6, 0.04, z * 0.6], [0.5, 0.05, 0.05], [0, Math.atan2(-z, x), 0]);
-        p(CYL, mat('#94a3b8'), [x, 0.12, z], [0.46, 0.02, 0.46]).name = 'rotor';
-      }
-      break;
-    case 'sniper':
-      soldier('#6b6444', '#57512f');
-      gun(1);
-      p(BOX, mat('#57512f'), [-0.12, 0.5, 0], [0.16, 0.6, 0.5]);
-      break;
-    case 'tanque':
-      for (const z of [-0.36, 0.36]) p(BOX, mat('#15181d'), [0, 0.2, z], [1.25, 0.34, 0.22]);
-      p(BOX, mat('#5b6b45'), [0, 0.44, 0], [1.15, 0.3, 0.7]);
-      p(BOX, mat('#4a5838'), [-0.05, 0.7, 0], [0.6, 0.26, 0.5]);
-      p(CYL, mat('#374151'), [0.6, 0.72, 0], [0.12, 0.95, 0.12], [0, 0, Math.PI / 2]);
-      g.scale.setScalar(1.2);
-      break;
-    case 'hacker':
-      soldier('#111827', '#0f172a', '#22c55e');
-      p(BOX, mat('#22c55e'), [0.3, 0.52, 0], [0.04, 0.22, 0.34]);
-      p(BOX, mat('#1f2937'), [0.22, 0.4, 0], [0.22, 0.04, 0.34]);
-      break;
-    case 'medico':
-      soldier('#f8fafc', '#f8fafc', '#38bdf8');
-      p(BOX, mat('#ef4444'), [0.18, 0.5, 0], [0.02, 0.06, 0.2]);
-      p(BOX, mat('#ef4444'), [0.18, 0.5, 0], [0.02, 0.2, 0.06]);
-      p(BOX, mat('#ef4444'), [-0.2, 0.5, 0], [0.14, 0.34, 0.32]);
-      break;
-    case 'foguete':
-      wheels([[-0.5, -0.34], [0, -0.34], [0.5, -0.34], [-0.5, 0.34], [0, 0.34], [0.5, 0.34]], 0.19);
-      p(BOX, mat('#56634a'), [0, 0.4, 0], [1.4, 0.24, 0.6]);
-      p(BOX, mat('#56634a'), [0.5, 0.66, 0], [0.4, 0.36, 0.58]);
-      p(BOX, mat('#60a5fa'), [0.71, 0.72, 0], [0.03, 0.18, 0.46]);
-      for (let i = 0; i < 2; i++) for (let k = 0; k < 3; k++) p(CYL, mat('#374151'), [-0.3, 0.76 + i * 0.2, -0.2 + k * 0.2], [0.16, 0.95, 0.16], [0, 0, Math.PI / 2 - 0.5]);
-      g.scale.setScalar(1.15);
-      break;
-    case 'heli':
-      p(BALL, mat('#2f3b2d'), [0.15, 0, 0], [1, 0.6, 0.6]);
-      p(BALL, mat('#60a5fa'), [0.4, 0.04, 0], [0.5, 0.42, 0.5]);
-      p(BOX, mat('#2f3b2d'), [-0.7, 0.08, 0], [1.1, 0.14, 0.14]);
-      p(BOX, mat('#2f3b2d'), [-1.2, 0.28, 0], [0.2, 0.44, 0.05]);
-      for (const z of [-0.4, 0.4]) p(CYL, mat('#111827'), [0.1, -0.16, z], [0.16, 0.6, 0.16], [0, 0, Math.PI / 2]);
-      p(CYL, mat('#111827'), [0.1, 0.38, 0], [0.06, 0.2, 0.06]);
-      p(BOX, mat('#1f2937'), [0.1, 0.48, 0], [2.5, 0.03, 0.14]).name = 'rotor';
-      g.scale.setScalar(1.25);
-      break;
-    case 'antitanque':
-      soldier('#5d5b3f', '#49482f');
-      p(CYL, mat('#374151'), [0.1, 0.66, 0.18], [0.14, 0.9, 0.14], [0, 0, Math.PI / 2]);
-      p(CONE, mat('#1f2937'), [0.6, 0.66, 0.18], [0.18, 0.2, 0.18], [0, 0, -Math.PI / 2]);
-      break;
-    case 'fpv':
-      p(BOX, mat('#111827'), [0, 0, 0], [0.3, 0.1, 0.2]);
-      p(CYL, mat('#b91c1c'), [0.1, -0.1, 0], [0.12, 0.4, 0.12], [0, 0, Math.PI / 2]);
-      for (const [x, z] of [[-0.22, -0.22], [0.22, -0.22], [-0.22, 0.22], [0.22, 0.22]]) p(CYL, mat('#94a3b8'), [x, 0.08, z], [0.28, 0.02, 0.28]);
-      break;
-    case 'artilharia':
-      for (const z of [-0.34, 0.34]) p(BOX, mat('#15181d'), [-0.1, 0.2, z], [1.2, 0.32, 0.2]);
-      p(BOX, mat('#56634a'), [-0.1, 0.42, 0], [1.15, 0.26, 0.66]);
-      p(BOX, mat('#4a563f'), [-0.3, 0.7, 0], [0.7, 0.34, 0.56]);
-      p(CYL, mat('#374151'), [0.55, 1, 0], [0.12, 1.5, 0.12], [0, 0, Math.PI / 2 - 0.45]);
-      g.scale.setScalar(1.15);
-      break;
-    case 'antiaerea':
-      wheels([[-0.4, -0.34], [0.4, -0.34], [-0.4, 0.34], [0.4, 0.34]], 0.19);
-      p(BOX, mat('#4b5563'), [0, 0.4, 0], [1.2, 0.26, 0.6]);
-      p(BOX, mat('#374151'), [-0.2, 0.66, 0], [0.4, 0.26, 0.4]);
-      for (const z of [-0.2, 0, 0.2]) p(CYL, mat('#e5e7eb'), [0, 0.92, z], [0.12, 0.9, 0.12], [0, 0, Math.PI / 2 - 0.8]);
-      p(BOX, mat('#60a5fa'), [0.6, 0.48, 0], [0.04, 0.14, 0.44]);
-      break;
-    case 'caca':
-      p(BOX, mat('#64748b'), [0, 0, 0], [1.7, 0.2, 0.26]);
-      p(CONE, mat('#475569'), [1.05, 0, 0], [0.26, 0.5, 0.2], [0, 0, -Math.PI / 2]);
-      p(BALL, mat('#1e3a5f'), [0.45, 0.12, 0], [0.5, 0.2, 0.18]);
-      p(BOX, mat('#56637a'), [-0.2, 0, 0], [0.7, 0.05, 1.7], [0, 0, 0]);
-      p(BOX, mat('#56637a'), [-0.75, 0, 0], [0.36, 0.05, 0.9]);
-      for (const z of [-0.16, 0.16]) p(BOX, mat('#475569'), [-0.7, 0.24, z], [0.36, 0.4, 0.05]);
-      p(CYL, mat('#f59e0b'), [-0.95, 0, 0], [0.2, 0.2, 0.2], [0, 0, Math.PI / 2]);
-      g.scale.setScalar(1.2);
-      break;
-  }
-  return g;
-}
-
 // ===== Texturas =====
 const texCache = new Map<string, THREE.Texture>();
 function canvasTexture(key: string, size: number, paint: (ctx: CanvasRenderingContext2D) => void) {
@@ -462,24 +329,6 @@ function canvasTexture(key: string, size: number, paint: (ctx: CanvasRenderingCo
   }
   return t;
 }
-/** Mancha que continua do outro lado da textura, sem emenda */
-function tiled(ctx: CanvasRenderingContext2D, size: number, x: number, y: number, r: number, color: string) {
-  for (const dx of [-size, 0, size]) {
-    for (const dy of [-size, 0, size]) {
-      const cx = x + dx;
-      const cy = y + dy;
-      if (cx + r < 0 || cy + r < 0 || cx - r > size || cy - r > size) continue;
-      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-      g.addColorStop(0, color);
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
-    }
-  }
-}
-const spots = (ctx: CanvasRenderingContext2D, size: number, n: number, r0: number, r1: number, a: string, b: string) => {
-  for (let i = 0; i < n; i++) tiled(ctx, size, Math.random() * size, Math.random() * size, r0 + Math.random() * (r1 - r0), i % 2 ? a : b);
-};
 /** Fachada com janelas; a mesma textura acende à noite */
 export const facade = () =>
   canvasTexture('facade', 128, (ctx) => {
@@ -489,13 +338,6 @@ export const facade = () =>
       ctx.fillStyle = Math.random() < 0.45 ? ['#ffdf9a', '#fff3d2', '#9ad8ff'][Math.floor(Math.random() * 3)] : '#05070a';
       ctx.fillRect(x, y, 9, 10);
     }
-  });
-/** Ruído claro para multiplicar a cor das regiões do mapa */
-export const relief = () =>
-  canvasTexture('relief', 512, (ctx) => {
-    ctx.fillStyle = '#fbf8f0';
-    ctx.fillRect(0, 0, 512, 512);
-    spots(ctx, 512, 1500, 4, 38, 'rgba(90,80,60,.13)', 'rgba(255,255,245,.25)');
   });
 export const fxTexture = (k: 'fire' | 'smoke' | 'glow') => {
   let t = texCache.get(k);
@@ -510,44 +352,11 @@ export const fxTexture = (k: 'fire' | 'smoke' | 'glow') => {
 
 export function makeRenderer(canvas: HTMLCanvasElement) {
   const r = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  r.setPixelRatio(Math.min(window.innerWidth < 700 ? 1.75 : 2, window.devicePixelRatio || 1));
   r.shadowMap.enabled = true;
   r.shadowMap.type = THREE.PCFShadowMap;
-  // Sombras só são refeitas quando algo muda de lugar
+  // Sombras só são refeitas de vez em quando
   r.shadowMap.autoUpdate = false;
   r.shadowMap.needsUpdate = true;
   r.toneMapping = THREE.ACESFilmicToneMapping;
-  r.toneMappingExposure = 1.3;
   return r;
-}
-/** Sol e luz do céu */
-export function light(scene: THREE.Scene, reach: number, sunColor = '#fff0d8', power = 2.6, night = false) {
-  scene.add(new THREE.HemisphereLight(night ? '#5f7fd6' : '#dcefff', night ? '#2a2440' : '#a89a7c', night ? 1.1 : 1.6));
-  const sun = new THREE.DirectionalLight(sunColor, power);
-  sun.position.set(-reach * 0.7, reach * 1.1, reach * 0.45);
-  sun.castShadow = true;
-  const res = window.innerWidth < 700 ? 1024 : 2048;
-  sun.shadow.mapSize.set(res, res);
-  const c = sun.shadow.camera;
-  c.left = c.bottom = -reach;
-  c.right = c.top = reach;
-  c.far = reach * 4;
-  sun.shadow.bias = -0.0008;
-  sun.shadow.normalBias = 0.03;
-  scene.add(sun);
-  return sun;
-}
-/** Baixa a resolução se o aparelho não acompanhar */
-export function autoQuality(r: THREE.WebGLRenderer) {
-  let slow = 0;
-  // Começa a contar depois de carregar, para não punir a primeira compilação
-  const start = performance.now() + 2500;
-  return (dt: number) => {
-    if (performance.now() < start) return;
-    slow = dt > 0.05 ? slow + 1 : Math.max(0, slow - 0.5);
-    if (slow < 25) return;
-    slow = 0;
-    const p = r.getPixelRatio();
-    if (p > 0.85) r.setPixelRatio(Math.max(0.85, p * 0.85));
-  };
 }

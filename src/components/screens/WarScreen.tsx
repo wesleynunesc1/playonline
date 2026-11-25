@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Share2, X } from 'lucide-react';
+import { ArrowLeft, Atom, Building2, Clock, Cloud, Coins, Fuel, Handshake, Home, LogOut, Menu as MenuIcon, MessageCircle, Microscope, Pause, Plane, Play, Radiation, Rocket, Satellite, Settings, Share2, Sparkles, SquareDashed, Target, Trophy, Users, Wrench, X, Zap } from 'lucide-react';
 import { useApp } from '../../ui';
 import { hooks } from '../../engine/state';
 import { myEmblem, myName, saveProfile } from '../../lan/match';
@@ -8,21 +8,29 @@ import { sound } from '../../utils/audio';
 import { formatNumber } from '../../utils/formatters';
 import { useWakeLock } from '../../hooks/useDevice';
 import {
-  CITIES, CITY, COLORS, EMBLEMS, EVENTS, LANDMARKS, MAX_PLAYERS, MEDALS, MINUTES, MODES, NUKES, PHRASES, POWERS, POWER_IDS, PowerId, QUESTS, RESEARCH, RULES, UNITS, UNIT_IDS, UnitId, WORKS, WORKS_IDS,
-  WorksId, bonusText, cityFuel, cityIncome, researchCost, slotsOf,
+  CITIES, CITY, COLORS, ERAS, MAX_DEV, REL, REL_COLOR, REL_NAME, UNIT_ERA, WORKS_ERA, annexCost, annexTime, devCost, EMBLEMS, EVENTS, LANDMARKS, MAX_PLAYERS, MEDALS, MINUTES, MODES, NUKES, PHRASES, POWERS, POWER_IDS, PowerId, QUESTS, RESEARCH, RULES, UNITS, UNIT_IDS, UnitId, WORKS, WORKS_IDS,
+  WorksId, bonusText, cityFuel, cityIncome, researchCost,
 } from '../../war/data';
-import { W, backToLobby, career, createSolo, createWar, enterWar, kickSeat, myHome, myPlayer, mySeat, order, quitWar, ready, sayPhrase, sendPing, setOptions, setSeat, startWar, toggleRule, total, touch, useWar } from '../../war/match';
-import { allied, armyCap, armySize, citiesOf, cityAt, incomeOf, irradiated, needOf, popOf, questValue, scoreOf, unitPrice, worksPrice } from '../../war/sim';
-import { World3D } from '../../war/world3d';
-import { BOUNDS } from '../../war/scenery';
+import { W, backToLobby, career, createSolo, createWar, enterWar, kickSeat, playReplay, stopReplay, myHome, myPlayer, mySeat, order, quitWar, ready, sayPhrase, sendPing, setOptions, setSeat, startWar, toggleRule, total, touch, useWar } from '../../war/match';
+import { allied, annexBlock, hostile, armyCap, armySize, citiesOf, cityAt, incomeOf, irradiated, needOf, popOf, questValue, relOf, slotsIn, tradesOf, scoreOf, unitPrice, worksPrice } from '../../war/sim';
+import { Quality, World3D, savedQuality } from '../../war/world3d';
+import { BOUNDS } from '../../war/terrain';
+import { thumbs } from '../../war/thumbs';
 import { HelpButton } from '../panels/HelpModal';
 import { Button } from '../common/Button';
 import { Action, Bar, Card } from '../common/Kit';
 import { Modal } from '../common/Modal';
 
+const Pic: React.FC<{ k: string; e: string; big?: boolean }> = ({ k, e, big }) => {
+  const src = thumbs()[k];
+  return src ? <img src={src} alt="" draggable={false} className={big ? 'war-pic big' : 'war-pic'} /> : <span className={big ? 'text-2xl' : ''}>{e}</span>;
+};
+const POWER_ICON: Record<PowerId, React.ReactNode> = {
+  barragem: <Target />, aereo: <Plane />, fumaca: <Cloud />, emp: <Zap />, paraquedas: <Users />, satelite: <Satellite />, reparo: <Wrench />, tatica: <Radiation />, balistico: <Rocket />, hidrogenio: <Atom />,
+};
 const nearest = (x: number, z: number) => CITIES.reduce((b, c) => (Math.hypot(c.x - x, c.z - z) < Math.hypot(b.x - x, b.z - z) ? c : b)).name;
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-const initial = { city: 0, sel: [] as number[], power: null as PowerId | null, rally: 0, box: false, menu: '' as '' | 'apoios' | 'pesquisa' | 'placar' | 'fala' | 'missoes' | 'mais' | 'sair' };
+const initial = { city: 0, sel: [] as number[], power: null as PowerId | null, rally: 0, box: false, menu: '' as '' | 'apoios' | 'pesquisa' | 'placar' | 'fala' | 'missoes' | 'mais' | 'sair' | 'diplomacia' | 'era' | 'video', strike: 0 };
 
 /** Guerra Ceará 2026: menu, sala e partida */
 export const WarScreen: React.FC = () => {
@@ -151,8 +159,10 @@ const Field: React.FC = () => {
       }
       if (u.sel.length) {
         const c = t.city && Math.hypot(t.city.x - t.x, t.city.z - t.z) < 0.7 ? t.city : null;
-        const foe = t.unit && !allied(g, t.unit.o, W.me) ? t.unit : null;
-        order({ c: 'move', u: u.sel, x: foe?.x ?? c?.x ?? t.x, z: foe?.z ?? c?.z ?? t.z });
+        const foe = t.unit && hostile(g, t.unit.o, W.me) ? t.unit : null;
+        // Cidade neutra: pergunta antes de atacar
+        if (c && !foe && cityAt(g, c.id).owner < 0) return patch({ strike: c.id });
+        order({ c: 'move', u: u.sel, x: foe?.x ?? c?.x ?? t.x, z: foe?.z ?? c?.z ?? t.z, hit: !!c });
         sound.playRecruit();
         return;
       }
@@ -164,7 +174,10 @@ const Field: React.FC = () => {
     };
   }, []);
   useEffect(() => {
-    if (phase !== 'play') return setUi(initial);
+    if (W.replay && W.best) world.current?.go(W.best.x, W.best.z, 10);
+  }, [W.replay]);
+  useEffect(() => {
+    if (phase !== 'play' || !W.world) return setUi(initial);
     const h = myHome();
     world.current?.go(h.x, h.z, 11);
   }, [phase]);
@@ -227,7 +240,7 @@ const Lobby: React.FC<{ goTo: (city: number) => void }> = ({ goTo }) => {
               <span className="text-slate-400">Robôs:</span>
               {[0, 1, 2, 3, 4, 5].filter((n) => W.seats.length + n <= MAX_PLAYERS && (!W.solo || n)).map((n) => <button key={n} disabled={!W.host} className={chip(W.bots === n)} onClick={() => setOptions({ bots: n })}>{n}</button>)}
             </div>
-            {W.bots > 0 && <div className="flex flex-wrap items-center gap-1.5"><span className="text-slate-400">Nível:</span>{['Fácil', 'Normal', 'Difícil'].map((t, i) => <button key={t} disabled={!W.host} className={chip(W.skill === i + 1)} onClick={() => setOptions({ skill: i + 1 })}>{t}</button>)}</div>}
+            {W.bots > 0 && <div className="flex flex-wrap items-center gap-1.5"><span className="text-slate-400">Rivais:</span>{['Pacíficos', 'Equilibrados', 'Agressivos'].map((t, i) => <button key={t} disabled={!W.host} className={chip(W.skill === i + 1)} onClick={() => setOptions({ skill: i + 1 })}>{t}</button>)}</div>}
             {!W.solo && <Button size="sm" variant="outline" fullWidth icon={<Share2 size={14} />} onClick={share}>Convidar (código {W.code})</Button>}
           </Card>
           <Card title="Modo e tempo">
@@ -236,7 +249,7 @@ const Lobby: React.FC<{ goTo: (city: number) => void }> = ({ goTo }) => {
                 <button key={m.id} disabled={!W.host} onClick={() => setOptions({ mode: m.id })} className={`text-left rounded-xl border p-2 ${W.mode === m.id ? 'border-amber-400 bg-amber-950/40' : 'border-slate-800 bg-slate-900/60'} ${!W.host && W.mode !== m.id ? 'hidden' : ''}`}><b>{m.icon} {m.name}</b><span className="block text-slate-300">{m.text}</span></button>
               ))}
             </div>
-            <div className="flex flex-wrap gap-1.5">{MINUTES.map((n) => <button key={n} disabled={!W.host} className={chip(W.minutes === n)} onClick={() => setOptions({ minutes: n })}>{n} min</button>)}</div>
+            <div className="flex flex-wrap gap-1.5">{MINUTES.map((n) => <button key={n} disabled={!W.host} className={chip(W.minutes === n)} onClick={() => setOptions({ minutes: n })}>{n ? `${n} min` : 'Sem limite'}</button>)}</div>
           </Card>
           <Card title={`Regras extras ${W.rules.length ? `(${W.rules.length})` : ''}`}>
             <div className="flex flex-wrap gap-1.5">
@@ -247,7 +260,7 @@ const Lobby: React.FC<{ goTo: (city: number) => void }> = ({ goTo }) => {
         </div>
         <div className="p-3 pt-2 shrink-0 border-t border-slate-800">
           {W.host
-            ? <Button size="lg" variant="gold" fullWidth disabled={!ready()} onClick={startWar}>{total() < 2 ? 'Esperando jogadores ou robôs' : ready() ? 'Começar a guerra!' : 'Esperando todos ficarem prontos'}</Button>
+            ? <Button size="lg" variant="gold" fullWidth disabled={!ready()} onClick={startWar}>{total() < 2 ? 'Esperando jogadores ou robôs' : ready() ? 'Começar!' : 'Esperando todos ficarem prontos'}</Button>
             : <Button size="lg" variant={me.ready ? 'secondary' : 'gold'} fullWidth onClick={() => setSeat({ ready: !me.ready })}>{me.ready ? 'Cancelar' : 'Estou pronto!'}</Button>}
         </div>
       </div>
@@ -268,7 +281,7 @@ const Battle: React.FC<BattleProps> = ({ ui, patch, w3 }) => {
   const ids = sel.map((u) => u.i);
   const attacked = mine.find((c) => c.hit > 0);
   const rank = [...w.players].sort((a, b) => Number(b.alive) - Number(a.alive) || scoreOf(w, b.i) - scoreOf(w, a.i));
-  const close = () => patch({ sel: [], city: 0, power: null, rally: 0, box: false, menu: '' });
+  const close = () => patch({ strike: 0, sel: [], city: 0, power: null, rally: 0, box: false, menu: '' });
   const hint = ui.power ? `${POWERS[ui.power].icon} Toque onde quer usar` : ui.rally ? 'Toque onde as tropas novas devem ir' : ui.box ? 'Arraste para desenhar a área' : '';
   const kinds = UNIT_IDS.map((k) => [k, sel.filter((u) => u.k === k)] as const).filter(([, l]) => l.length);
   const chatNow = W.chat.filter((b) => Date.now() - b.at < 5000);
@@ -283,26 +296,35 @@ const Battle: React.FC<BattleProps> = ({ ui, patch, w3 }) => {
     }
     done.current = me.quests.length;
   }, [me.quests.length]);
-  const panel = ui.city > 0 || (ui.menu && ui.menu !== 'sair');
+  const offers = w.offers.filter((o) => o.b === W.me);
+  const threats = w.ult.filter((u) => u.b === W.me);
+  const next = ERAS[me.era];
+  const canEra = !!next && mine.length >= next.cities && me.money >= next.money && me.fuel >= next.fuel;
+  const panel = ui.strike > 0 || ui.city > 0 || (ui.menu && ui.menu !== 'sair');
   return (
     <>
       <div className="war-hud">
         <div className="flex gap-1 items-center">
-          <span className="war-chip text-amber-200">💰 {formatNumber(me.money)} <i>+{Math.round(m)}</i></span>
-          <span className="war-chip text-orange-200">⛽ {formatNumber(me.fuel)} <i>+{Math.round(f)}</i></span>
-          <span className="war-chip">🪖 {army.length}/{armyCap(w, W.me)}</span>
-          <span className="war-chip">🏙️ {mine.length}</span>
-          <span className={`war-chip font-mono ${w.left < 60 ? 'text-rose-300' : ''}`}>⏱ {clock(w.left)}</span>
+          <button className={`war-chip ${canEra ? 'war-glow' : ''}`} onClick={() => patch({ menu: 'era', city: 0 })}>{ERAS[me.era - 1].icon} {me.era}</button>
+          <span className="war-chip text-amber-200"><Coins size={13} /> {formatNumber(me.money)} <i>+{Math.round(m)}</i></span>
+          <span className="war-chip text-orange-200"><Fuel size={13} /> {formatNumber(me.fuel)} <i>+{Math.round(f)}</i></span>
+          <span className="war-chip"><Users size={13} /> {army.length}/{armyCap(w, W.me)}</span>
+          <span className="war-chip"><Building2 size={13} /> {mine.length}</span>
+          <span className={`war-chip font-mono ${w.left < 60 ? 'text-rose-300' : ''}`}><Clock size={13} /> {clock(w.left > 1e6 ? w.t : w.left)}</span>
         </div>
         <div className="flex gap-1 items-center">
           {rank.map((p) => (
-            <button key={p.i} className={`war-chip ${p.alive ? '' : 'opacity-40 line-through'}`} style={{ borderColor: p.color }} onClick={() => patch({ menu: 'placar', city: 0 })}>{p.emblem} {p.i === W.me ? 'Você' : p.name.split(' ').pop()} <i>{w.mode === 'capital' ? `${scoreOf(w, p.i)}s` : formatNumber(scoreOf(w, p.i))}</i></button>
+            <button key={p.i} className={`war-chip ${p.alive ? '' : 'opacity-40 line-through'}`} style={{ borderColor: p.color }} onClick={() => patch({ menu: 'diplomacia', city: 0 })}>{p.i !== W.me && relOf(w, W.me, p.i) === REL.guerra ? '⚔️' : p.emblem} {p.i === W.me ? 'Você' : p.name.split(' ').pop()} <i>{w.mode === 'capital' ? `${scoreOf(w, p.i)}s` : formatNumber(scoreOf(w, p.i))}</i></button>
           ))}
           {w.event && <span className="war-chip text-sky-200">{EVENTS[w.event.i].icon} {EVENTS[w.event.i].name} <i>{Math.ceil(w.event.left)}s</i></span>}
         </div>
       </div>
       <div className="war-log" aria-live="polite">
-        {nukes.map((z, i) => <button key={i} className="war-nuke pointer-events-auto" onClick={() => w3?.go(z.x, z.z, 14)}>☢️ {POWERS[z.k].name} caindo em {nearest(z.x, z.z)} • {Math.max(0, Math.ceil(z.left - 0.5))}s • Ver</button>)}
+        {nukes.map((z, i) => <button key={i} className="war-nuke pointer-events-auto" onClick={() => { w3?.go(z.x, z.z, 18); w3?.chase(); }}>☢️ {POWERS[z.k].name} caindo em {nearest(z.x, z.z)} • {Math.max(0, Math.ceil(z.left - 0.5))}s • Ver</button>)}
+        {threats.map((u) => <button key={u.a} className="war-nuke pointer-events-auto" onClick={() => patch({ menu: 'diplomacia', city: 0 })}>⚔️ {w.players[u.a].name} vai declarar guerra em {Math.ceil(u.left)}s</button>)}
+        {offers.map((o) => (
+          <div key={o.a} className="war-offer pointer-events-auto"><span>{w.players[o.a].emblem} {w.players[o.a].name} propõe: <b>{REL_NAME[o.k]}</b></span><span className="flex gap-1.5"><button onClick={() => order({ c: 'answer', from: o.a, yes: true })}>Aceitar</button><button onClick={() => order({ c: 'answer', from: o.a, yes: false })}>Recusar</button></span></div>
+        ))}
         {quest && !nukes.length && <button className="pointer-events-auto text-amber-100" onClick={() => patch({ menu: 'missoes', city: 0 })}>{quest.icon} {quest.text} <b>{Math.min(quest.n, Math.floor(questValue(w, W.me, quest.stat)))}/{quest.n}</b></button>}
         {W.lost && <p className="!bg-rose-900/80">Conexão caiu. Reconectando...</p>}
         {W.paused && <p>⏸ Pausado</p>}
@@ -312,13 +334,15 @@ const Battle: React.FC<BattleProps> = ({ ui, patch, w3 }) => {
         {attacked && <button className="!bg-rose-800/90 pointer-events-auto animate-pulse" onClick={() => w3?.go(attacked.x, attacked.z, 10)}>⚠️ {CITY[attacked.id].name} sob ataque! Ver</button>}
       </div>
 
+      {W.replay && <div className="war-replay"><b>● REPLAY</b><button onClick={stopReplay}>Sair</button></div>}
       <MiniMap w3={w3} />
       <div className="war-left">
-        <Tool icon="🏠" name="Base" onClick={() => { const c = mine.find((x) => x.id === me.start) ?? mine[0]; if (c) w3?.go(c.x, c.z, 11); }} />
-        <Tool icon="⬚" name="Área" on={ui.box} onClick={() => patch({ box: !ui.box, power: null, rally: 0 })} />
-        <Tool icon="🪖" name="Todas" onClick={() => patch({ sel: army.map((u) => u.i), city: 0, menu: '' })} />
-        <Tool icon="🚀" name="Arsenal" on={ui.menu === 'apoios'} onClick={() => patch({ menu: ui.menu === 'apoios' ? '' : 'apoios', city: 0, power: null })} />
-        <Tool icon="☰" name="Mais" on={ui.menu === 'mais'} onClick={() => patch({ menu: ui.menu === 'mais' ? '' : 'mais', city: 0 })} />
+        <Tool icon={<Home size={19} />} name="Base" onClick={() => { const c = mine.find((x) => x.id === me.start) ?? mine[0]; if (c) w3?.go(c.x, c.z, 11); }} />
+        <Tool icon={<SquareDashed size={19} />} name="Área" on={ui.box} onClick={() => patch({ box: !ui.box, power: null, rally: 0 })} />
+        <Tool icon={<Users size={19} />} name="Todas" onClick={() => patch({ sel: army.map((u) => u.i), city: 0, menu: '' })} />
+        <Tool icon={<Rocket size={19} />} name="Arsenal" on={ui.menu === 'apoios'} onClick={() => patch({ menu: ui.menu === 'apoios' ? '' : 'apoios', city: 0, power: null })} />
+        <Tool icon={<Handshake size={19} />} name="Acordos" on={ui.menu === 'diplomacia'} onClick={() => patch({ menu: ui.menu === 'diplomacia' ? '' : 'diplomacia', city: 0 })} />
+        <Tool icon={<MenuIcon size={19} />} name="Mais" on={ui.menu === 'mais'} onClick={() => patch({ menu: ui.menu === 'mais' ? '' : 'mais', city: 0 })} />
       </div>
 
       {(hint || sel.length > 0) && !panel && (
@@ -327,7 +351,7 @@ const Battle: React.FC<BattleProps> = ({ ui, patch, w3 }) => {
             ? <p className="flex items-center justify-between gap-2 text-sm font-bold">{hint}<button onClick={close} aria-label="Cancelar" className="glass-btn w-11 h-11"><X size={18} /></button></p>
             : <>
               <div className="flex gap-1 overflow-x-auto no-scrollbar">
-                {kinds.map(([k, l]) => <button key={k} className="war-unit" title={`Só ${UNITS[k].name}`} onClick={() => patch({ sel: l.map((u) => u.i) })}>{UNITS[k].icon}<b>{l.length}</b><Bar value={l.reduce((s, u) => s + u.hp / u.max, 0) / l.length} color="bg-emerald-500" /></button>)}
+                {kinds.map(([k, l]) => <button key={k} className="war-unit" title={`Só ${UNITS[k].name}`} onClick={() => patch({ sel: l.map((u) => u.i) })}><Pic k={k} e={UNITS[k].icon} /><b>{l.length}</b><Bar value={l.reduce((s, u) => s + u.hp / u.max, 0) / l.length} color="bg-emerald-500" /></button>)}
               </div>
               <div className="flex gap-1.5">
                 <Button size="sm" variant="secondary" className="flex-1" onClick={() => order({ c: 'stop', u: ids })}>✋ Parar</Button>
@@ -343,12 +367,38 @@ const Battle: React.FC<BattleProps> = ({ ui, patch, w3 }) => {
         <div className="war-panel">
           <button onClick={close} aria-label="Fechar" className="absolute right-2 top-2 z-10 glass-btn w-10 h-10"><X size={18} /></button>
           {ui.city > 0 && <CityPanel id={ui.city} patch={patch} w3={w3} />}
+          {ui.strike > 0 && (
+            <>
+              <h3 className="font-bold pr-12">{CITY[ui.strike].name} é neutra</h3>
+              <p className="text-slate-300">Atacar toma a cidade à força e deixa ruínas. Por acordo ela entra inteira.</p>
+              <div className="grid grid-cols-3 gap-1.5">
+                <Button size="sm" variant="danger" onClick={() => { order({ c: 'move', u: ids, x: CITY[ui.strike].x, z: CITY[ui.strike].z, hit: true }); patch({ strike: 0 }); }}>Atacar</Button>
+                <Button size="sm" variant="secondary" onClick={() => { order({ c: 'move', u: ids, x: CITY[ui.strike].x, z: CITY[ui.strike].z }); patch({ strike: 0 }); }}>Só ir lá</Button>
+                <Button size="sm" variant="gold" onClick={() => patch({ city: ui.strike, strike: 0, sel: [] })}>Acordo</Button>
+              </div>
+            </>
+          )}
+          {ui.menu === 'diplomacia' && <Diplomacy />}
+          {ui.menu === 'era' && (
+            <>
+              <h3 className="font-bold pr-12">{ERAS[me.era - 1].icon} Era {me.era}: {ERAS[me.era - 1].name}</h3>
+              {ERAS.map((e, i) => <div key={e.name} className={`rounded-xl border p-2 ${i + 1 === me.era ? 'border-amber-400' : 'border-slate-700'} ${i + 1 < me.era ? 'opacity-50' : ''}`}><b>{e.icon} {i + 1}. {e.name}</b><span className="block text-slate-300">{e.text}</span>{i === me.era && <span className="block text-amber-200">Precisa: {e.cities} cidades ({mine.length}), {formatNumber(e.money)} de dinheiro, {formatNumber(e.fuel)} de combustível</span>}</div>)}
+              {next && <Button variant="gold" fullWidth disabled={!canEra} onClick={() => order({ c: 'era' })}>Avançar para {next.name}</Button>}
+            </>
+          )}
+          {ui.menu === 'video' && (
+            <>
+              <h3 className="font-bold pr-12">Qualidade da imagem</h3>
+              <div className="grid grid-cols-4 gap-1.5">{(['auto', 'baixa', 'media', 'alta'] as (Quality | 'auto')[]).map((q) => <Button key={q} size="sm" variant={savedQuality() === q ? 'gold' : 'secondary'} onClick={() => { w3?.setQuality(q); touch(); }}>{{ auto: 'Auto', baixa: 'Leve', media: 'Média', alta: 'Alta' }[q]}</Button>)}</div>
+              <p className="text-slate-300">Alta liga o brilho do fogo e a distorção de calor. Leve desliga as sombras. O chão fica nítido em todas.</p>
+            </>
+          )}
           {ui.menu === 'mais' && (
             <>
               <h3 className="font-bold pr-12">☰ Comando</h3>
               <div className="war-grid">
-                {([['pesquisa', '🔬', 'Pesquisa'], ['missoes', '🎯', 'Missões'], ['placar', '🏆', 'Placar'], ['fala', '💬', 'Falar'], ['sair', '🚪', 'Sair']] as const).map(([id, icon, name]) => <button key={id} className="war-item" onClick={() => patch({ menu: id })}><span className="text-2xl">{icon}</span><b>{name}</b></button>)}
-                {W.solo && <button className="war-item" onClick={() => { W.paused = !W.paused; touch(); close(); }}><span className="text-2xl">{W.paused ? '▶' : '⏸'}</span><b>{W.paused ? 'Continuar' : 'Pausar'}</b></button>}
+                {([['era', <Sparkles />, 'Era'], ['pesquisa', <Microscope />, 'Pesquisa'], ['missoes', <Target />, 'Missões'], ['placar', <Trophy />, 'Placar'], ['fala', <MessageCircle />, 'Falar'], ['video', <Settings />, 'Imagem'], ['sair', <LogOut />, 'Sair']] as ['era' | 'pesquisa' | 'missoes' | 'placar' | 'fala' | 'video' | 'sair', React.ReactNode, string][]).map(([id, icon, name]) => <button key={id} className="war-item" onClick={() => patch({ menu: id })}>{icon}<b>{name}</b></button>)}
+                {W.solo && <button className="war-item" onClick={() => { W.paused = !W.paused; touch(); close(); }}>{W.paused ? <Play /> : <Pause />}<b>{W.paused ? 'Continuar' : 'Pausar'}</b></button>}
               </div>
             </>
           )}
@@ -374,11 +424,11 @@ const Battle: React.FC<BattleProps> = ({ ui, patch, w3 }) => {
         <p className="text-sm text-slate-300">{W.solo ? 'A partida será encerrada.' : W.host ? 'Você criou a sala: se sair, a partida acaba para todos.' : 'Um robô vai comandar seu exército. Você pode voltar pela lista de salas.'}</p>
         <div className="grid grid-cols-2 gap-2"><Button variant="outline" onClick={() => patch({ menu: '' })}>Ficar</Button><Button variant="danger" onClick={quitWar}>Sair</Button></div>
       </Modal>
-      {w.over && <End />}
+      {w.over && !W.replay && <End />}
     </>
   );
 };
-const Tool: React.FC<{ icon: string; name: string; on?: boolean; onClick: () => void }> = ({ icon, name, on, onClick }) => (
+const Tool: React.FC<{ icon: React.ReactNode; name: string; on?: boolean; onClick: () => void }> = ({ icon, name, on, onClick }) => (
   <button className={`war-tool ${on ? 'on' : ''}`} onClick={() => { sound.playClick(); onClick(); }}><span>{icon}</span><small>{name}</small></button>
 );
 const Cost: React.FC<{ v: [number, number] }> = ({ v: [m, f] }) => {
@@ -394,8 +444,11 @@ const CityPanel: React.FC<{ id: number; patch: BattleProps['patch']; w3: World3D
   const own = s.owner === W.me;
   const [tab, setTab] = useState<'treinar' | 'construir' | 'obras'>('treinar');
   const [n, setN] = useState(1);
-  const slots = slotsOf(c.level) + (id === owner?.start ? 1 : 0);
-  const trainable = UNIT_IDS.filter((k) => s.works.some((x) => x.k === UNITS[k].from && x.left <= 0));
+  const slots = slotsIn(w, s);
+  const me = myPlayer();
+  const block = annexBlock(w, W.me, s);
+  const [am] = annexCost(c.level, citiesOf(w, W.me).length);
+  const trainable = UNIT_IDS.filter((k) => me.era >= UNIT_ERA[k] && s.works.some((x) => x.k === UNITS[k].from && x.left <= 0));
   return (
     <>
       <div className="pr-12">
@@ -405,16 +458,24 @@ const CityPanel: React.FC<{ id: number; patch: BattleProps['patch']; w3: World3D
         {LANDMARKS[id] && <p className="text-sky-200">{LANDMARKS[id].name}: {bonusText(LANDMARKS[id].bonus)}</p>}
       </div>
       <Bar value={s.hp / s.max} color={s.hp / s.max < 0.35 ? 'bg-rose-500' : 'bg-emerald-500'} />
-      {!own && <p className="text-slate-300">Defesa {Math.round((s.hp / s.max) * 100)}%. Escolha tropas e toque nesta cidade para atacar. Zere a defesa e deixe infantaria ou blindados no centro.</p>}
+      {s.ruin > 0.15 && <p className="text-orange-300">🏚️ {Math.round(s.ruin * 100)}% em ruínas. Reconstrói sozinha em paz.</p>}
+      {!own && !owner && (s.deal
+        ? <p className="text-sky-200">🤝 {w.players[s.deal.by].name} negocia: {Math.ceil(s.deal.left)}s</p>
+        : <Button variant="gold" fullWidth disabled={!!block || me.money < am} onClick={() => order({ c: 'annex', city: id })}>{block || `Trazer por acordo: ${am} (${annexTime(c.level)}s)`}</Button>)}
+      {!own && !owner && <p className="text-slate-300">Ou escolha tropas e toque na cidade para tomar à força: zere a defesa e deixe infantaria ou blindados no centro.</p>}
+      {!own && owner && <p className="text-slate-300">Vocês estão em <b style={{ color: REL_COLOR[relOf(w, W.me, s.owner)] }}>{REL_NAME[relOf(w, W.me, s.owner)]}</b>. Só dá para atacar em guerra.</p>}
+      {own && (s.devLeft > 0
+        ? <p className="text-emerald-300">🏗️ Evoluindo: {Math.ceil(s.devLeft)}s</p>
+        : s.dev < MAX_DEV && <Button variant="gold" size="sm" fullWidth disabled={me.era < s.dev + 1 || me.money < devCost(c.level, s.dev)[0] || me.fuel < devCost(c.level, s.dev)[1]} onClick={() => order({ c: 'dev', city: id })}>{me.era < s.dev + 1 ? `Evoluir (Era ${s.dev + 1})` : `Evoluir cidade ${s.dev}/${MAX_DEV}: ${devCost(c.level, s.dev).filter(Boolean).join(' + ')}`}</Button>)}
       {own && (
         <>
-          {s.q.length > 0 && <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">{s.q.map((q, i) => <span key={i} className="war-unit">{UNITS[q.u].icon}{i === 0 && <b>{Math.ceil(q.left)}s</b>}</span>)}<Button size="sm" variant="outline" onClick={() => order({ c: 'cancel', city: id })}>✕</Button></div>}
+          {s.q.length > 0 && <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">{s.q.map((q, i) => <span key={i} className="war-unit"><Pic k={q.u} e={UNITS[q.u].icon} />{i === 0 && <b>{Math.ceil(q.left)}s</b>}</span>)}<Button size="sm" variant="outline" onClick={() => order({ c: 'cancel', city: id })}>✕</Button></div>}
           <div className="grid grid-cols-3 gap-1">{(['treinar', 'construir', 'obras'] as const).map((t) => <button key={t} onClick={() => setTab(t)} className={`rounded-lg py-2 font-bold capitalize ${tab === t ? 'bg-amber-600' : 'bg-slate-800'}`}>{t === 'obras' ? `Obras ${s.works.length}/${slots}` : t}</button>)}</div>
           {tab === 'treinar' && (trainable.length === 0 ? <p className="text-amber-200">Construa um Quartel para treinar tropas aqui.</p> : (
             <>
               <div className="grid grid-cols-3 gap-1">{[[1, '1 por toque'], [5, '5 por toque'], [0, '♾️ Sem parar']].map(([v, t]) => <button key={v} onClick={() => setN(v as number)} className={`rounded-lg py-1.5 ${n === v ? 'bg-sky-700' : 'bg-slate-800'}`}>{t}</button>)}</div>
               <div className="war-grid">
-                {trainable.map((k: UnitId) => <button key={k} className="war-item" title={UNITS[k].text} onClick={() => order(n ? { c: 'train', city: id, k, n } : { c: 'loop', city: id, k })} data-on={s.loop === k}><span className="text-2xl">{UNITS[k].icon}</span><b>{UNITS[k].name}</b><small>{UNITS[k].text}</small><Cost v={unitPrice(w, W.me, k)} /></button>)}
+                {trainable.map((k: UnitId) => <button key={k} className="war-item" title={UNITS[k].text} onClick={() => order(n ? { c: 'train', city: id, k, n } : { c: 'loop', city: id, k })} data-on={s.loop === k}><Pic big k={k} e={UNITS[k].icon} /><b>{UNITS[k].name}</b><small>{UNITS[k].text}</small><Cost v={unitPrice(w, W.me, k)} /></button>)}
               </div>
               <div className="grid grid-cols-2 gap-1.5">
                 <Button size="sm" variant="secondary" onClick={() => patch({ rally: id, city: 0 })}>🚩 Ponto de encontro</Button>
@@ -424,10 +485,10 @@ const CityPanel: React.FC<{ id: number; patch: BattleProps['patch']; w3: World3D
           ))}
           {tab === 'construir' && (
             <div className="war-grid">
-              {WORKS_IDS.map((k: WorksId) => <button key={k} className="war-item" disabled={c.level < WORKS[k].level || s.works.length >= slots} onClick={() => order({ c: 'build', city: id, k })}><span className="text-2xl">{WORKS[k].icon}</span><b>{WORKS[k].name}</b><small>{c.level < WORKS[k].level ? `Só em cidade ${WORKS[k].level}★` : WORKS[k].text}</small><Cost v={worksPrice(w, W.me, k)} /></button>)}
+              {WORKS_IDS.map((k: WorksId) => <button key={k} className="war-item" disabled={c.level < WORKS[k].level || s.works.length >= slots || me.era < WORKS_ERA[k]} onClick={() => order({ c: 'build', city: id, k })}><Pic big k={`w-${k}`} e={WORKS[k].icon} /><b>{WORKS[k].name}</b><small>{me.era < WORKS_ERA[k] ? `Era ${WORKS_ERA[k]}` : c.level < WORKS[k].level ? `Só em cidade ${WORKS[k].level}★` : WORKS[k].text}</small><Cost v={worksPrice(w, W.me, k)} /></button>)}
             </div>
           )}
-          {tab === 'obras' && (s.works.length ? s.works.map((k, n) => <Action key={n} icon={WORKS[k.k].icon} title={WORKS[k.k].name} text={k.left > 0 ? `Em obras: ${Math.ceil(k.left)}s` : WORKS[k.k].text} button="Vender" disabled={k.k === 'comando'} onClick={() => order({ c: 'sell', city: id, n })} />) : <p className="text-slate-400">Nada construído.</p>)}
+          {tab === 'obras' && (s.works.length ? s.works.map((k, n) => <Action key={n} icon={<Pic big k={`w-${k.k}`} e={WORKS[k.k].icon} />} title={WORKS[k.k].name} text={k.left > 0 ? `Em obras: ${Math.ceil(k.left)}s` : WORKS[k.k].text} button="Vender" disabled={k.k === 'comando'} onClick={() => order({ c: 'sell', city: id, n })} />) : <p className="text-slate-400">Nada construído.</p>)}
         </>
       )}
       <Button size="sm" variant="outline" fullWidth onClick={() => w3?.go(c.x, c.z, 9)}>👁 Ver no mapa</Button>
@@ -441,7 +502,7 @@ const Supports: React.FC<{ patch: BattleProps['patch'] }> = ({ patch }) => {
   const item = (k: PowerId) => {
     const cool = p.cool[k] ?? 0;
     const need = needOf(w, W.me, k);
-    return <button key={k} className={`war-item ${NUKES[k] ? 'nuke' : ''}`} disabled={cool > 0 || !!need || p.money < POWERS[k].money} onClick={() => patch({ power: k, menu: '', sel: [] })}><span className="text-2xl">{POWERS[k].icon}</span><b>{POWERS[k].name}</b><small>{need || POWERS[k].text}</small>{cool > 0 ? <span className="text-sky-200">{Math.ceil(cool)}s</span> : <Cost v={[POWERS[k].money, 0]} />}</button>;
+    return <button key={k} className={`war-item ${NUKES[k] ? 'nuke' : ''}`} disabled={cool > 0 || !!need || p.money < POWERS[k].money} onClick={() => patch({ power: k, menu: '', sel: [] })}><span style={{ color: POWERS[k].color }}>{POWER_ICON[k]}</span><b>{POWERS[k].name}</b><small>{need || POWERS[k].text}</small>{cool > 0 ? <span className="text-sky-200">{Math.ceil(cool)}s</span> : <Cost v={[POWERS[k].money, 0]} />}</button>;
   };
   return (
     <>
@@ -504,6 +565,41 @@ const MiniMap: React.FC<{ w3: World3D | null }> = ({ w3 }) => {
       }} />
   );
 };
+const Diplomacy: React.FC = () => {
+  const w = W.world!;
+  const me = myPlayer();
+  const dip = (to: number, k: 'guerra' | 'paz' | 'comercio' | 'alianca' | 'romper', ask?: boolean) => {
+    order({ c: 'dip', to, k });
+    if (ask) hooks.toast('Proposta enviada.', 'info');
+  };
+  return (
+    <>
+      <h3 className="font-bold pr-12">Acordos</h3>
+      <p className="text-slate-300">Cada comércio ou aliança rende +8%. Agora: +{tradesOf(w, W.me) * 8}%. Aliados dividem a visão.</p>
+      {w.players.filter((p) => p.i !== W.me).map((p) => {
+        const r = relOf(w, W.me, p.i);
+        const ult = w.ult.find((u) => (u.a === p.i && u.b === W.me) || (u.b === p.i && u.a === W.me));
+        const sent = w.offers.some((o) => o.a === W.me && o.b === p.i);
+        return (
+          <div key={p.i} className={`rounded-xl border p-2 space-y-1.5 ${p.alive ? '' : 'opacity-40'}`} style={{ borderColor: p.color }}>
+            <p className="flex justify-between gap-2"><b>{p.emblem} {p.name}</b><b style={{ color: REL_COLOR[r] }}>{p.team === me.team ? 'Seu time' : ult ? `Guerra em ${Math.ceil(ult.left)}s` : REL_NAME[r]}</b></p>
+            <p className="text-slate-300">{ERAS[p.era - 1].icon} Era {p.era} • {citiesOf(w, p.i).length} cidades • {armySize(w, p.i)} tropas</p>
+            {p.alive && p.team !== me.team && (
+              <div className="grid grid-cols-2 gap-1.5">
+                {r === REL.guerra ? <Button size="sm" variant="primary" disabled={sent} onClick={() => dip(p.i, 'paz', true)}>{sent ? 'Esperando...' : 'Propor paz'}</Button>
+                  : r === REL.paz ? <Button size="sm" variant="primary" disabled={sent} onClick={() => dip(p.i, 'comercio', true)}>{sent ? 'Esperando...' : 'Propor comércio'}</Button>
+                    : r === REL.comercio ? <Button size="sm" variant="primary" disabled={sent} onClick={() => dip(p.i, 'alianca', true)}>{sent ? 'Esperando...' : 'Propor aliança'}</Button>
+                      : <Button size="sm" variant="outline" onClick={() => dip(p.i, 'romper')}>Romper aliança</Button>}
+                {r !== REL.guerra && r !== REL.alianca && <Button size="sm" variant="danger" disabled={!!ult} onClick={() => dip(p.i, 'guerra')}>Declarar guerra</Button>}
+                {r === REL.comercio && <Button size="sm" variant="outline" onClick={() => dip(p.i, 'romper')}>Romper comércio</Button>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+};
 const Research: React.FC = () => {
   const p = myPlayer();
   return (
@@ -548,6 +644,7 @@ const End: React.FC = () => {
         return <div key={i} className="podium flex items-center gap-2 text-sm rounded-xl border p-2" style={{ borderColor: p.color, animationDelay: `${n * 0.1}s` }}><b className="w-6">{n + 1}º</b><span className="flex-1 truncate">{p.emblem} {p.name}{i === W.me && ' (você)'}</span><span className="text-slate-300 text-xs">🏙️ {citiesOf(w, i).length} • 💀 {Math.round(p.stats.kills ?? 0)}</span></div>;
       })}
       <div className="grid grid-cols-2 gap-1.5 text-xs">{medals.map((m) => <p key={m.name} className="rounded-lg bg-slate-800/70 p-2">{m.icon} <b>{m.name}</b><span className="block text-slate-300 truncate">{m.who.name}: {formatNumber(m.n)}</span></p>)}</div>
+      {W.best && <Button variant="primary" fullWidth icon={<Play size={16} />} onClick={playReplay}>Ver a maior batalha</Button>}
       {W.host ? <Button variant="gold" size="lg" fullWidth onClick={backToLobby}>Jogar de novo</Button> : <p className="text-center text-slate-300 text-sm">Esperando quem criou a sala...</p>}
       <Button variant="outline" fullWidth onClick={quitWar}>Sair</Button>
     </Modal>

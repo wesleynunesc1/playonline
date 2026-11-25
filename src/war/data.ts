@@ -187,14 +187,17 @@ export const EVENTS: { name: string; icon: string; text: string; seconds: number
 // ===== 5 modos e 12 regras =====
 export type ModeId = 'dominio' | 'total' | 'capital' | 'equipes' | 'coop';
 export const MODES: { id: ModeId; name: string; icon: string; text: string }[] = [
-  { id: 'dominio', name: 'Domínio', icon: '🗺️', text: 'Quem controlar mais população no fim vence.' },
+  { id: 'dominio', name: 'Mundo Aberto', icon: '🌎', text: 'Cresça, faça acordos ou conquiste. No fim, conta a população governada.' },
   { id: 'total', name: 'Guerra Total', icon: '💀', text: 'Vence o último de pé.' },
   { id: 'capital', name: 'Corrida a Fortaleza', icon: '🏙️', text: 'Segure Fortaleza por 3 minutos somados.' },
   { id: 'equipes', name: 'Equipes', icon: '🤝', text: 'Times alternados somam população.' },
   { id: 'coop', name: 'Contra a Máquina', icon: '🤖', text: 'Humanos juntos contra os robôs.' },
 ];
-export const MINUTES = [10, 15, 25, 40];
+/** 0 = sem limite */
+export const MINUTES = [15, 25, 40, 60, 0];
 export const RULES: { id: string; name: string; icon: string; text: string }[] = [
+  { id: 'guerra', name: 'Já começa em guerra', icon: '⚔️', text: 'Todos inimigos desde o início' },
+  { id: 'avancado', name: 'Começar avançado', icon: '🏭', text: 'Todos começam na Era 3' },
   { id: 'rico', name: 'Muito dinheiro', icon: '💰', text: 'Começa com 5 vezes mais' },
   { id: 'turbo', name: 'Turbo', icon: '⏩', text: 'Treino e obras 2x mais rápidos' },
   { id: 'veloz', name: 'Guerra-relâmpago', icon: '⚡', text: 'Tropas 50% mais velozes' },
@@ -210,27 +213,56 @@ export const RULES: { id: string; name: string; icon: string; text: string }[] =
   { id: 'exercito', name: 'Exército pronto', icon: '🪖', text: 'Começa com tropas extras' },
 ];
 
-// ===== 12 missões: guiam a partida e dão recursos =====
-export const QUESTS: { id: string; icon: string; text: string; stat: Stat | 'cities' | 'army'; n: number; money: number; fuel: number }[] = [
-  { id: 'tropa', icon: '🪖', text: 'Treine 3 tropas', stat: 'trained', n: 3, money: 150, fuel: 50 },
+// ===== 14 missões: do vilarejo à potência, sem pressa =====
+export const QUESTS: { id: string; icon: string; text: string; stat: Stat | 'cities' | 'army' | 'era' | 'trades'; n: number; money: number; fuel: number }[] = [
   { id: 'obra', icon: '🏗️', text: 'Faça 2 construções', stat: 'built', n: 2, money: 200, fuel: 60 },
-  { id: 'cidade1', icon: '🚩', text: 'Tome sua primeira cidade', stat: 'caps', n: 1, money: 250, fuel: 80 },
-  { id: 'exercito', icon: '🎖️', text: 'Tenha 15 tropas', stat: 'army', n: 15, money: 300, fuel: 120 },
-  { id: 'cidade5', icon: '🏙️', text: 'Controle 5 cidades', stat: 'cities', n: 5, money: 400, fuel: 150 },
-  { id: 'abate', icon: '🎯', text: 'Destrua 10 inimigos', stat: 'kills', n: 10, money: 400, fuel: 150 },
-  { id: 'pesquisa', icon: '🔬', text: 'Faça 3 pesquisas', stat: 'research', n: 3, money: 500, fuel: 150 },
-  { id: 'apoio', icon: '💥', text: 'Use 3 apoios', stat: 'powers', n: 3, money: 500, fuel: 200 },
-  { id: 'cidade12', icon: '🗺️', text: 'Controle 12 cidades', stat: 'cities', n: 12, money: 800, fuel: 300 },
-  { id: 'drone', icon: '🛩️', text: 'Acerte 5 drones FPV', stat: 'drones', n: 5, money: 600, fuel: 200 },
-  { id: 'nuclear', icon: '☢️', text: 'Lance uma arma nuclear', stat: 'nukes', n: 1, money: 1000, fuel: 300 },
-  { id: 'cidade30', icon: '👑', text: 'Controle 30 cidades', stat: 'cities', n: 30, money: 2000, fuel: 800 },
+  { id: 'evoluir', icon: '🌆', text: 'Evolua uma cidade', stat: 'dev', n: 1, money: 250, fuel: 60 },
+  { id: 'anexar', icon: '🤝', text: 'Traga uma cidade vizinha por acordo', stat: 'annex', n: 1, money: 300, fuel: 80 },
+  { id: 'era2', icon: '🏙️', text: 'Chegue à Era 2', stat: 'era', n: 2, money: 400, fuel: 150 },
+  { id: 'comercio', icon: '📦', text: 'Feche um acordo de comércio', stat: 'trades', n: 1, money: 400, fuel: 100 },
+  { id: 'tropa', icon: '🪖', text: 'Tenha 10 tropas para se proteger', stat: 'army', n: 10, money: 400, fuel: 150 },
+  { id: 'cidade5', icon: '🗺️', text: 'Governe 5 cidades', stat: 'cities', n: 5, money: 500, fuel: 150 },
+  { id: 'pesquisa', icon: '🔬', text: 'Faça 3 pesquisas', stat: 'research', n: 3, money: 600, fuel: 200 },
+  { id: 'era3', icon: '🏭', text: 'Chegue à Era 3', stat: 'era', n: 3, money: 800, fuel: 300 },
+  { id: 'evoluir6', icon: '🌃', text: 'Evolua cidades 6 vezes', stat: 'dev', n: 6, money: 900, fuel: 300 },
+  { id: 'cidade12', icon: '👑', text: 'Governe 12 cidades', stat: 'cities', n: 12, money: 1200, fuel: 400 },
+  { id: 'era4', icon: '🛰️', text: 'Chegue à Era 4', stat: 'era', n: 4, money: 1500, fuel: 600 },
+  { id: 'era5', icon: '☢️', text: 'Chegue à Era 5', stat: 'era', n: 5, money: 2500, fuel: 1000 },
+  { id: 'cidade30', icon: '🏆', text: 'Governe 30 cidades', stat: 'cities', n: 30, money: 4000, fuel: 1500 },
 ];
+// ===== 5 eras =====
+export const ERAS: { name: string; icon: string; money: number; fuel: number; cities: number; text: string }[] = [
+  { name: 'Vilarejo', icon: '🏡', money: 0, fuel: 0, cities: 0, text: 'Comércio, combustível e guardas.' },
+  { name: 'Cidade', icon: '🏙️', money: 1200, fuel: 200, cities: 2, text: 'Indústria, hospital e blindados.' },
+  { name: 'Indústria', icon: '🏭', money: 4000, fuel: 800, cities: 4, text: 'Tanques, drones, artilharia e apoios.' },
+  { name: 'Potência', icon: '🛰️', money: 12000, fuel: 2500, cities: 8, text: 'Aviação, foguetes e antimíssil.' },
+  { name: 'Era Atômica', icon: '☢️', money: 30000, fuel: 7000, cities: 14, text: 'Silos e armas nucleares.' },
+];
+export const UNIT_ERA: Record<UnitId, number> = { soldado: 1, moto: 1, sniper: 2, medico: 2, antitanque: 2, blindado: 2, tanque: 3, artilharia: 3, antiaerea: 3, hacker: 3, fpv: 3, recon: 2, foguete: 4, heli: 4, caca: 4 };
+export const WORKS_ERA: Record<WorksId, number> = {
+  comando: 1, mercado: 1, refinaria: 1, quartel: 1, vigia: 1, torre: 1, solar: 2, banco: 2, hospital: 2, fabrica: 2, drones: 2, radar: 2, shopping: 3, eolica: 3, antiaerea: 3, obuseiro: 3, gerador: 3, aeroporto: 4, domo: 4, silo: 5,
+};
+export const POWER_ERA: Record<PowerId, number> = { satelite: 2, reparo: 2, fumaca: 2, barragem: 3, paraquedas: 3, emp: 3, aereo: 4, tatica: 5, balistico: 5, hidrogenio: 5 };
+/** Melhorias de uma cidade: cresce, rende mais e ganha espaço */
+export const MAX_DEV = 3;
+export const devCost = (level: number, dev: number): [number, number] => [Math.round((180 + level * 60) * (dev + 1)), dev * 80];
+export const DEV_S = 14;
+/** Cada cidade a mais deixa o próximo acordo mais caro */
+export const annexCost = (level: number, cities: number): [number, number] => [Math.round(180 * level ** 1.35 * (1 + cities * 0.12)), 0];
+export const annexTime = (level: number) => 12 + level * 4;
+export const ANNEX_REACH = 7;
+// ===== Diplomacia =====
+export const REL = { paz: 0, guerra: 1, comercio: 2, alianca: 3 } as const;
+export const REL_NAME = ['🕊️ Paz', '⚔️ Guerra', '📦 Comércio', '🤝 Aliança'];
+export const REL_COLOR = ['#94a3b8', '#ef4444', '#38bdf8', '#4ade80'];
+/** Segundos entre o ultimato e a guerra */
+export const ULTIMATUM_S = 30;
 /** Veteranos: abates para ganhar cada estrela; cada uma dá +12% de dano e vida */
 export const STARS = [3, 8, 16];
 export const STAR_BONUS = 0.12;
 
 // ===== 15 medalhas =====
-export type Stat = 'kills' | 'lost' | 'caps' | 'lostCities' | 'built' | 'trained' | 'spent' | 'powers' | 'tanks' | 'air' | 'drones' | 'research' | 'damage' | 'earned' | 'nukes';
+export type Stat = 'kills' | 'lost' | 'caps' | 'lostCities' | 'built' | 'trained' | 'spent' | 'powers' | 'tanks' | 'air' | 'drones' | 'research' | 'damage' | 'earned' | 'nukes' | 'dev' | 'annex';
 export const MEDALS: { name: string; icon: string; stat: Stat }[] = [
   { name: 'Ás do Combate', icon: '🎖️', stat: 'kills' }, { name: 'Libertador', icon: '🚩', stat: 'caps' }, { name: 'Construtor', icon: '🏗️', stat: 'built' },
   { name: 'Recrutador', icon: '🪖', stat: 'trained' }, { name: 'Gastador', icon: '💸', stat: 'spent' }, { name: 'Chuva de Fogo', icon: '💥', stat: 'powers' },

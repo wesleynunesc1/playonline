@@ -62,6 +62,8 @@ const WarMods: React.FC = () => {
   /** Lança de graça, sem esperar */
   const launch = (k: PowerId, x: number, z: number) => act(() => {
     const before = mods.get(W.me);
+    // Alvo em paz: entra em guerra na hora
+    if (foe) w.rel[W.me * w.players.length + foe.i] = w.rel[foe.i * w.players.length + W.me] = 1;
     mods.set(W.me, { ...before, free: 1 });
     p.cool[k] = 0;
     order({ c: 'power', k, x, z });
@@ -80,6 +82,7 @@ const WarMods: React.FC = () => {
             <Btn onClick={act(() => { p.money += 10000; })}>💰 +10 mil</Btn>
             <Btn onClick={act(() => { p.fuel += 5000; })}>⛽ +5 mil</Btn>
             <Btn onClick={act(() => { for (const r of RESEARCH) p.res[r.id] = 3; })}>🔬 Toda a pesquisa</Btn>
+            <Btn onClick={act(() => { p.era = 5; })}>☢️ Ir para a Era 5</Btn>
             <Btn onClick={act(() => { for (const k of POWER_IDS) p.cool[k] = 0; })}>💥 Apoios prontos</Btn>
           </Grid>
         </>
@@ -89,7 +92,7 @@ const WarMods: React.FC = () => {
           <p className="mod-title">Alvo: {foe ? `${foe.emblem} ${foe.name}` : 'nenhum'}</p>
           <Grid>
             {foe && (Object.keys(NUKES) as PowerId[]).map((k) => { const c = citiesOf(w, foe.i)[0]; return c && <Btn key={k} onClick={launch(k, c.x, c.z)}>{POWERS[k].icon} {POWERS[k].name}</Btn>; })}
-            <Btn onClick={act(() => { for (const f of foes) { const c = citiesOf(w, f.i)[0]; if (c) launch('balistico', c.x, c.z)(); } })}>🌋 Apocalipse: um míssil em cada rival</Btn>
+            <Btn onClick={act(() => { for (const f of foes) { const c = citiesOf(w, f.i)[0]; w.rel[W.me * w.players.length + f.i] = w.rel[f.i * w.players.length + W.me] = 1; if (c) launch('balistico', c.x, c.z)(); } })}>🌋 Apocalipse: um míssil em cada rival</Btn>
             <Btn onClick={act(() => { w.rads = []; })}>🧹 Limpar radiação</Btn>
             <Btn onClick={act(() => { w.zones = w.zones.filter((z) => !NUKES[z.k] || z.o === W.me); })}>🔰 Derrubar mísseis inimigos</Btn>
             <Btn onClick={act(() => { for (const c of own) if (!c.works.some((k) => k.k === 'domo')) c.works.push({ k: 'domo', left: 0, cool: 0 }); })}>🔰 Domo em todas as cidades</Btn>
@@ -111,6 +114,7 @@ const WarMods: React.FC = () => {
       {tab === 'cidades' && (
         <>
           <Grid>
+            <Btn onClick={act(() => { for (const c of own) Object.assign(c, { dev: 3, devLeft: 0, ruin: 0 }); })}>🌃 Evoluir todas ao máximo</Btn>
             <Btn onClick={act(() => { for (const c of own) c.hp = c.max; })}>❤️ Reparar minhas</Btn>
             <Btn onClick={act(() => { for (const c of own) for (const k of c.works) k.left = 0; })}>🏗️ Terminar obras</Btn>
             <Btn onClick={act(() => { for (const c of w.cities) if (c.owner < 0) c.hp = 1; })}>🏚️ Neutras fracas</Btn>
@@ -126,6 +130,7 @@ const WarMods: React.FC = () => {
         <>
           <select value={foe.i} onChange={(e) => setRival(Number(e.target.value))} aria-label="Rival" className="mod-select">{foes.map((f) => <option key={f.i} value={f.i}>{f.emblem} {f.name}{f.alive ? '' : ' (eliminado)'}</option>)}</select>
           <Grid>
+            <Btn onClick={act(() => { w.rel = w.rel.map((r) => (r === 1 ? 0 : r)); w.ult = []; })}>🕊️ Paz mundial</Btn>
             <Btn on={W.frozen} onClick={act(() => { W.frozen = !W.frozen; })}>🧊 Parar todos os robôs</Btn>
             <Btn onClick={act(() => { for (const u of w.units) if (u.o === foe.i) u.off = 30; })}>📴 Desligar tropas 30s</Btn>
             <Btn onClick={act(() => Object.assign(foe, { money: 0, fuel: 0 }))}>📉 Quebrar economia</Btn>

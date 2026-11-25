@@ -1,17 +1,33 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { sound } from '../utils/audio';
-import { CAPTURE_S, CITIES, CITY, City, NUKES, POWERS, PowerId, UNITS, UNIT_IDS, UnitId, WORKS_IDS, WorksId } from './data';
+import { CAPTURE_S, CITIES, CITY, City, EVENTS, NUKES, POWERS, PowerId, UNITS, UNIT_IDS, UnitId, WORKS_IDS, WorksId } from './data';
 import { W, fxQueue } from './match';
 import { Fx, Unit, World, allied, eyes, hasRule, mods } from './sim';
-import { BAKED, autoQuality, fxTexture, light, makeRenderer, mat, unitGeometry, worksParts } from './models';
-import { BOUNDS, H, PHONE, Scenery, spread } from './scenery';
+import { fxTexture, makeRenderer, mat, worksParts } from './models';
+import { Post } from './post';
+import { Scenery, Sky, U } from './scenery';
+import { BOUNDS, PHONE, Y, spread } from './terrain';
+import { UNIT_TIME, unitGeometry, unitMaterial } from './units';
 
 /** Mundo aberto em 3D: terreno, cidades, tropas, efeitos e visão. Lê o estado da partida a cada quadro. */
 export interface Tap { x: number; z: number; unit: Unit | null; city: City | null }
-interface Shown { x: number; z: number; dir: number; seen: boolean }
+interface Shown { x: number; z: number; dir: number; hull: number; step: number; kick: number; bank: number; seen: boolean }
+export type Quality = 'baixa' | 'media' | 'alta';
+const GFX = 'PLAY_ONLINE_GFX';
+export const savedQuality = (): Quality | 'auto' => {
+  try {
+    const q = localStorage.getItem(GFX);
+    return q === 'baixa' || q === 'media' || q === 'alta' ? q : 'auto';
+  } catch {
+    return 'auto';
+  }
+};
+const DAY_S = 420;
 interface Shell { k: 'bala' | 'canhao' | 'missil'; x1: number; y1: number; z1: number; x2: number; y2: number; z2: number; t: number; dur: number }
 interface Part { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; max: number; s0: number; s1: number; r: number; g: number; b: number; a: number }
+const TURRET: UnitId[] = ['tanque', 'artilharia', 'foguete', 'antiaerea', 'blindado'];
 interface Later { at: number; run: () => void }
 
 const BY_POP = CITIES.map((_, i) => i).sort((a, b) => CITIES[b].pop - CITIES[a].pop);
@@ -40,7 +56,7 @@ class Particles {
       uniforms: { map: { value: tex }, scale: { value: 600 } }, transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
       vertexShader: 'attribute vec4 tint; attribute float size; uniform float scale; varying vec4 c; void main(){ c=tint; vec4 m=modelViewMatrix*vec4(position,1.); gl_PointSize=min(700.,size*scale/-m.z); gl_Position=projectionMatrix*m; }',
       // A fumaça usa só o desenho da textura; a cor vem da partícula
-      fragmentShader: `uniform sampler2D map; varying vec4 c; void main(){ vec4 t=texture2D(map,gl_PointCoord); gl_FragColor=vec4(${additive ? 't.rgb*c.rgb' : 'c.rgb*(.75+.7*t.r)'},t.a*c.a); if(gl_FragColor.a<.01) discard; }`,
+      fragmentShader: `uniform sampler2D map; varying vec4 c; void main(){ vec4 t=texture2D(map,gl_PointCoord); gl_FragColor=vec4(${additive ? 't.rgb*c.rgb*1.5' : 'c.rgb*(.75+.7*t.r)'},t.a*c.a); if(gl_FragColor.a<.01) discard; }`,
     }));
     this.points.frustumCulled = false;
     this.points.renderOrder = 4;
@@ -55,7 +71,7 @@ class Particles {
     this.list.forEach((p, i) => {
       const k = 1 - p.life / p.max;
       p.x += p.vx * dt;
-      p.y = Math.max(H, p.y + p.vy * dt);
+      p.y = Math.max(Y(p.x, p.z), p.y + p.vy * dt);
       p.z += p.vz * dt;
       p.vx *= 1 - dt * 1.5;
       p.vz *= 1 - dt * 1.5;
@@ -99,15 +115,26 @@ export class World3D {
   private rings: { m: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>; t: number; dur: number; r: number }[] = [];
   private fogCtx!: CanvasRenderingContext2D;
   private fogTex!: THREE.CanvasTexture;
-  private fogMesh!: THREE.Mesh;
   private seeing: [number, number, number][] = [];
   private fogAt = 0;
   private goal: THREE.Vector3 | null = null;
   private shake = 0;
+  private hemi: THREE.HemisphereLight;
+  private post: Post | null = null;
+  private auto = true;
+  private level: Quality = 'media';
+  private slow = 0;
+  private born = 0;
+  private bolt = 0;
+  private sunDir = new THREE.Vector3(0, 1, 0);
+  private follow: THREE.Object3D | null = null;
+  private wrecks: THREE.Mesh[] = [];
+  private burnt = new THREE.MeshStandardMaterial({ color: '#1d1a17', roughness: 1 });
+  private flags!: { pole: THREE.InstancedMesh; cloth: THREE.InstancedMesh; sig: string };
+  private cranes!: THREE.InstancedMesh;
   private heard = 0;
   private scenery: Scenery;
   private flashes: THREE.PointLight[] = [];
-  private rotors!: THREE.InstancedMesh;
   private hot = new Map<string, THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>>();
   selected = new Set<number>();
   focus = 0;
@@ -123,15 +150,18 @@ export class World3D {
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = makeRenderer(canvas);
-    this.renderer.toneMappingExposure = 1.15;
-    const sky = new THREE.Color('#cfd3cc');
-    this.scene.background = sky;
-    this.scene.fog = new THREE.Fog(sky, 60, 175);
-    this.sun = light(this.scene, 42, '#ffe2b8', 2.9);
-    this.scene.add(this.sun.target);
+    this.renderer.toneMappingExposure = 1.05;
+    this.scene.fog = new THREE.Fog('#cfd3cc', 70, 190);
+    this.hemi = new THREE.HemisphereLight('#dcefff', '#8a7a5c', 1);
+    this.sun = new THREE.DirectionalLight('#fff0d8', 3);
+    this.sun.castShadow = true;
+    this.sun.shadow.camera.far = 200;
+    this.sun.shadow.bias = -0.0006;
+    this.sun.shadow.normalBias = 0.02;
+    this.scene.add(this.hemi, this.sun, this.sun.target);
     this.camera.position.set(0, 74, 42);
     this.controls = new MapControls(this.camera, canvas);
-    Object.assign(this.controls, { enableDamping: true, dampingFactor: 0.14, minDistance: 2.6, maxDistance: 90, maxPolarAngle: 1.22, zoomToCursor: true });
+    Object.assign(this.controls, { enableDamping: true, dampingFactor: 0.14, minDistance: 1.8, maxDistance: 90, maxPolarAngle: 1.32, zoomToCursor: true });
     this.scenery = new Scenery(this.scene);
     for (let i = 0; i < 2; i++) {
       const l = new THREE.PointLight('#ffb45a', 0, 9, 1.6);
@@ -144,19 +174,20 @@ export class World3D {
     this.aimRing.visible = false;
     this.scene.add(this.aimRing, this.fire.points, this.smoke.points);
     this.input();
-    const quality = autoQuality(this.renderer);
+    this.setQuality(savedQuality());
     let last = performance.now();
     let n = 0;
     const frame = (now: number) => {
       this.raf = requestAnimationFrame(frame);
       const dt = Math.min(0.1, (now - last) / 1000);
-      quality((now - last) / 1000);
+      this.watch((now - last) / 1000, now);
       last = now;
       this.resize();
       this.move(dt);
       this.draw(dt, now);
       if (++n % 3 === 0) this.renderer.shadowMap.needsUpdate = true;
-      this.renderer.render(this.scene, this.camera);
+      if (this.post) this.post.render(dt);
+      else this.renderer.render(this.scene, this.camera);
     };
     this.raf = requestAnimationFrame(frame);
   }
@@ -165,7 +196,37 @@ export class World3D {
     this.controls.dispose();
     this.labels.forEach((l) => l.sprite.material.map?.dispose());
     this.scene.traverse((o) => { if (o instanceof THREE.Mesh || o instanceof THREE.Points) o.geometry.dispose(); });
+    this.post?.dispose();
     this.renderer.dispose();
+  }
+  /** Nível de qualidade. No automático começa pelo aparelho e desce se travar; a nitidez não é reduzida */
+  setQuality(q: Quality | 'auto') {
+    this.auto = q === 'auto';
+    this.apply(q === 'auto' ? (PHONE ? 'media' : 'alta') : q);
+    try {
+      localStorage.setItem(GFX, q);
+    } catch { /* armazenamento indisponível */ }
+  }
+  private apply(q: Quality) {
+    this.level = q;
+    this.slow = 0;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q === 'baixa' ? 1.5 : q === 'media' ? 2 : 2.5));
+    this.sun.castShadow = q !== 'baixa';
+    const size = q === 'alta' ? 2048 : 1024;
+    if (this.sun.shadow.mapSize.x !== size) {
+      this.sun.shadow.mapSize.set(size, size);
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+    }
+    this.post?.dispose();
+    this.post = q === 'alta' ? new Post(this.renderer, this.scene, this.camera) : null;
+    this.renderer.setSize(1, 1, false);
+  }
+  private watch(dt: number, now: number) {
+    if (!this.born) this.born = now;
+    if (!this.auto || now - this.born < 4000 || dt > 0.4) return;
+    this.slow = dt > 0.042 ? this.slow + 1 : Math.max(0, this.slow - 0.6);
+    if (this.slow > 50 && this.level !== 'baixa') this.apply(this.level === 'alta' ? 'media' : 'baixa');
   }
   private resize() {
     const w = this.canvas.clientWidth;
@@ -173,6 +234,7 @@ export class World3D {
     const s = this.renderer.getSize(new THREE.Vector2());
     if (!w || !h || (s.x === w && s.y === h)) return;
     this.renderer.setSize(w, h, false);
+    this.post?.resize(w, h);
     this.camera.aspect = w / h;
     this.camera.fov = w < h ? 56 : 42;
     this.camera.updateProjectionMatrix();
@@ -189,9 +251,20 @@ export class World3D {
     }
     const t = this.controls.target;
     const before = t.clone();
-    t.set(THREE.MathUtils.clamp(t.x, BOUNDS.x0, BOUNDS.x1), H, THREE.MathUtils.clamp(t.z, BOUNDS.z0, BOUNDS.z1));
-    this.camera.position.add(t.clone().sub(before).setY(0));
+    if (this.follow) {
+      // Câmera acompanha o míssil até o impacto
+      t.x += (this.follow.position.x - t.x) * Math.min(1, dt * 4);
+      t.z += (this.follow.position.z - t.z) * Math.min(1, dt * 4);
+      if (!this.follow.parent) this.follow = null;
+    }
+    const x = THREE.MathUtils.clamp(t.x, BOUNDS.x0, BOUNDS.x1);
+    const z = THREE.MathUtils.clamp(t.z, BOUNDS.z0, BOUNDS.z1);
+    t.set(x, t.y + (Y(x, z) - t.y) * Math.min(1, dt * 6), z);
+    this.camera.position.add(t.clone().sub(before));
     this.controls.update();
+    // Nunca atravessa uma serra
+    const floor = Y(this.camera.position.x, this.camera.position.z) + 0.45;
+    if (this.camera.position.y < floor) this.camera.position.y = floor;
     const reach = THREE.MathUtils.clamp(this.dist * 1.1, 6, 44);
     const c = this.sun.shadow.camera;
     if (Math.abs(c.right - reach) > reach * 0.08) {
@@ -200,7 +273,7 @@ export class World3D {
       c.updateProjectionMatrix();
     }
     this.sun.target.position.copy(t);
-    this.sun.position.set(t.x - 32, 46, t.z + 20);
+    this.sun.position.copy(t).addScaledVector(this.sunDir, 70);
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 0.8);
       this.camera.position.x += rand(-1, 1) * this.shake * 0.12;
@@ -209,13 +282,56 @@ export class World3D {
   }
   /** Leva a câmera até um ponto */
   go(x: number, z: number, distance?: number) {
-    this.goal = new THREE.Vector3(x, H, z);
+    this.goal = new THREE.Vector3(x, Y(x, z), z);
     const off = this.camera.position.clone().sub(this.controls.target);
     if (distance && off.length() > distance) this.camera.position.copy(this.controls.target).add(off.setLength(distance));
   }
   get mask() {
     return this.scenery.mask;
   }
+  /** Segue o próximo míssil nuclear em voo */
+  chase() {
+    const a = this.actors.find((x) => x.o.name === 'nuke');
+    if (a) this.follow = a.o;
+    return !!a;
+  }
+  /** Sol, lua, cor do céu e clima */
+  private daylight(w: World | null, now: number, dt: number) {
+    const t = w ? w.t : now / 1000;
+    const a = ((t / DAY_S + 0.16) % 1) * Math.PI * 2;
+    const up = Math.sin(a) * 0.8 + 0.3;
+    const light = THREE.MathUtils.smoothstep(up, -0.12, 0.28);
+    const warm = Math.exp(-((up / 0.2) ** 2));
+    const name = w?.event ? EVENTS[w.event.i].name : '';
+    const rain = name === 'Chuva pesada' ? 1 : 0;
+    const mist = name === 'Neblina' ? 1 : 0;
+    this.sky.light += (light - this.sky.light) * Math.min(1, dt * 2);
+    this.sky.warm += (warm * (1 - rain) - this.sky.warm) * Math.min(1, dt * 2);
+    this.sky.rain += (rain - this.sky.rain) * Math.min(1, dt * 0.6);
+    this.sky.mist += (mist - this.sky.mist) * Math.min(1, dt * 0.6);
+    const k = this.sky;
+    const day = up > -0.05;
+    // De noite quem ilumina é a lua
+    this.sunDir.set(Math.cos(a) * (day ? 1 : -0.5), Math.max(0.28, day ? up : 0.8), 0.42).normalize();
+    this.bolt = Math.max(0, this.bolt - dt * 4);
+    if (k.rain > 0.5 && Math.random() < dt * 0.18) {
+      this.bolt = 1;
+      this.later.push({ at: now + 600, run: () => sound.playImpact() });
+    }
+    const gray = Math.max(k.rain, k.mist * 0.6);
+    this.sun.intensity = (day ? 0.5 + 2.9 * k.light : 1.5) * (1 - gray * 0.6);
+    this.sun.color.set(day ? '#fff1dc' : '#9fb8ff').lerp(new THREE.Color('#ff9a52'), k.warm * 0.75);
+    this.hemi.intensity = 1.05 + 0.35 * k.light + this.bolt * 4;
+    this.hemi.color.set('#7f95d6').lerp(new THREE.Color('#dcecff'), k.light);
+    this.hemi.groundColor.set('#2a2a3a').lerp(new THREE.Color('#8f7d5c'), k.light);
+    const fog = this.scene.fog as THREE.Fog;
+    fog.color.set('#0c1322').lerp(new THREE.Color('#c4d6e2'), k.light).lerp(new THREE.Color('#e8a06a'), k.warm * 0.5).lerp(new THREE.Color('#8b949b').multiplyScalar(0.35 + 0.65 * k.light), gray * 0.7);
+    const clear = 1 - Math.max(k.mist * 0.86, k.rain * 0.55);
+    fog.near = (30 + this.dist * 0.9) * clear;
+    fog.far = fog.near + 150 * clear + this.dist * 0.6;
+    this.scenery.update(dt, this.controls.target, this.dist, k, this.sunDir);
+  }
+  private sky: Sky = { light: 1, warm: 0, rain: 0, mist: 0 };
   center() {
     return { x: this.controls.target.x, z: this.controls.target.z };
   }
@@ -232,8 +348,11 @@ export class World3D {
       x.renderOrder = order;
       return add(x);
     };
+    const body = unitMaterial();
     for (const k of UNIT_IDS) {
-      const m = inst(unitGeometry(k), BAKED, PER_KIND * SQUAD(k));
+      const geo = unitGeometry(k).clone();
+      geo.setAttribute('anim', new THREE.InstancedBufferAttribute(new Float32Array(PER_KIND * SQUAD(k) * 4), 4));
+      const m = inst(geo, body, PER_KIND * SQUAD(k));
       m.setColorAt(0, new THREE.Color());
       m.castShadow = true;
       this.units.set(k, m);
@@ -245,11 +364,21 @@ export class World3D {
         return m;
       }));
     }
+    const wave = new THREE.MeshStandardMaterial({ side: THREE.DoubleSide, roughness: 0.8 });
+    wave.onBeforeCompile = (x) => {
+      x.uniforms.uT = UNIT_TIME;
+      x.vertexShader = x.vertexShader.replace('#include <common>', '#include <common>\nuniform float uT;').replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed.z+=sin(position.x*22.-uT*7.+instanceMatrix[3][0])*.022*position.x*5.; transformed.y+=sin(position.x*16.-uT*6.)*.012;');
+    };
+    this.flags = { pole: inst(new THREE.CylinderGeometry(0.008, 0.011, 0.62, 8).translate(0, 0.31, 0), mat('#d7dbe0', { metal: 0.6, rough: 0.3 }), 184), cloth: inst(new THREE.PlaneGeometry(0.26, 0.16, 14, 4).translate(0.13, 0.53, 0), wave, 184), sig: '' };
+    this.flags.cloth.setColorAt(0, new THREE.Color());
+    this.flags.pole.castShadow = this.flags.cloth.castShadow = true;
+    const bar = (w: number, h: number, d: number, x: number, y: number) => new THREE.BoxGeometry(w, h, d).translate(x, y, 0);
+    this.cranes = inst(mergeGeometries([bar(0.02, 0.5, 0.02, 0, 0.25), bar(0.42, 0.018, 0.018, 0.11, 0.5), bar(0.06, 0.05, 0.04, -0.09, 0.48), bar(0.004, 0.2, 0.004, 0.26, 0.4), bar(0.05, 0.03, 0.04, 0.26, 0.29)])!, mat('#f2a51d', { rough: 0.6 }), 80);
+    this.cranes.castShadow = true;
     const flat = (g: THREE.BufferGeometry) => g.rotateX(-Math.PI / 2);
     this.discs = inst(flat(new THREE.RingGeometry(0.8, 1, 24)), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.95, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -8, polygonOffsetUnits: -30 }), 400, 3);
     this.discs.setColorAt(0, new THREE.Color());
     const quad = new THREE.PlaneGeometry(1, 1);
-    this.rotors = inst(flat(new THREE.CircleGeometry(1, 20)), new THREE.MeshBasicMaterial({ color: '#1f2937', transparent: true, opacity: 0.28, depthWrite: false }), 260, 3);
     this.barBack = inst(quad, new THREE.MeshBasicMaterial({ color: '#0a0d12', depthTest: false, transparent: true, opacity: 0.8 }), 600, 6);
     this.barFill = inst(quad, new THREE.MeshBasicMaterial({ depthTest: false, transparent: true }), 600, 7);
     this.barFill.setColorAt(0, new THREE.Color());
@@ -268,12 +397,8 @@ export class World3D {
     c.height = Math.round((192 * BOUNDS.h) / BOUNDS.w);
     this.fogCtx = c.getContext('2d')!;
     this.fogTex = new THREE.CanvasTexture(c);
-    this.fogTex.colorSpace = THREE.SRGBColorSpace;
-    this.fogMesh = new THREE.Mesh(new THREE.PlaneGeometry(BOUNDS.w, BOUNDS.h).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: this.fogTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -5, polygonOffsetUnits: -16 }));
-    this.fogMesh.position.set((BOUNDS.x0 + BOUNDS.x1) / 2, H + 0.01, (BOUNDS.z0 + BOUNDS.z1) / 2);
-    this.fogMesh.renderOrder = 2;
-    this.fogMesh.visible = false;
-    this.scene.add(this.fogMesh);
+    this.fogTex.flipY = false;
+    U.fogMap.value = this.fogTex;
   }
   private open(w: World) {
     return hasRule(w, 'aberto') || !w.players[W.me].alive || !!w.over || !!(mods.get(W.me)?.vision && mods.get(W.me)!.vision! > 5);
@@ -281,15 +406,15 @@ export class World3D {
   private updateFog(w: World, now: number) {
     if (now < this.fogAt) return;
     this.fogAt = now + 220;
-    this.fogMesh.visible = !this.open(w);
+    U.fogOn.value = this.open(w) ? 0 : 1;
     this.seeing = eyes(w, W.me);
-    if (!this.fogMesh.visible) return;
+    if (!U.fogOn.value) return;
     const x = this.fogCtx;
     const { width, height } = x.canvas;
     const s = width / BOUNDS.w;
     x.globalCompositeOperation = 'source-over';
     x.clearRect(0, 0, width, height);
-    x.fillStyle = 'rgba(8,12,20,.46)';
+    x.fillStyle = '#000';
     x.fillRect(0, 0, width, height);
     x.globalCompositeOperation = 'destination-out';
     for (const [px, pz, r] of this.seeing) {
@@ -300,8 +425,6 @@ export class World3D {
       x.fillStyle = g;
       x.fillRect(cx - cr, cy - cr, cr * 2, cr * 2);
     }
-    x.globalCompositeOperation = 'destination-in';
-    x.drawImage(this.scenery.mask, 0, 0, width, height);
     this.fogTex.needsUpdate = true;
   }
   private sees(w: World, x: number, z: number) {
@@ -310,22 +433,25 @@ export class World3D {
 
   // ===== Quadro =====
   private draw(dt: number, now: number) {
-    this.scenery.update(dt, this.dist < 26);
+    UNIT_TIME.value += dt;
     for (const l of this.flashes) l.intensity *= Math.max(0, 1 - dt * 5);
     const w = W.world;
+    this.daylight(w, now, dt);
     if (w) {
       this.updateFog(w, now);
       for (const f of fxQueue.splice(0)) this.effect(f, now);
       this.drawWorks(w);
+      this.drawFlags(w);
       this.drawUnits(w, dt, now);
       this.ambience(w, dt);
     } else {
       fxQueue.length = 0;
-      this.fogMesh.visible = false;
+      U.fogOn.value = 0;
       for (const m of this.units.values()) m.count = 0;
       this.works.forEach((l) => l.forEach((m) => { m.count = 0; }));
-      this.worksSig = '';
-      this.rotors.count = this.discs.count = this.barBack.count = this.barFill.count = 0;
+      this.worksSig = this.flags.sig = '';
+      this.flags.pole.count = this.flags.cloth.count = this.cranes.count = 0;
+      this.discs.count = this.barBack.count = this.barFill.count = 0;
     }
     this.drawLabels(w);
     this.drawMarks(now);
@@ -355,7 +481,7 @@ export class World3D {
     this.aimRing.visible = !!this.aim;
     if (this.aim) {
       const t = this.controls.target;
-      this.aimRing.position.set(t.x, H + 0.05, t.z);
+      this.aimRing.position.set(t.x, Y(t.x, t.z) + 0.05, t.z);
       this.aimRing.scale.setScalar(POWERS[this.aim].radius * (1 + Math.sin(now / 180) * 0.04));
       this.aimRing.material.color.set(POWERS[this.aim].color);
     }
@@ -371,19 +497,17 @@ export class World3D {
     const m = new THREE.Matrix4();
     const pos = new THREE.Vector3();
     const size = new THREE.Vector3();
-    const white = new THREE.Color('#ffffff');
     const tint = new THREE.Color();
     const zoom = this.zoom;
     const s = 0.125 * zoom;
     let discs = 0;
-    let rotors = 0;
     let bars = 0;
     const alive = new Set<number>();
     const far = this.dist * 1.6 + 4;
     for (const u of w.units) {
       alive.add(u.i);
       let v = this.shown.get(u.i);
-      if (!v) this.shown.set(u.i, (v = { x: u.x, z: u.z, dir: u.dir, seen: false }));
+      if (!v) this.shown.set(u.i, (v = { x: u.x, z: u.z, dir: u.dir, hull: u.dir, step: Math.random() * 6, kick: 0, bank: 0, seen: false }));
       const jump = Math.hypot(u.x - v.x, u.z - v.z) > 3;
       const k = jump ? 1 : Math.min(1, dt * 7);
       const moving = Math.hypot(u.x - v.x, u.z - v.z) > 0.012;
@@ -392,13 +516,21 @@ export class World3D {
       let turn = u.dir - v.dir;
       turn = Math.atan2(Math.sin(turn), Math.cos(turn));
       v.dir += turn * Math.min(1, dt * 8);
+      // Veículo com torre: o casco segue o caminho e a torre segue o alvo
+      if (!TURRET.includes(u.k) || moving) {
+        const h = Math.atan2(Math.sin(u.dir - v.hull), Math.cos(u.dir - v.hull));
+        v.hull += h * Math.min(1, dt * 5);
+      }
+      v.kick = Math.max(0, v.kick - dt * 5);
+      v.bank += (THREE.MathUtils.clamp(turn * 1.2, -0.7, 0.7) - v.bank) * Math.min(1, dt * 4);
+      if (moving) v.step += dt * 11;
       const friend = allied(w, u.o, W.me);
       v.seen = friend || this.sees(w, u.x, u.z);
       if (!v.seen || Math.hypot(v.x - this.controls.target.x, v.z - this.controls.target.z) > far) continue;
       const mesh = this.units.get(u.k)!;
       const squad = SQUAD(u.k);
       const color = w.players[u.o].color;
-      tint.set(color).lerp(white, 0.55);
+      tint.set(color);
       if (u.off > 0) tint.multiplyScalar(0.45);
       const alt = altitude(u.k) * (u.off > 0 ? 0.4 : 1);
       const men = squad === 1 ? 1 : Math.max(1, Math.ceil((u.hp / u.max) * squad));
@@ -406,43 +538,42 @@ export class World3D {
         if (count[u.k] >= mesh.instanceMatrix.count) break;
         const a = v.dir + n * 2.1 + 0.6;
         const off = squad > 1 ? 0.075 * zoom : 0;
-        const bob = squad > 1 && moving ? Math.abs(Math.sin(now / 90 + n + u.i)) * 0.015 * zoom : alt ? Math.sin(now / 420 + u.i) * 0.03 : 0;
-        q.setFromAxisAngle(up, -v.dir);
-        pos.set(v.x + Math.cos(a) * off, H + alt + bob, v.z + Math.sin(a) * off);
+        const bob = squad > 1 && moving ? Math.abs(Math.sin(v.step + n)) * 0.008 * zoom : alt ? Math.sin(now / 420 + u.i) * 0.03 : 0;
+        q.setFromAxisAngle(up, -v.hull);
+        pos.set(v.x + Math.cos(a) * off, Y(v.x + Math.cos(a) * off, v.z + Math.sin(a) * off) + alt + bob, v.z + Math.sin(a) * off);
         mesh.setMatrixAt(count[u.k], m.compose(pos, q, size.setScalar(s)));
+        (mesh.geometry.attributes.anim as THREE.InstancedBufferAttribute).setXYZW(count[u.k], squad > 1 && moving ? v.step + n * 1.3 : 0, v.dir - v.hull, v.kick, UNITS[u.k].cls === 'ar' ? v.bank : 0);
         mesh.setColorAt(count[u.k]++, tint);
       }
-      if ((u.k === 'heli' || u.k === 'recon' || u.k === 'fpv') && u.off <= 0 && rotors < 260) {
-        pos.set(v.x, H + alt + (u.k === 'heli' ? 0.085 : 0.02) * zoom, v.z);
-        this.rotors.setMatrixAt(rotors++, m.compose(pos, q.identity(), size.setScalar((u.k === 'heli' ? 0.15 : 0.06) * zoom * (0.94 + Math.random() * 0.08))));
-      }
       // Estrelas de veterano
-      if (u.star && this.dist < 14 && Math.random() < dt * u.star * 2) this.fire.add(v.x, H + alt + 0.16, v.z, { life: 0.7, s0: 0.05, s1: 0.02, vy: 0.2, g: 0.85, b: 0.3 });
+      if (u.star && this.dist < 14 && Math.random() < dt * u.star * 2) this.fire.add(v.x, Y(v.x, v.z) + alt + 0.16, v.z, { life: 0.7, s0: 0.05, s1: 0.02, vy: 0.2, g: 0.85, b: 0.3 });
+      if (u.k === 'caca' && moving && this.dist < 30) this.smoke.add(v.x - Math.cos(v.dir) * 0.14, Y(v.x, v.z) + alt, v.z - Math.sin(v.dir) * 0.14, { life: 0.9, s0: 0.03, s1: 0.1, a: 0.3 });
       // Poeira dos veículos
-      if (moving && UNITS[u.k].cls === 'vei' && this.dist < 22 && Math.random() < dt * 5) this.smoke.add(v.x - Math.cos(v.dir) * 0.1, H + 0.02, v.z - Math.sin(v.dir) * 0.1, { life: 0.9, s0: 0.06, s1: 0.28, vy: 0.08, r: 0.72, g: 0.62, b: 0.48, a: 0.4 });
+      if (moving && UNITS[u.k].cls === 'vei' && this.dist < 22 && Math.random() < dt * 5) this.smoke.add(v.x - Math.cos(v.dir) * 0.1, Y(v.x - Math.cos(v.dir) * 0.1, v.z - Math.sin(v.dir) * 0.1) + 0.02, v.z - Math.sin(v.dir) * 0.1, { life: 0.9, s0: 0.06, s1: 0.28, vy: 0.08, r: 0.72, g: 0.62, b: 0.48, a: 0.4 });
       const picked = this.selected.has(u.i);
       if (discs < 400) {
-        pos.set(v.x, H + 0.015, v.z);
+        pos.set(v.x, Y(v.x, v.z) + 0.04, v.z);
         this.discs.setMatrixAt(discs, m.compose(pos, q.identity(), size.setScalar((picked ? 0.17 : 0.11) * zoom)));
         this.discs.setColorAt(discs++, tint.set(picked ? '#ffffff' : color));
       }
-      if ((u.hp < u.max * 0.98 || picked) && bars < 590 && this.dist < 40) this.bar(bars++, v.x, H + alt + 0.2 * zoom, v.z, 0.22 * zoom, u.hp / u.max, color);
+      if ((u.hp < u.max * 0.98 || picked) && bars < 590 && this.dist < 40) this.bar(bars++, v.x, Y(v.x, v.z) + alt + 0.2 * zoom, v.z, 0.22 * zoom, u.hp / u.max, color);
     }
     for (const id of this.shown.keys()) if (!alive.has(id)) this.shown.delete(id);
     for (const id of this.selected) if (!alive.has(id)) this.selected.delete(id);
     for (const c of w.cities) {
       const on = c.cap > 0 || c.hp < c.max * 0.98;
       if (!on || bars > 590 || this.dist > 45) continue;
-      this.bar(bars++, c.x, H + 0.62, c.z, 0.7, c.hp / c.max, c.owner >= 0 ? w.players[c.owner].color : '#e5e7eb');
-      if (c.cap > 0 && c.capBy >= 0) this.bar(bars++, c.x, H + 0.72, c.z, 0.7, c.cap / CAPTURE_S, '#ffffff');
+      this.bar(bars++, c.x, Y(c.x, c.z) + 0.62, c.z, 0.7, c.hp / c.max, c.owner >= 0 ? w.players[c.owner].color : '#e5e7eb');
+      if (c.cap > 0 && c.capBy >= 0) this.bar(bars++, c.x, Y(c.x, c.z) + 0.72, c.z, 0.7, c.cap / CAPTURE_S, '#ffffff');
     }
     for (const k of UNIT_IDS) {
       const mesh = this.units.get(k)!;
       mesh.count = count[k];
       mesh.instanceMatrix.needsUpdate = true;
+      mesh.geometry.attributes.anim.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
-    for (const [x, n] of [[this.discs, discs], [this.rotors, rotors], [this.barBack, bars], [this.barFill, bars]] as const) {
+    for (const [x, n] of [[this.discs, discs], [this.barBack, bars], [this.barFill, bars]] as const) {
       x.count = n;
       x.instanceMatrix.needsUpdate = true;
       if (x.instanceColor) x.instanceColor.needsUpdate = true;
@@ -458,11 +589,31 @@ export class World3D {
     this.barFill.setMatrixAt(n, m.compose(p.addScaledVector(right, -(w * (1 - f)) / 2), q, new THREE.Vector3(w * f, w * 0.13, 1)));
     this.barFill.setColorAt(n, new THREE.Color(k < 0.3 ? '#ef4444' : color));
   }
+  private drawFlags(w: World) {
+    const sig = w.cities.map((c) => c.owner).join();
+    if (sig === this.flags.sig) return;
+    this.flags.sig = sig;
+    let n = 0;
+    for (const c of w.cities) {
+      if (c.owner < 0) continue;
+      const [x, z] = [c.x + 0.16, c.z - 0.16];
+      const m = new THREE.Matrix4().makeTranslation(x, Y(x, z), z);
+      this.flags.pole.setMatrixAt(n, m);
+      this.flags.cloth.setMatrixAt(n, m);
+      this.flags.cloth.setColorAt(n++, new THREE.Color(w.players[c.owner].color));
+    }
+    for (const f of [this.flags.pole, this.flags.cloth]) {
+      f.count = n;
+      f.instanceMatrix.needsUpdate = true;
+      if (f.instanceColor) f.instanceColor.needsUpdate = true;
+    }
+  }
   private drawWorks(w: World) {
     const sig = w.cities.map((c) => (c.works.length ? c.works.map((k) => k.k + (k.left > 0 ? '~' : '')).join() : '')).join('|');
     if (sig === this.worksSig) return;
     this.worksSig = sig;
     const n = {} as Record<WorksId, number>;
+    let cranes = 0;
     for (const c of w.cities) {
       c.works.forEach((k, i) => {
         const { x, z } = this.slot(c.id, i, k.k);
@@ -470,12 +621,15 @@ export class World3D {
         const at = n[k.k] ?? 0;
         if (at >= 140) return;
         n[k.k] = at + 1;
-        const s = k.k === 'comando' ? 0.1 : 0.085;
+        const s = k.k === 'comando' ? 0.078 : 0.075;
         // Em obras: ainda saindo do chão
-        const m = new THREE.Matrix4().compose(new THREE.Vector3(x, H, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), i * 0.9), new THREE.Vector3(s, k.left > 0 ? s * 0.35 : s, s));
+        const m = new THREE.Matrix4().compose(new THREE.Vector3(x, Y(x, z), z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), i * 0.9), new THREE.Vector3(s, k.left > 0 ? s * 0.35 : s, s));
         list.forEach((mesh) => mesh.setMatrixAt(at, m));
+        if (k.left > 0 && cranes < 80) this.cranes.setMatrixAt(cranes++, new THREE.Matrix4().makeRotationY(i * 1.7).setPosition(x + 0.1, Y(x, z), z));
       });
     }
+    this.cranes.count = cranes;
+    this.cranes.instanceMatrix.needsUpdate = true;
     this.works.forEach((l, k) => l.forEach((m) => {
       m.count = n[k] ?? 0;
       m.instanceMatrix.needsUpdate = true;
@@ -487,13 +641,13 @@ export class World3D {
     const r = spread(c) * 0.75 + 0.28;
     let a = i * 2.4 + (city % 10);
     // Nunca dentro do mar
-    for (let k = 0; k < 8 && !this.scenery.land(c.x + Math.cos(a) * r, c.z + Math.sin(a) * r); k++) a += 0.75;
+    for (let k = 0; k < 8 && Y(c.x + Math.cos(a) * r, c.z + Math.sin(a) * r) < 0.1; k++) a += 0.75;
     return { x: c.x + Math.cos(a) * r, z: c.z + Math.sin(a) * r };
   }
   /** Fumaça de zonas e cidades atingidas */
   private ambience(w: World, dt: number) {
     for (const z of w.zones) {
-      if (z.k === 'fumaca' && Math.random() < dt * 22) this.smoke.add(z.x + rand(-1, 1), H + 0.1, z.z + rand(-1, 1), { life: 2.6, s0: 0.5, s1: 1.5, vy: 0.12, r: 0.85, g: 0.87, b: 0.9, a: 0.7 });
+      if (z.k === 'fumaca' && Math.random() < dt * 22) this.smoke.add(z.x + rand(-1, 1), Y(z.x + rand(-1, 1), z.z + rand(-1, 1)) + 0.1, z.z + rand(-1, 1), { life: 2.6, s0: 0.5, s1: 1.5, vy: 0.12, r: 0.85, g: 0.87, b: 0.9, a: 0.7 });
     }
     const live = new Set<string>();
     const disc = (key: string, x: number, z: number, radius: number, color: string, opacity: number) => {
@@ -505,7 +659,7 @@ export class World3D {
         this.scene.add(m);
         this.hot.set(key, m);
       }
-      m.position.set(x, H + 0.03, z);
+      m.position.set(x, Y(x, z) + 0.03, z);
       m.scale.setScalar(radius);
       m.material.color.set(color);
       m.material.opacity = opacity;
@@ -514,7 +668,7 @@ export class World3D {
     for (const z of w.zones) if (NUKES[z.k] && z.tick < 90) disc(`n${z.x},${z.z}`, z.x, z.z, POWERS[z.k].radius * 1.25, '#ff2a1a', beat);
     for (const a of w.rads) {
       disc(`r${a.x},${a.z}`, a.x, a.z, a.r * 1.35, '#7dff3a', Math.min(0.5, a.left / 20) * (0.75 + beat * 0.3));
-      if (Math.random() < dt * 9) this.smoke.add(a.x + rand(-a.r, a.r), H + 0.1, a.z + rand(-a.r, a.r), { life: 3, s0: 0.2, s1: 0.9, vy: 0.16, r: 0.45, g: 0.6, b: 0.25, a: 0.35 });
+      if (Math.random() < dt * 9) this.smoke.add(a.x + rand(-a.r, a.r), Y(a.x + rand(-a.r, a.r), a.z + rand(-a.r, a.r)) + 0.1, a.z + rand(-a.r, a.r), { life: 3, s0: 0.2, s1: 0.9, vy: 0.16, r: 0.45, g: 0.6, b: 0.25, a: 0.35 });
     }
     for (const [k, m] of this.hot) {
       if (live.has(k)) continue;
@@ -527,8 +681,8 @@ export class World3D {
       if (c.hp > c.max * 0.6 || Math.random() > dt * 5) continue;
       const r = spread(CITY[c.id]) * 0.8;
       const [x, z] = [c.x + rand(-r, r), c.z + rand(-r, r)];
-      if (Math.random() < 0.5) this.fire.add(x, H + 0.06, z, { life: 0.6, s0: 0.12, s1: 0.3, vy: 0.3 });
-      this.smoke.add(x, H + 0.15, z, { life: 2.4, s0: 0.14, s1: 0.75, vy: 0.42, vx: 0.12, r: 0.16, g: 0.16, b: 0.17, a: 0.65 });
+      if (Math.random() < 0.5) this.fire.add(x, Y(x, z) + 0.06, z, { life: 0.6, s0: 0.12, s1: 0.3, vy: 0.3 });
+      this.smoke.add(x, Y(x, z) + 0.15, z, { life: 2.4, s0: 0.14, s1: 0.75, vy: 0.42, vx: 0.12, r: 0.16, g: 0.16, b: 0.17, a: 0.65 });
     }
   }
 
@@ -547,11 +701,12 @@ export class World3D {
       const owner = s && s.owner >= 0 ? w!.players[s.owner] : null;
       const color = owner?.color ?? (seat ? (seat.id === W.seat ? '#f5b301' : '#ff3b3b') : '');
       this.scenery.paint(c.id, color);
+      this.scenery.look(c.id, s?.dev ?? 0, s?.ruin ?? 0);
       const key = !!color || c.id === this.focus;
       let show = (c.pop >= min || key) && Math.hypot(c.x - t.x, c.z - t.z) < d * 1.5 + 4;
       if (show) {
         // Nomes não se sobrepõem: o da maior cidade fica
-        at.set(c.x, H + 0.95, c.z).project(this.camera);
+        at.set(c.x, Y(c.x, c.z) + 0.95, c.z).project(this.camera);
         const [x, y] = [(at.x * gap) / 2, (at.y * this.canvas.clientHeight) / 2];
         show = key || !taken.some(([a, b]) => Math.abs(a - x) < 110 && Math.abs(b - y) < 24);
         if (show) taken.push([x, y]);
@@ -561,7 +716,7 @@ export class World3D {
         if (old) old.sprite.visible = false;
         continue;
       }
-      const text = `${owner ? `${owner.emblem} ` : seat ? `${seat.emblem} ` : ''}${c.name}${seat ? ` (${seat.name})` : ` ${c.level}★`}${s?.cap ? ' ⚑' : ''}`;
+      const text = `${owner ? `${owner.emblem} ` : seat ? `${seat.emblem} ` : ''}${c.name}${seat ? ` (${seat.name})` : ` ${c.level}★${s?.dev ? `+${s.dev}` : ''}`}${s?.cap ? ' ⚑' : ''}${s?.deal ? ' 🤝' : ''}${s?.devLeft ? ' 🏗️' : ''}`;
       let l = old;
       if (old?.text !== text + color) {
         if (old) {
@@ -570,7 +725,7 @@ export class World3D {
           old.sprite.material.dispose();
         }
         const sprite = this.label(text, color);
-        sprite.position.set(c.x, H + 0.95, c.z);
+        sprite.position.set(c.x, Y(c.x, c.z) + 0.95, c.z);
         this.scene.add(sprite);
         this.labels.set(c.id, (l = { sprite, text: text + color, h: 0 }));
       }
@@ -618,7 +773,7 @@ export class World3D {
       const p = list[i];
       m.visible = !!p;
       if (!p) return;
-      m.position.set(p.x, H + 0.5 + Math.abs(Math.sin(now / 200)) * 0.35, p.z);
+      m.position.set(p.x, Y(p.x, p.z) + 0.5 + Math.abs(Math.sin(now / 200)) * 0.35, p.z);
       m.scale.setScalar(this.zoom);
       m.material.color.set(W.world?.players[p.i]?.color ?? '#fff');
     });
@@ -636,24 +791,27 @@ export class World3D {
     if (k === 'bala' || k === 'canhao' || k === 'missil') {
       if (!near || this.shells.length > 150) return;
       const d = Math.hypot(x2 - x1, z2 - z1);
-      const y1 = H + (air & 2 ? 0.8 : 0.12);
-      const y2 = H + (air & 1 ? 0.8 : 0.08);
+      const y1 = Y(x1, z1) + (air & 2 ? 0.8 : 0.12);
+      const y2 = Y(x2, z2) + (air & 1 ? 0.8 : 0.08);
       this.shells.push({ k, x1, y1, z1, x2, y2, z2, t: 0, dur: k === 'bala' ? 0.07 + d * 0.06 : k === 'canhao' ? 0.18 + d * 0.16 : 0.3 + d * 0.2 });
+      if (k !== 'bala') for (const v of this.shown.values()) if (Math.abs(v.x - x1) < 0.25 && Math.abs(v.z - z1) < 0.25) v.kick = 1;
       this.fire.add(x1, y1, z1, { life: 0.12, s0: k === 'bala' ? 0.09 : 0.3, s1: k === 'bala' ? 0.05 : 0.15 });
       if (k !== 'bala') this.smoke.add(x1, y1, z1, { life: 0.8, s0: 0.08, s1: 0.35, vy: 0.1, r: 0.6, g: 0.6, b: 0.6, a: 0.5 });
       this.play(x1, z1, k === 'bala' ? 130 : 220, () => (k === 'bala' ? sound.playGuns(0.4) : k === 'canhao' ? sound.playImpact() : sound.playLaunch()));
     } else if (k === 'bum') {
-      if (near) this.boom(x2, H + 0.1, z2, 1);
+      if (near) this.boom(x2, Y(x2, z2) + 0.1, z2, 1);
     } else if (k === 'destroco' || k === 'queda') {
       if (!near) return;
-      this.boom(x2, H + (k === 'queda' ? 0.8 : 0.12), z2, 0.9);
-      for (let i = 0; i < 6; i++) this.later.push({ at: now + i * 350, run: () => this.smoke.add(x2, H + 0.1, z2, { life: 2.2, s0: 0.12, s1: 0.6, vy: 0.4, r: 0.12, g: 0.12, b: 0.12, a: 0.7 }) });
-      if (k === 'queda') for (let i = 0; i < 10; i++) this.fire.add(x2 + rand(-0.1, 0.1), H + 0.8, z2 + rand(-0.1, 0.1), { life: 0.9, s0: 0.12, s1: 0.04, vy: -0.9, vx: rand(-0.3, 0.3), vz: rand(-0.3, 0.3) });
+      this.boom(x2, Y(x2, z2) + (k === 'queda' ? 0.8 : 0.12), z2, 0.9);
+      this.wreck(UNIT_IDS[x1], x2, z2, z1, k === 'queda');
+      for (let i = 0; i < 6; i++) this.later.push({ at: now + i * 350, run: () => this.smoke.add(x2, Y(x2, z2) + 0.1, z2, { life: 2.2, s0: 0.12, s1: 0.6, vy: 0.4, r: 0.12, g: 0.12, b: 0.12, a: 0.7 }) });
+      if (k === 'queda') for (let i = 0; i < 10; i++) this.fire.add(x2 + rand(-0.1, 0.1), Y(x2 + rand(-0.1, 0.1), z2 + rand(-0.1, 0.1)) + 0.8, z2 + rand(-0.1, 0.1), { life: 0.9, s0: 0.12, s1: 0.04, vy: -0.9, vx: rand(-0.3, 0.3), vz: rand(-0.3, 0.3) });
     } else if (k === 'baixa') {
-      if (near) this.smoke.add(x2, H + 0.08, z2, { life: 0.6, s0: 0.08, s1: 0.25, vy: 0.15, r: 0.4, g: 0.33, b: 0.28, a: 0.6 });
+      if (near) this.wreck(UNIT_IDS[x1], x2, z2, z1, false);
+      if (near) this.smoke.add(x2, Y(x2, z2) + 0.08, z2, { life: 0.6, s0: 0.08, s1: 0.25, vy: 0.15, r: 0.4, g: 0.33, b: 0.28, a: 0.6 });
     } else if (k === 'tomada') {
       this.ring(x2, z2, 2, '#ffffff', 1);
-      for (let i = 0; i < 16; i++) this.fire.add(x2, H + 0.4, z2, { life: 1.2, s0: 0.1, s1: 0.03, vy: rand(0.4, 1.2), vx: rand(-0.8, 0.8), vz: rand(-0.8, 0.8) });
+      for (let i = 0; i < 16; i++) this.fire.add(x2, Y(x2, z2) + 0.4, z2, { life: 1.2, s0: 0.1, s1: 0.03, vy: rand(0.4, 1.2), vx: rand(-0.8, 0.8), vz: rand(-0.8, 0.8) });
       this.play(x2, z2, 400, () => sound.playRecruit());
     } else if (k === 'estrela') {
       if (near) this.ring(x2, z2, 0.4, '#facc15', 0.8);
@@ -661,15 +819,45 @@ export class World3D {
       // Antimíssil sobe e encontra a ogiva no céu
       const g = this.body(new THREE.ConeGeometry(0.04, 0.3, 8), '#7dd3fc');
       this.actors.push({ o: g, t: 0, dur: 0.7, move: (t) => {
-        g.position.set(x1 + (x2 - x1) * t, H + 4 * t, z1 + (z2 - z1) * t);
+        g.position.set(x1 + (x2 - x1) * t, Y(x1 + (x2 - x1) * t, z1 + (z2 - z1) * t) + 4 * t, z1 + (z2 - z1) * t);
         this.smoke.add(g.position.x, g.position.y, g.position.z, { life: 1, s0: 0.1, s1: 0.4, a: 0.6 });
       } });
       this.later.push({ at: now + 700, run: () => {
-        for (let i = 0; i < 3; i++) this.boom(x2 + rand(-0.3, 0.3), H + 4 + rand(-0.3, 0.3), z2 + rand(-0.3, 0.3), 1.6);
+        for (let i = 0; i < 3; i++) this.boom(x2 + rand(-0.3, 0.3), Y(x2 + rand(-0.3, 0.3), z2 + rand(-0.3, 0.3)) + 4 + rand(-0.3, 0.3), z2 + rand(-0.3, 0.3), 1.6);
         this.ring(x2, z2, 2.5, '#7dd3fc', 1);
       } });
+    } else if (k === 'evolui' || k === 'era') {
+      if (!near) return;
+      this.ring(x2, z2, k === 'era' ? 4 : 1.4, k === 'era' ? '#facc15' : '#4ade80', 1.4);
+      for (let i = 0; i < 18; i++) this.fire.add(x2 + rand(-0.4, 0.4), Y(x2, z2) + 0.2, z2 + rand(-0.4, 0.4), { life: 1.4, s0: 0.1, s1: 0.03, vy: rand(0.4, 1), g: 0.95, b: 0.5 });
+      this.play(x2, z2, 500, () => sound.playTechUnlocked());
     } else if (k === 'nuclear') this.nuke(x2, z2, now, x1);
     else if (POWERS[k as PowerId]) this.power(k as PowerId, x1, z1, x2, z2, now);
+  }
+  /** Carcaça queimada ou soldado caído, que some depois de um tempo */
+  private wreck(k: UnitId | undefined, x: number, z: number, dir: number, fall: boolean) {
+    if (!k) return;
+    const m = new THREE.Mesh(unitGeometry(k), this.burnt);
+    const inf = UNITS[k].cls === 'inf';
+    const s = 0.125 * Math.min(1.5, this.zoom);
+    m.scale.setScalar(s);
+    m.rotation.set(0, -dir, inf ? -1.5 : rand(-0.15, 0.15));
+    const y = Y(x, z);
+    m.position.set(x, y + (inf ? 0.02 : 0), z);
+    this.scene.add(m);
+    this.wrecks.push(m);
+    if (this.wrecks.length > (PHONE ? 24 : 50)) this.scene.remove(this.wrecks.shift()!);
+    this.actors.push({ o: m, t: 0, dur: inf ? 14 : 45, move: (t) => {
+      const sec = t * (inf ? 14 : 45);
+      if (fall && sec < 0.7) {
+        m.position.y = y + 0.85 * (1 - (sec / 0.7) ** 2);
+        m.rotation.y += 0.25;
+      } else m.position.y = y + (inf ? 0.02 : 0) - Math.max(0, t - 0.85) * 0.5;
+      if (!inf && sec < 30 && this.dist < 24 && Math.random() < 0.06) {
+        this.fire.add(x + rand(-0.04, 0.04), y + 0.06, z + rand(-0.04, 0.04), { life: 0.5, s0: 0.09, s1: 0.16, vy: 0.25 });
+        this.smoke.add(x, y + 0.1, z, { life: 2.4, s0: 0.08, s1: 0.42, vy: 0.4, vx: 0.1, r: 0.1, g: 0.1, b: 0.1, a: 0.55 });
+      }
+    } });
   }
   private body(geo: THREE.BufferGeometry, color: string) {
     const m = new THREE.Mesh(geo, mat(color, { metal: 0.4, rough: 0.4 }));
@@ -683,7 +871,7 @@ export class World3D {
       for (let i = 0; i < 4; i++) this.later.push({ at: now + i * 130, run: () => this.ring(x, z, POWERS.emp.radius, '#7dd3fc', 0.6) });
       this.play(x, z, 300, () => sound.playSabotage());
     } else if (k === 'reparo') {
-      for (let i = 0; i < 26; i++) this.fire.add(x + rand(-1.3, 1.3), H + 0.1, z + rand(-1.3, 1.3), { life: 1.2, s0: 0.14, s1: 0.04, vy: 0.6, r: 0.3, g: 1, b: 0.45 });
+      for (let i = 0; i < 26; i++) this.fire.add(x + rand(-1.3, 1.3), Y(x + rand(-1.3, 1.3), z + rand(-1.3, 1.3)) + 0.1, z + rand(-1.3, 1.3), { life: 1.2, s0: 0.14, s1: 0.04, vy: 0.6, r: 0.3, g: 1, b: 0.45 });
     } else if (k === 'aereo') {
       const a = rand(0, 6.28);
       for (const off of [-0.5, 0, 0.5]) this.flyby(x, z, a, off);
@@ -697,9 +885,10 @@ export class World3D {
       sound.playLaunch();
       const big = NUKES[k]!.size;
       const g = this.body(new THREE.CylinderGeometry(0.02, 0.06, 0.55, 10).scale(big + 0.4, big + 0.4, big + 0.4), '#e5e7eb');
+      g.name = 'nuke';
       const top = 7 + Math.hypot(x - x1, z - z1) * 0.35;
-      const at = (t: number) => new THREE.Vector3(x1 + (x - x1) * t, H + Math.sin(t * Math.PI) * top, z1 + (z - z1) * t);
-      for (let i = 0; i < 14; i++) this.smoke.add(x1 + rand(-0.2, 0.2), H + 0.1, z1 + rand(-0.2, 0.2), { life: 2.6, s0: 0.2, s1: 1, vx: rand(-0.5, 0.5), vz: rand(-0.5, 0.5), vy: 0.1, a: 0.7 });
+      const at = (t: number) => new THREE.Vector3(x1 + (x - x1) * t, Y(x1 + (x - x1) * t, z1 + (z - z1) * t) + Math.sin(t * Math.PI) * top, z1 + (z - z1) * t);
+      for (let i = 0; i < 14; i++) this.smoke.add(x1 + rand(-0.2, 0.2), Y(x1 + rand(-0.2, 0.2), z1 + rand(-0.2, 0.2)) + 0.1, z1 + rand(-0.2, 0.2), { life: 2.6, s0: 0.2, s1: 1, vx: rand(-0.5, 0.5), vz: rand(-0.5, 0.5), vy: 0.1, a: 0.7 });
       this.actors.push({ o: g, t: 0, dur: NUKES[k]!.flight, move: (t) => {
         const p = at(t);
         g.position.copy(p);
@@ -711,25 +900,25 @@ export class World3D {
     else this.play(x, z, 300, () => sound.playLaunch());
   }
   private flyby(x: number, z: number, a: number, off: number) {
-    const m = new THREE.Mesh(unitGeometry('caca'), BAKED);
+    const m = new THREE.Mesh(unitGeometry('caca'), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5 }));
     m.scale.setScalar(0.34);
     m.rotation.y = -a;
     m.castShadow = true;
     this.scene.add(m);
     this.actors.push({ o: m, t: 0, dur: 3, move: (k) => {
       const d = (k - 0.5) * 34;
-      m.position.set(x + Math.cos(a) * d - Math.sin(a) * off, H + 2, z + Math.sin(a) * d + Math.cos(a) * off);
+      m.position.set(x + Math.cos(a) * d - Math.sin(a) * off, Y(x + Math.cos(a) * d - Math.sin(a) * off, z + Math.sin(a) * d + Math.cos(a) * off) + 2, z + Math.sin(a) * d + Math.cos(a) * off);
       this.smoke.add(m.position.x - Math.cos(a) * 0.4, m.position.y, m.position.z - Math.sin(a) * 0.4, { life: 0.8, s0: 0.08, s1: 0.2, a: 0.25 });
     } });
   }
   private chute(x: number, z: number) {
     const m = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 5, 0, Math.PI * 2, 0, Math.PI / 2), mat('#e7e5d8'));
     this.scene.add(m);
-    this.actors.push({ o: m, t: 0, dur: 1.6, move: (k) => m.position.set(x + Math.sin(k * 5) * 0.06, H + 2.2 * (1 - k) + 0.1, z) });
+    this.actors.push({ o: m, t: 0, dur: 1.6, move: (k) => m.position.set(x + Math.sin(k * 5) * 0.06, Y(x + Math.sin(k * 5) * 0.06, z) + 2.2 * (1 - k) + 0.1, z) });
   }
   private ring(x: number, z: number, r: number, color: string, dur: number) {
     const m = new THREE.Mesh(new THREE.RingGeometry(0.95, 1, 64).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false, depthTest: false }));
-    m.position.set(x, H + 0.04, z);
+    m.position.set(x, Y(x, z) + 0.04, z);
     m.renderOrder = 4;
     this.scene.add(m);
     this.rings.push({ m, t: 0, dur, r });
@@ -748,7 +937,7 @@ export class World3D {
     if (Math.hypot(x - this.controls.target.x, z - this.controls.target.z) < 4 && this.dist < 14) this.shake = Math.max(this.shake, 0.25 * s);
   }
   private mark(x: number, z: number, r: number) {
-    this.scorch.setMatrixAt(this.scorchN % 90, new THREE.Matrix4().makeTranslation(x, H + 0.012, z).scale(new THREE.Vector3(r, 1, r)));
+    this.scorch.setMatrixAt(this.scorchN % 90, new THREE.Matrix4().makeTranslation(x, Y(x, z) + 0.012, z).scale(new THREE.Vector3(r, 1, r)));
     this.scorchN++;
     this.scorch.count = Math.min(90, this.scorchN);
     this.scorch.instanceMatrix.needsUpdate = true;
@@ -758,30 +947,31 @@ export class World3D {
     this.onFlash();
     sound.playNuke();
     this.shake = 1 + s * 0.6;
+    this.post?.blast(new THREE.Vector3(x, Y(x, z) + s, z), s);
     this.mark(x, z, 1.7 * s);
     const l = this.flashes[0];
-    l.position.set(x, H + 3 * s, z);
+    l.position.set(x, Y(x, z) + 3 * s, z);
     l.distance = 30 * s;
     l.intensity = 900 * s;
     for (let i = 0; i < 4; i++) this.later.push({ at: now + i * 200, run: () => this.ring(x, z, (3.5 + i) * s, '#ffe3b5', 1.8) });
     const dome = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 14, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#fff1cf', transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending }));
-    dome.position.set(x, H, z);
+    dome.position.set(x, Y(x, z), z);
     this.scene.add(dome);
     this.actors.push({ o: dome, t: 0, dur: 1.5, move: (t) => {
       dome.scale.setScalar(0.2 + 3 * s * Math.sqrt(t));
       (dome.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - t) ** 2;
     } });
-    for (let i = 0; i < 40; i++) this.fire.add(x + rand(-0.5, 0.5) * s, H + 0.2, z + rand(-0.5, 0.5) * s, { life: rand(0.9, 2), s0: 0.8 * s, s1: 2.2 * s, vy: rand(0.2, 1.6) * s, vx: rand(-0.8, 0.8) * s, vz: rand(-0.8, 0.8) * s });
+    for (let i = 0; i < 40; i++) this.fire.add(x + rand(-0.5, 0.5) * s, Y(x + rand(-0.5, 0.5) * s, z + rand(-0.5, 0.5) * s) + 0.2, z + rand(-0.5, 0.5) * s, { life: rand(0.9, 2), s0: 0.8 * s, s1: 2.2 * s, vy: rand(0.2, 1.6) * s, vx: rand(-0.8, 0.8) * s, vz: rand(-0.8, 0.8) * s });
     for (let i = 0; i < 46; i++) {
       this.later.push({ at: now + i * 60, run: () => {
         const a = rand(0, 6.28);
         const up = Math.min(1, i / 14);
         // Saia de poeira, tronco e chapéu
-        this.smoke.add(x + Math.cos(a) * s, H + 0.1, z + Math.sin(a) * s, { life: 3.4, s0: 0.4 * s, s1: 1.3 * s, vx: Math.cos(a) * s, vz: Math.sin(a) * s, vy: 0.08, r: 0.55, g: 0.46, b: 0.36, a: 0.55 });
-        this.smoke.add(x + rand(-0.18, 0.18) * s, H + 0.2 + up * 1.6 * s, z + rand(-0.18, 0.18) * s, { life: 4, s0: 0.5 * s, s1: 0.95 * s, vy: 0.7 * s, r: 0.46, g: 0.36, b: 0.29, a: 0.85 });
+        this.smoke.add(x + Math.cos(a) * s, Y(x + Math.cos(a) * s, z + Math.sin(a) * s) + 0.1, z + Math.sin(a) * s, { life: 3.4, s0: 0.4 * s, s1: 1.3 * s, vx: Math.cos(a) * s, vz: Math.sin(a) * s, vy: 0.08, r: 0.55, g: 0.46, b: 0.36, a: 0.55 });
+        this.smoke.add(x + rand(-0.18, 0.18) * s, Y(x + rand(-0.18, 0.18) * s, z + rand(-0.18, 0.18) * s) + 0.2 + up * 1.6 * s, z + rand(-0.18, 0.18) * s, { life: 4, s0: 0.5 * s, s1: 0.95 * s, vy: 0.7 * s, r: 0.46, g: 0.36, b: 0.29, a: 0.85 });
         if (i < 7) return;
-        this.smoke.add(x + Math.cos(a) * 0.5 * s, H + (2.7 + rand(0, 0.5)) * s, z + Math.sin(a) * 0.5 * s, { life: 5, s0: 0.8 * s, s1: 2.1 * s, vy: 0.2 * s, vx: Math.cos(a) * 0.85 * s, vz: Math.sin(a) * 0.85 * s, r: 0.54, g: 0.41, b: 0.32, a: 0.8 });
-        if (i < 28) this.fire.add(x + Math.cos(a) * 0.45 * s, H + 2.6 * s, z + Math.sin(a) * 0.45 * s, { life: 1.5, s0: 0.5 * s, s1: 1.2 * s, vy: 0.2 * s, vx: Math.cos(a) * 0.6 * s, vz: Math.sin(a) * 0.6 * s });
+        this.smoke.add(x + Math.cos(a) * 0.5 * s, Y(x + Math.cos(a) * 0.5 * s, z + Math.sin(a) * 0.5 * s) + (2.7 + rand(0, 0.5)) * s, z + Math.sin(a) * 0.5 * s, { life: 5, s0: 0.8 * s, s1: 2.1 * s, vy: 0.2 * s, vx: Math.cos(a) * 0.85 * s, vz: Math.sin(a) * 0.85 * s, r: 0.54, g: 0.41, b: 0.32, a: 0.8 });
+        if (i < 28) this.fire.add(x + Math.cos(a) * 0.45 * s, Y(x + Math.cos(a) * 0.45 * s, z + Math.sin(a) * 0.45 * s) + 2.6 * s, z + Math.sin(a) * 0.45 * s, { life: 1.5, s0: 0.5 * s, s1: 1.2 * s, vy: 0.2 * s, vx: Math.cos(a) * 0.6 * s, vz: Math.sin(a) * 0.6 * s });
       } });
     }
   }
@@ -825,7 +1015,14 @@ export class World3D {
     const r = this.canvas.getBoundingClientRect();
     const ray = new THREE.Raycaster();
     ray.setFromCamera(new THREE.Vector2(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1), this.camera);
-    return ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -H), new THREE.Vector3());
+    let y = this.controls.target.y;
+    let p: THREE.Vector3 | null = null;
+    for (let i = 0; i < 5; i++) {
+      p = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -y), new THREE.Vector3());
+      if (!p) return null;
+      y = Math.max(0, Y(p.x, p.z));
+    }
+    return p;
   }
   private onScreen(x: number, y: number, z: number) {
     const r = this.canvas.getBoundingClientRect();
@@ -840,6 +1037,7 @@ export class World3D {
       touches++;
       start = { x: e.clientX, y: e.clientY, n: touches };
       this.goal = null;
+      this.follow = null;
       if (this.boxing) this.controls.enabled = false;
     });
     this.canvas.addEventListener('pointermove', (e) => {
@@ -859,7 +1057,7 @@ export class World3D {
         const [x0, x1, y0, y1] = [Math.min(start.x, e.clientX), Math.max(start.x, e.clientX), Math.min(start.y, e.clientY), Math.max(start.y, e.clientY)];
         this.onBox((W.world?.units ?? []).filter((u) => {
           if (u.o !== W.me) return false;
-          const p = this.onScreen(u.x, H + altitude(u.k), u.z);
+          const p = this.onScreen(u.x, Y(u.x, u.z) + altitude(u.k), u.z);
           return p.ok && p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
         }).map((u) => u.i));
         return;
@@ -871,7 +1069,7 @@ export class World3D {
       let best = 26;
       for (const u of W.world?.units ?? []) {
         if (!this.shown.get(u.i)?.seen) continue;
-        const s = this.onScreen(u.x, H + altitude(u.k) + 0.05, u.z);
+        const s = this.onScreen(u.x, Y(u.x, u.z) + altitude(u.k) + 0.05, u.z);
         const d = Math.hypot(s.x - e.clientX, s.y - e.clientY);
         if (s.ok && d < best) {
           best = d;

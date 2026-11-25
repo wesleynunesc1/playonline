@@ -1,5 +1,5 @@
 import {
-  Bonus, BonusKey, CAPTURE_RADIUS, CAPTURE_S, CITIES, CITY, CITY_INDEX, COLORS, DOME_COOL, DOME_RADIUS, EVENTS, LANDMARKS, ModeId, NUKES, POWERS, QUESTS, STARS, STAR_BONUS, PowerId, REGION_BONUS, RESEARCH, Shot, Stat, UNITS, UNIT_IDS,
+  ANNEX_REACH, Bonus, BonusKey, DEV_S, ERAS, MAX_DEV, POWER_ERA, REL, ULTIMATUM_S, UNIT_ERA, WORKS_ERA, annexCost, annexTime, devCost, CAPTURE_RADIUS, CAPTURE_S, CITIES, CITY, CITY_INDEX, COLORS, DOME_COOL, DOME_RADIUS, EVENTS, LANDMARKS, ModeId, NUKES, POWERS, QUESTS, STARS, STAR_BONUS, PowerId, REGION_BONUS, RESEARCH, Shot, Stat, UNITS, UNIT_IDS,
   UnitId, WORKS, WorksDef, WorksId, cityFuel, cityGun, cityHp, cityIncome, researchCost, slotsOf, unitCap,
 } from './data';
 
@@ -7,11 +7,11 @@ import {
 export const STEP = 0.1;
 export interface Player {
   i: number; name: string; emblem: string; color: string; team: number; bot: number; online: boolean; start: number; alive: boolean;
-  money: number; fuel: number; res: Record<string, number>; cool: Partial<Record<PowerId, number>>; stats: Partial<Record<Stat, number>>; hold: number; quests: string[];
+  money: number; fuel: number; res: Record<string, number>; cool: Partial<Record<PowerId, number>>; stats: Partial<Record<Stat, number>>; hold: number; quests: string[]; era: number;
 }
 export interface Works { k: WorksId; left: number; cool: number }
-export interface CityState { id: number; x: number; z: number; owner: number; hp: number; max: number; cap: number; capBy: number; works: Works[]; q: { u: UnitId; left: number }[]; rx: number; rz: number; off: number; cool: number; hit: number; loop: UnitId | '' }
-export interface Unit { i: number; k: UnitId; o: number; x: number; z: number; hp: number; max: number; tx: number; tz: number; go: 0 | 1 | 2; cool: number; off: number; dir: number; hit: number; kills: number; star: number }
+export interface CityState { id: number; x: number; z: number; owner: number; hp: number; max: number; cap: number; capBy: number; works: Works[]; q: { u: UnitId; left: number }[]; rx: number; rz: number; off: number; cool: number; hit: number; loop: UnitId | ''; dev: number; devLeft: number; deal: { by: number; left: number } | null; ruin: number }
+export interface Unit { i: number; k: UnitId; o: number; x: number; z: number; hp: number; max: number; tx: number; tz: number; go: 0 | 1 | 2; cool: number; off: number; dir: number; hit: number; kills: number; star: number; aim: number }
 /** Efeito visual: tipo, origem, destino */
 export type Fx = [kind: string, x1: number, z1: number, x2: number, z2: number, air?: number];
 export interface Zone { k: PowerId; o: number; x: number; z: number; left: number; tick: number }
@@ -19,12 +19,16 @@ export interface Zone { k: PowerId; o: number; x: number; z: number; left: numbe
 export interface Rad { x: number; z: number; r: number; left: number }
 export interface World {
   rads: Rad[];
+  /** Relação entre cada par de jogadores (REL), em matriz simétrica */
+  rel: number[];
+  offers: { a: number; b: number; k: number; left: number }[];
+  ult: { a: number; b: number; left: number }[];
   t: number; left: number; mode: ModeId; rules: string[]; players: Player[]; cities: CityState[]; units: Unit[]; zones: Zone[]; fx: Fx[]; log: { t: string; k: string }[]; seq: number;
   event: { i: number; left: number } | null; nextEvent: number; over: { rank: number[]; title: string } | null;
 }
 export interface Setup { name: string; emblem: string; start: number; bot: number }
 export type Cmd =
-  | { c: 'move'; u: number[]; x: number; z: number; hold?: boolean }
+  | { c: 'move'; u: number[]; x: number; z: number; hold?: boolean; hit?: boolean }
   | { c: 'stop'; u: number[] }
   | { c: 'build'; city: number; k: WorksId }
   | { c: 'sell'; city: number; n: number }
@@ -32,13 +36,26 @@ export type Cmd =
   | { c: 'cancel'; city: number }
   | { c: 'rally'; city: number; x: number; z: number }
   | { c: 'power'; k: PowerId; x: number; z: number }
+  | { c: 'dev'; city: number }
+  | { c: 'annex'; city: number }
+  | { c: 'era' }
+  | { c: 'dip'; to: number; k: 'guerra' | 'paz' | 'comercio' | 'alianca' | 'romper' }
+  | { c: 'answer'; from: number; yes: boolean }
   | { c: 'loop'; city: number; k: UnitId }
   | { c: 'research'; id: string };
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const dist = (a: { x: number; z: number }, b: { x: number; z: number }) => Math.hypot(a.x - b.x, a.z - b.z);
 export const hasRule = (w: World, r: string) => w.rules.includes(r);
-export const allied = (w: World, a: number, b: number) => a === b || (a >= 0 && b >= 0 && w.players[a].team === w.players[b].team);
+export const relOf = (w: World, a: number, b: number) => w.rel[a * w.players.length + b] ?? REL.paz;
+const setRel = (w: World, a: number, b: number, k: number) => {
+  w.rel[a * w.players.length + b] = w.rel[b * w.players.length + a] = k;
+};
+const sameTeam = (w: World, a: number, b: number) => a === b || w.players[a].team === w.players[b].team;
+export const allied = (w: World, a: number, b: number) => a === b || (a >= 0 && b >= 0 && (sameTeam(w, a, b) || relOf(w, a, b) === REL.alianca));
+/** Só há combate entre quem está em guerra (cidades neutras podem ser atacadas) */
+export const hostile = (w: World, a: number, b: number) => a !== b && (a < 0 || b < 0 || (!sameTeam(w, a, b) && relOf(w, a, b) === REL.guerra));
+export const atWar = (w: World, i: number) => w.players.some((p) => p.alive && p.i !== i && hostile(w, i, p.i));
 export const cityAt = (w: World, id: number) => w.cities[CITY_INDEX[id]];
 export const citiesOf = (w: World, i: number) => w.cities.filter((c) => c.owner === i);
 export const popOf = (w: World, i: number) => citiesOf(w, i).reduce((s, c) => s + CITY[c.id].pop, 0);
@@ -46,33 +63,34 @@ export const popOf = (w: World, i: number) => citiesOf(w, i).reduce((s, c) => s 
 export function createWorld(list: Setup[], mode: ModeId, minutes: number, rules: string[]): World {
   const humans = list.filter((p) => !p.bot).length;
   const w: World = {
-    rads: [], t: 0, left: minutes * 60, mode, rules, units: [], zones: [], fx: [], log: [], seq: 0, event: null, nextEvent: 70, over: null,
+    rads: [], rel: [], offers: [], ult: [], t: 0, left: minutes ? minutes * 60 : 1e7, mode, rules, units: [], zones: [], fx: [], log: [], seq: 0, event: null, nextEvent: 70, over: null,
     players: list.map((p, i) => ({
-      i, name: p.name, emblem: p.emblem, color: COLORS[i % COLORS.length], bot: p.bot, online: true, start: p.start, alive: true, hold: 0, quests: [],
+      i, name: p.name, emblem: p.emblem, color: COLORS[i % COLORS.length], bot: p.bot, online: true, start: p.start, alive: true, hold: 0, quests: [], era: rules.includes('avancado') ? 3 : 1,
       team: mode === 'equipes' ? i % 2 : mode === 'coop' ? (p.bot ? 100 : 0) : i + 10,
       money: rules.includes('rico') ? 6000 : 1200, fuel: rules.includes('rico') ? 2000 : 400, res: {}, cool: {}, stats: {},
     })),
     cities: CITIES.map((c) => {
       const max = Math.round(cityHp(c.level) * (rules.includes('fraco') ? 0.5 : rules.includes('forte') ? 2 : 1));
-      return { id: c.id, x: c.x, z: c.z, owner: -1, hp: max, max, cap: 0, capBy: -1, works: [], q: [], rx: c.x, rz: c.z, off: 0, cool: 0, hit: 0, loop: '' as const };
+      return { id: c.id, x: c.x, z: c.z, owner: -1, hp: max, max, cap: 0, capBy: -1, works: [], q: [], rx: c.x, rz: c.z, off: 0, cool: 0, hit: 0, loop: '' as const, dev: 0, devLeft: 0, deal: null, ruin: 0 };
     }),
   };
+  w.rel = w.players.flatMap((a) => w.players.map((b) => (a.i === b.i ? REL.alianca : rules.includes('guerra') && a.team !== b.team ? REL.guerra : a.team === b.team ? REL.alianca : REL.paz)));
   if (mode === 'coop' && humans === list.length) w.mode = 'dominio';
   for (const p of w.players) {
     if (!cityAt(w, p.start) || (w.mode === 'capital' && p.start === FORTALEZA)) p.start = CITIES.find((c) => c.level === 4 && w.players.every((o) => o.start !== c.id))!.id;
     const c = cityAt(w, p.start);
     Object.assign(c, { owner: p.i, max: Math.max(c.max, 700) });
     c.hp = c.max;
-    c.works = (['comando', 'quartel', 'mercado', 'refinaria'] as WorksId[]).map((k) => ({ k, left: 0, cool: 0 }));
+    c.works = ((rules.includes('guerra') ? ['comando', 'quartel', 'mercado', 'refinaria'] : ['comando', 'mercado']) as WorksId[]).map((k) => ({ k, left: 0, cool: 0 }));
     c.rz = c.z + 0.9;
-    const army: UnitId[] = ['soldado', 'soldado', 'soldado', 'soldado', 'moto', 'blindado', ...(rules.includes('exercito') ? (['tanque', 'tanque', 'soldado', 'soldado', 'antitanque', 'artilharia'] as UnitId[]) : [])];
+    const army: UnitId[] = [...((rules.includes('guerra') ? ['soldado', 'soldado', 'soldado', 'soldado', 'moto', 'blindado'] : ['soldado', 'soldado', 'moto']) as UnitId[]), ...(rules.includes('exercito') ? (['tanque', 'tanque', 'soldado', 'soldado', 'antitanque', 'artilharia'] as UnitId[]) : [])];
     army.forEach((k, n) => spawn(w, k, p.i, c.x + Math.cos(n * 1.1) * 0.95, c.z + Math.sin(n * 1.1) * 0.95));
   }
   return w;
 }
 export function spawn(w: World, k: UnitId, o: number, x: number, z: number): Unit {
   const hp = Math.round(UNITS[k].hp * (1 + bonusOf(w, o).armor));
-  const u: Unit = { i: ++w.seq, k, o, x, z, hp, max: hp, tx: x, tz: z, go: 0, cool: rand(0, 0.5), off: 0, dir: 0, hit: 0, kills: 0, star: 0 };
+  const u: Unit = { i: ++w.seq, k, o, x, z, hp, max: hp, tx: x, tz: z, go: 0, cool: rand(0, 0.5), off: 0, dir: 0, hit: 0, kills: 0, star: 0, aim: 0 };
   w.units.push(u);
   return u;
 }
@@ -130,16 +148,20 @@ export function incomeOf(w: World, i: number): [number, number] {
     // Cidade contaminada não produz
     if (c.owner !== i || irradiated(w, c.x, c.z)) continue;
     const lvl = CITY[c.id].level;
-    m += cityIncome(lvl);
-    f += cityFuel(lvl);
+    m += cityIncome(lvl) * (1 + c.dev * 0.5);
+    f += cityFuel(lvl) * (1 + c.dev * 0.4);
     for (const k of c.works) {
       if (k.left > 0) continue;
       m += WORKS[k.k].income ?? 0;
       f += WORKS[k.k].fuelOut ?? 0;
     }
   }
-  return [Math.max(0, m * (1 + b.income)), Math.max(0, f * (1 + b.fuel))];
+  // Cada acordo de comércio ou aliança rende um pouco aos dois
+  const trade = 1 + tradesOf(w, i) * 0.08;
+  return [Math.max(0, m * (1 + b.income) * trade), Math.max(0, f * (1 + b.fuel) * trade)];
 }
+export const tradesOf = (w: World, i: number) => w.players.filter((p) => p.i !== i && p.alive && p.team !== w.players[i].team && relOf(w, i, p.i) >= REL.comercio).length;
+export const slotsIn = (w: World, c: CityState) => slotsOf(CITY[c.id].level) + c.dev + (w.players[c.owner]?.start === c.id ? 1 : 0);
 export const armySize = (w: World, i: number) => w.units.reduce((n, u) => n + (u.o === i ? 1 : 0), 0);
 export const armyCap = (w: World, i: number) => (mods.get(i)?.nocap ? 200 : unitCap(citiesOf(w, i).length));
 const stat = (p: Player | undefined, s: Stat, n = 1) => {
@@ -171,12 +193,14 @@ export function command(w: World, i: number, cmd: Cmd): string {
       if (!ok(cmd.x) || !ok(cmd.z) || !Array.isArray(cmd.u)) return 'Ordem inválida.';
       const ids = new Set(cmd.u.slice(0, 200));
       const list = w.units.filter((u) => u.o === i && ids.has(u.i));
+      // Cidade neutra só é atacada por ordem expressa
+      const aim = cmd.hit ? w.cities.find((c) => Math.hypot(c.x - cmd.x, c.z - cmd.z) < 0.5)?.id ?? 0 : 0;
       // Formação: lado a lado em volta do ponto
       list.forEach((u, n) => {
         const ring = Math.ceil(Math.sqrt(n));
         const a = n * 2.4;
         const r = n ? 0.22 * ring + 0.05 : 0;
-        Object.assign(u, { tx: Math.max(-40, Math.min(40, cmd.x + Math.cos(a) * r)), tz: Math.max(-44, Math.min(44, cmd.z + Math.sin(a) * r)), go: cmd.hold ? 2 : 1 });
+        Object.assign(u, { tx: Math.max(-40, Math.min(40, cmd.x + Math.cos(a) * r)), tz: Math.max(-44, Math.min(44, cmd.z + Math.sin(a) * r)), go: cmd.hold ? 2 : 1, aim });
       });
       return '';
     }
@@ -188,7 +212,8 @@ export function command(w: World, i: number, cmd: Cmd): string {
       const d = WORKS[cmd.k];
       if (!c || !d || cmd.k === 'comando') return 'Cidade inválida.';
       if (CITY[c.id].level < d.level) return `Precisa de cidade tamanho ${d.level}.`;
-      if (c.works.length >= slotsOf(CITY[c.id].level) + (c.id === p.start ? 1 : 0)) return 'Cidade cheia.';
+      if (p.era < WORKS_ERA[cmd.k] && !mods.get(i)?.free) return `Precisa da Era ${WORKS_ERA[cmd.k]}.`;
+      if (c.works.length >= slotsIn(w, c)) return 'Cidade cheia. Evolua a cidade para ganhar espaço.';
       if (cmd.k === 'aeroporto' && hasRule(w, 'semar')) return 'Sem aviação nesta partida.';
       const no = pay(worksPrice(w, i, cmd.k));
       if (no) return no;
@@ -214,6 +239,7 @@ export function command(w: World, i: number, cmd: Cmd): string {
       const d = UNITS[cmd.k];
       if (!c || !d) return 'Cidade inválida.';
       if (!c.works.some((k) => k.k === d.from && k.left <= 0)) return `Precisa de ${WORKS[d.from].name}.`;
+      if (p.era < UNIT_ERA[cmd.k] && !mods.get(i)?.free) return `Precisa da Era ${UNIT_ERA[cmd.k]}.`;
       const n = Math.max(1, Math.min(10, Math.floor(cmd.n ?? 1)));
       for (let x = 0; x < n; x++) {
         if (armySize(w, i) + w.cities.reduce((s, k) => s + (k.owner === i ? k.q.length : 0), 0) >= armyCap(w, i)) return x ? '' : 'Limite de tropas. Conquiste mais cidades.';
@@ -241,6 +267,46 @@ export function command(w: World, i: number, cmd: Cmd): string {
       c.rz = cmd.z;
       return '';
     }
+    case 'dev': {
+      const c = own(cmd.city);
+      if (!c) return 'Cidade inválida.';
+      if (c.dev >= MAX_DEV) return 'Cidade no máximo.';
+      if (c.devLeft > 0) return 'Já está evoluindo.';
+      if (p.era < c.dev + 1) return `Precisa da Era ${c.dev + 1}.`;
+      const no = pay(mods.get(i)?.free ? [0, 0] : devCost(CITY[c.id].level, c.dev));
+      if (no) return no;
+      c.devLeft = mods.get(i)?.instant ? 0.1 : DEV_S / (hasRule(w, 'turbo') ? 2 : 1);
+      return '';
+    }
+    case 'annex': {
+      const c = CITY_INDEX[cmd.city] === undefined ? null : cityAt(w, cmd.city);
+      const no = !c ? 'Cidade inválida.' : annexBlock(w, i, c);
+      if (no || !c) return no;
+      const cost = pay(mods.get(i)?.free ? [0, 0] : annexCost(CITY[c.id].level, citiesOf(w, i).length));
+      if (cost) return cost;
+      c.deal = { by: i, left: mods.get(i)?.instant ? 0.1 : annexTime(CITY[c.id].level) };
+      return '';
+    }
+    case 'era': {
+      const e = ERAS[p.era];
+      if (!e) return 'Você já está na última era.';
+      if (citiesOf(w, i).length < e.cities && !mods.get(i)?.free) return `Precisa governar ${e.cities} cidades.`;
+      const no = pay(mods.get(i)?.free ? [0, 0] : [e.money, e.fuel]);
+      if (no) return no;
+      p.era++;
+      say(w, `${e.icon} ${p.name} chegou à ${e.name}`, 'event');
+      w.fx.push(['era', cityAt(w, p.start).x, cityAt(w, p.start).z, cityAt(w, p.start).x, cityAt(w, p.start).z]);
+      return '';
+    }
+    case 'dip': return diplomacy(w, i, cmd.to, cmd.k);
+    case 'answer': {
+      const o = w.offers.find((x) => x.a === cmd.from && x.b === i);
+      if (!o) return 'A proposta expirou.';
+      w.offers = w.offers.filter((x) => x !== o);
+      if (cmd.yes) seal(w, o.a, o.b, o.k);
+      else say(w, `${p.name} recusou a proposta de ${w.players[o.a].name}`);
+      return '';
+    }
     case 'loop': {
       const c = own(cmd.city);
       if (!c || !UNITS[cmd.k]) return 'Cidade inválida.';
@@ -262,6 +328,12 @@ export function command(w: World, i: number, cmd: Cmd): string {
       if (!d || !ok(cmd.x) || !ok(cmd.z)) return 'Apoio inválido.';
       if (hasRule(w, 'semapoio')) return 'Sem apoios nesta partida.';
       if ((p.cool[cmd.k] ?? 0) > 0) return 'Recarregando.';
+      if (HARM.includes(cmd.k)) {
+        const r = d.radius + 0.5;
+        const at = (o: { x: number; z: number }) => Math.hypot(o.x - cmd.x, o.z - cmd.z) < r;
+        const calm = [...w.cities.filter((c) => c.owner >= 0 && at(c)).map((c) => c.owner), ...w.units.filter(at).map((u) => u.o)].find((o) => o !== i && !hostile(w, i, o));
+        if (calm !== undefined) return `Você está em paz com ${w.players[calm].name}. Declare guerra antes.`;
+      }
       const need = needOf(w, i, cmd.k);
       if (need) return need;
       const no = pay([mods.get(i)?.free ? 0 : d.money, 0]);
@@ -277,12 +349,71 @@ export function command(w: World, i: number, cmd: Cmd): string {
 
 /** O que falta para usar um apoio; '' quando liberado */
 export function needOf(w: World, i: number, k: PowerId): string {
+  if (w.players[i].era < POWER_ERA[k] && !mods.get(i)?.free) return `Precisa da Era ${POWER_ERA[k]}.`;
   const n = NUKES[k];
   if (!n) return '';
   if (hasRule(w, 'semnuke')) return 'Armas nucleares proibidas nesta partida.';
   if (mods.get(i)?.free) return '';
   if ((w.players[i].res.nuclear ?? 0) < n.need) return `Pesquise Programa Nuclear nível ${n.need}.`;
   return silosOf(w, i).length ? '' : 'Construa um Silo de Mísseis.';
+}
+const HARM: PowerId[] = ['barragem', 'aereo', 'emp', 'tatica', 'balistico', 'hidrogenio'];
+/** Por que não dá para trazer esta cidade por acordo; '' se dá */
+export function annexBlock(w: World, i: number, c: CityState): string {
+  if (c.owner >= 0) return 'Essa cidade já tem governo.';
+  if (c.deal) return c.deal.by === i ? 'Negociação em andamento.' : `${w.players[c.deal.by].name} já está negociando.`;
+  if (c.hp < c.max * 0.9) return 'A cidade está sob ataque.';
+  if (!citiesOf(w, i).some((o) => dist(o, c) < ANNEX_REACH)) return 'Longe demais das suas cidades.';
+  if (w.cities.filter((o) => o.deal?.by === i).length >= w.players[i].era) return 'Muitas negociações ao mesmo tempo.';
+  return '';
+}
+function diplomacy(w: World, a: number, b: number, k: 'guerra' | 'paz' | 'comercio' | 'alianca' | 'romper'): string {
+  const [p, q] = [w.players[a], w.players[b]];
+  if (!q || !q.alive || sameTeam(w, a, b)) return 'Jogador inválido.';
+  const now = relOf(w, a, b);
+  if (k === 'romper') {
+    if (now < REL.comercio) return 'Não há acordo.';
+    setRel(w, a, b, REL.paz);
+    say(w, `${p.name} rompeu o acordo com ${q.name}`, 'alert');
+    return '';
+  }
+  if (k === 'guerra') {
+    if (now === REL.guerra) return 'Vocês já estão em guerra.';
+    if (now === REL.alianca) return 'Rompa a aliança antes.';
+    if (w.ult.some((u) => (u.a === a && u.b === b) || (u.a === b && u.b === a))) return 'Já há um ultimato.';
+    w.ult.push({ a, b, left: ULTIMATUM_S });
+    say(w, `⚔️ ${p.name} deu um ultimato a ${q.name}: guerra em ${ULTIMATUM_S}s`, 'alert');
+    return '';
+  }
+  const kind = REL[k];
+  if ((k === 'paz') !== (now === REL.guerra)) return k === 'paz' ? 'Vocês já estão em paz.' : 'Façam as pazes primeiro.';
+  if (now === kind) return 'Esse acordo já existe.';
+  if (k === 'alianca' && now !== REL.comercio) return 'Comecem por um acordo de comércio.';
+  const back = w.offers.find((o) => o.a === b && o.b === a && o.k === kind);
+  if (back) {
+    w.offers = w.offers.filter((o) => o !== back);
+    seal(w, a, b, kind);
+    return '';
+  }
+  if (w.offers.some((o) => o.a === a && o.b === b)) return 'Espere a resposta.';
+  w.offers.push({ a, b, k: kind, left: 45 });
+  return '';
+}
+function seal(w: World, a: number, b: number, k: number) {
+  setRel(w, a, b, k);
+  w.ult = w.ult.filter((u) => !((u.a === a && u.b === b) || (u.a === b && u.b === a)));
+  say(w, `${['🕊️', '', '📦', '🤝'][k]} ${w.players[a].name} e ${w.players[b].name}: ${['paz', '', 'acordo de comércio', 'aliança'][k]}`, 'event');
+}
+function stepDiplomacy(w: World) {
+  for (const o of w.offers) o.left -= STEP;
+  w.offers = w.offers.filter((o) => o.left > 0 && w.players[o.a].alive && w.players[o.b].alive);
+  for (const u of w.ult) {
+    u.left -= STEP;
+    if (u.left > 0 || !w.players[u.a].alive || !w.players[u.b].alive) continue;
+    setRel(w, u.a, u.b, REL.guerra);
+    say(w, `⚔️ Começou a guerra entre ${w.players[u.a].name} e ${w.players[u.b].name}!`, 'alert');
+  }
+  w.ult = w.ult.filter((u) => u.left > 0);
 }
 const silosOf = (w: World, i: number) => citiesOf(w, i).filter((c) => c.works.some((k) => k.k === 'silo' && k.left <= 0));
 
@@ -312,7 +443,7 @@ function hurtUnit(w: World, u: Unit, n: number, by: number, killer?: Unit) {
   u.hit = 1.2;
   stat(w.players[by], 'damage', n);
   if (u.hp > 0) return;
-  w.fx.push([UNITS[u.k].cls === 'inf' ? 'baixa' : UNITS[u.k].cls === 'ar' ? 'queda' : 'destroco', u.x, u.z, u.x, u.z]);
+  w.fx.push([UNITS[u.k].cls === 'inf' ? 'baixa' : UNITS[u.k].cls === 'ar' ? 'queda' : 'destroco', UNIT_IDS.indexOf(u.k), u.dir, u.x, u.z]);
   stat(w.players[u.o], 'lost');
   if (killer && ++killer.kills >= (STARS[killer.star] ?? 1e9)) {
     killer.star++;
@@ -330,6 +461,8 @@ function hurtCity(w: World, c: CityState, n: number, by: number) {
   if (c.owner >= 0 && mods.get(c.owner)?.god) return;
   const armor = c.owner >= 0 ? 1 + Math.max(-0.5, bonusOf(w, c.owner).city) : 1;
   c.hp = Math.max(0, c.hp - n / armor);
+  c.ruin = Math.min(1, c.ruin + (n / c.max) * 0.45);
+  c.deal = null;
   c.hit = 4;
   stat(w.players[by], 'damage', n);
 }
@@ -378,6 +511,7 @@ export function step(w: World) {
     for (const k in p.cool) p.cool[k as PowerId] = Math.max(0, (p.cool[k as PowerId] ?? 0) - STEP);
   }
   stepZones(w);
+  stepDiplomacy(w);
   if (w.rads.length) stepRads(w, near);
   if (Math.round(w.t / STEP) % 10 === 0) stepQuests(w);
   for (const u of w.units) stepUnit(w, u, near, smoked);
@@ -405,7 +539,7 @@ function stepUnit(w: World, u: Unit, near: Near, smoked: (x: number, z: number) 
       if (o !== u && allied(w, o.o, u.o) && UNITS[o.k].cls === 'inf') o.hp = Math.min(o.max, o.hp + d.heal! * (1 + b.heal));
     });
   }
-  if (d.jam) near(u.x, u.z, range, (o) => { if (!allied(w, o.o, u.o) && (o.k === 'fpv' || o.k === 'recon')) hurtUnit(w, o, 26 * STEP, u.o); });
+  if (d.jam) near(u.x, u.z, range, (o) => { if (hostile(w, o.o, u.o) && (o.k === 'fpv' || o.k === 'recon')) hurtUnit(w, o, 26 * STEP, u.o); });
 
   // Alvo: o mais vantajoso ao alcance
   let foe: Unit | null = null;
@@ -415,7 +549,7 @@ function stepUnit(w: World, u: Unit, near: Near, smoked: (x: number, z: number) 
   const look = d.suicide ? 1.6 : range;
   if (armed) {
     near(u.x, u.z, look, (o, k) => {
-      if (allied(w, o.o, u.o) || (d.min && k < d.min) || smoked(o.x, o.z)) return;
+      if (!hostile(w, o.o, u.o) || (d.min && k < d.min) || smoked(o.x, o.z)) return;
       const cls = UNITS[o.k].cls;
       const dmg = d.dmg[cls === 'inf' ? 0 : cls === 'vei' ? 1 : 2];
       if (dmg <= 0) return;
@@ -427,13 +561,12 @@ function stepUnit(w: World, u: Unit, near: Near, smoked: (x: number, z: number) 
     });
     if (!foe) {
       for (const c of w.cities) {
-        if (allied(w, c.owner, u.o) || c.hp <= 0) continue;
+        if (!hostile(w, c.owner, u.o) || c.hp <= 0) continue;
         const k = dist(u, c);
         if (k <= look + 0.35 && !(d.min && k < d.min) && (!town || k < dist(u, town))) town = c;
       }
-      // Cidade neutra no caminho só é atacada se for o destino
       const t = town as CityState | null;
-      if (t && t.owner < 0 && Math.hypot(u.tx - t.x, u.tz - t.z) > (u.go ? 1.4 : 0.8)) town = null;
+      if (t && t.owner < 0 && u.aim !== t.id) town = u.aim && cityAt(w, u.aim).owner < 0 && cityAt(w, u.aim).hp > 0 && dist(u, cityAt(w, u.aim)) <= look + 0.35 ? cityAt(w, u.aim) : null;
     }
   }
   const target = (foe ?? town) as { x: number; z: number } | null;
@@ -497,9 +630,10 @@ function advance(u: Unit, x: number, z: number, speed: number) {
 function shootFrom(w: World, c: CityState, gun: NonNullable<WorksDef['gun']>, near: Near, smoked: (x: number, z: number) => boolean): boolean {
   let foe: Unit | null = null;
   let best = 1e9;
-  // Cidade neutra só reage a quem a ataca ou entra nela
-  near(c.x, c.z, c.owner < 0 && !c.hit ? 0.75 : gun.range, (o, k) => {
-    if (o.o === c.owner || (c.owner >= 0 && allied(w, o.o, c.owner)) || smoked(o.x, o.z)) return;
+  // Cidade neutra só reage a quem a ataca
+  if (c.owner < 0 && !c.hit) return false;
+  near(c.x, c.z, gun.range, (o, k) => {
+    if (!hostile(w, o.o, c.owner) || smoked(o.x, o.z)) return;
     const cls = UNITS[o.k].cls;
     if (gun.dmg[cls === 'inf' ? 0 : cls === 'vei' ? 1 : 2] <= 0 || o.k === 'recon' || k >= best) return;
     best = k;
@@ -528,6 +662,23 @@ function stepCity(w: World, c: CityState, near: Near, smoked: (x: number, z: num
       if (!gun || k.left > 0) continue;
       if (k.cool <= 0 && shootFrom(w, c, gun, near, smoked)) k.cool = gun.every;
     }
+  }
+  if (!c.hit) c.ruin = Math.max(0, c.ruin - 0.006 * STEP * (c.owner >= 0 ? 2 : 1));
+  if (c.devLeft > 0 && (c.devLeft -= STEP) <= 0) {
+    c.devLeft = 0;
+    c.dev++;
+    c.hp = Math.round(c.hp * 1.15);
+    c.max = Math.round(c.max * 1.15);
+    stat(w.players[c.owner], 'dev');
+    w.fx.push(['evolui', c.x, c.z, c.x, c.z]);
+  }
+  if (c.deal && (!w.players[c.deal.by].alive || c.owner >= 0)) c.deal = null;
+  if (c.deal && (c.deal.left -= STEP) <= 0) {
+    const by = c.deal.by;
+    Object.assign(c, { owner: by, deal: null, rx: c.x, rz: c.z + 0.9 });
+    stat(w.players[by], 'annex');
+    w.fx.push(['tomada', c.x, c.z, c.x, c.z]);
+    say(w, `🤝 ${CITY[c.id].name} entrou para o governo de ${w.players[by].name}`);
   }
   for (const k of c.works) k.cool = Math.max(0, k.cool - STEP);
   for (const k of c.works) if (k.left > 0) k.left = Math.max(0, k.left - STEP);
@@ -559,9 +710,9 @@ function stepCity(w: World, c: CityState, near: Near, smoked: (x: number, z: num
   let contested = false;
   near(c.x, c.z, CAPTURE_RADIUS, (u) => {
     if (!UNITS[u.k].captures) return;
-    if (c.owner >= 0 && allied(w, u.o, c.owner)) contested = true;
+    if (c.owner >= 0 && !hostile(w, u.o, c.owner)) contested ||= allied(w, u.o, c.owner);
     else if (taker < 0) taker = u.o;
-    else if (!allied(w, taker, u.o)) contested = true;
+    else if (hostile(w, taker, u.o)) contested = true;
   });
   if (taker < 0 || contested) {
     c.cap = Math.max(0, c.cap - STEP);
@@ -575,7 +726,7 @@ function stepCity(w: World, c: CityState, near: Near, smoked: (x: number, z: num
   const before = c.owner;
   if (before >= 0) stat(w.players[before], 'lostCities');
   stat(w.players[taker], 'caps');
-  Object.assign(c, { owner: taker, cap: 0, capBy: -1, q: [], loop: '', hp: c.max * 0.35, rx: c.x, rz: c.z + 0.9 });
+  Object.assign(c, { owner: taker, cap: 0, capBy: -1, q: [], loop: '', devLeft: 0, hp: c.max * 0.35, rx: c.x, rz: c.z + 0.9 });
   c.works = c.works.filter((k) => k.k !== 'comando').slice(0, Math.max(0, c.works.length - 1));
   w.players[taker].money += 80 * lvl;
   w.fx.push(['tomada', c.x, c.z, c.x, c.z]);
@@ -621,7 +772,7 @@ function stepZones(w: World) {
 function detonate(w: World, z: Zone) {
   const n = NUKES[z.k]!;
   const r = POWERS[z.k].radius;
-  const dome = w.cities.find((c) => c.owner >= 0 && !allied(w, c.owner, z.o) && c.off <= 0 && Math.hypot(c.x - z.x, c.z - z.z) < DOME_RADIUS && c.works.some((k) => k.k === 'domo' && k.left <= 0 && k.cool <= 0));
+  const dome = w.cities.find((c) => c.owner >= 0 && hostile(w, c.owner, z.o) && c.off <= 0 && Math.hypot(c.x - z.x, c.z - z.z) < DOME_RADIUS && c.works.some((k) => k.k === 'domo' && k.left <= 0 && k.cool <= 0));
   if (dome) {
     dome.works.find((k) => k.k === 'domo' && k.left <= 0 && k.cool <= 0)!.cool = DOME_COOL;
     w.fx.push(['interceptado', dome.x, dome.z, z.x, z.z]);
@@ -634,6 +785,7 @@ function detonate(w: World, z: Zone) {
     if (Math.hypot(c.x - z.x, c.z - z.z) > r * 0.6 || (c.owner >= 0 && mods.get(c.owner)?.god)) continue;
     c.works = c.works.filter((k) => k.k === 'comando' || Math.random() > 0.6);
     c.q = [];
+    c.ruin = 1;
   }
   w.rads.push({ x: z.x, z: z.z, r: r * 0.9, left: n.rad });
 }
@@ -647,7 +799,7 @@ function stepRads(w: World, near: Near) {
 }
 export const irradiated = (w: World, x: number, z: number) => w.rads.some((a) => Math.hypot(a.x - x, a.z - z) < a.r);
 export function questValue(w: World, i: number, s: (typeof QUESTS)[number]['stat']): number {
-  return s === 'cities' ? citiesOf(w, i).length : s === 'army' ? armySize(w, i) : w.players[i].stats[s] ?? 0;
+  return s === 'cities' ? citiesOf(w, i).length : s === 'era' ? w.players[i].era : s === 'trades' ? tradesOf(w, i) : s === 'army' ? armySize(w, i) : w.players[i].stats[s] ?? 0;
 }
 function stepQuests(w: World) {
   for (const p of w.players) {
@@ -715,7 +867,7 @@ export function eyes(w: World, i: number): [number, number, number][] {
 const SMALL = { bala: 1, canhao: 1, missil: 1, baixa: 1 };
 const r2 = (n: number) => Math.round(n * 100) / 100;
 export type Pack = { t: number; l: number; u: number[]; fx: Fx[]; z: Zone[]; r: Rad[]; full?: Full };
-export interface Full { cities: unknown[]; players: Player[]; log: World['log']; event: World['event']; over: World['over'] }
+export interface Full { rel: number[]; offers: World['offers']; ult: World['ult']; cities: unknown[]; players: Player[]; log: World['log']; event: World['event']; over: World['over'] }
 export function pack(w: World, full: boolean): Pack {
   const u: number[] = [];
   for (const x of w.units) u.push(x.i, UNIT_IDS.indexOf(x.k), x.o, Math.round(x.x * 100), Math.round(x.z * 100), Math.max(1, Math.round((x.hp / x.max) * 100)), Math.round(x.dir * 50), x.go, (x.off > 0 ? 1 : 0) + x.star * 2);
@@ -726,7 +878,8 @@ export function pack(w: World, full: boolean): Pack {
     fx: [...w.fx.filter((f) => f[0] in SMALL).slice(-70), ...w.fx.filter((f) => !(f[0] in SMALL)).slice(-120)].map((f) => [f[0], r2(f[1]), r2(f[2]), r2(f[3]), r2(f[4]), f[5] ?? 0] as Fx),
     ...(full ? {
       full: {
-        cities: w.cities.map((c) => [c.owner, Math.round((c.hp / c.max) * 100), c.max, r2(c.cap), c.capBy, c.works.map((k) => [k.k, Math.ceil(k.left), Math.ceil(k.cool)]), c.q.map((q) => [q.u, Math.ceil(q.left)]), r2(c.rx), r2(c.rz), c.off > 0 ? 1 : 0, c.hit > 0 ? 1 : 0, c.loop]),
+        cities: w.cities.map((c) => [c.owner, Math.round((c.hp / c.max) * 100), c.max, r2(c.cap), c.capBy, c.works.map((k) => [k.k, Math.ceil(k.left), Math.ceil(k.cool)]), c.q.map((q) => [q.u, Math.ceil(q.left)]), r2(c.rx), r2(c.rz), c.off > 0 ? 1 : 0, c.hit > 0 ? 1 : 0, c.loop, c.dev, Math.ceil(c.devLeft), c.deal ? [c.deal.by, Math.ceil(c.deal.left)] : 0, r2(c.ruin)]),
+        rel: w.rel, offers: w.offers, ult: w.ult,
         players: w.players.map((p) => ({ ...p, money: Math.floor(p.money), fuel: Math.floor(p.fuel) })), log: w.log, event: w.event, over: w.over,
       },
     } : {}),
@@ -755,12 +908,15 @@ export function unpack(w: World, p: Pack) {
   w.log = f.log;
   w.event = f.event;
   w.over = f.over;
-  (f.cities as [number, number, number, number, number, [WorksId, number, number][], [UnitId, number][], number, number, number, number, UnitId | ''][]).forEach((c, n) => {
+  w.rel = f.rel;
+  w.offers = f.offers;
+  w.ult = f.ult;
+  (f.cities as [number, number, number, number, number, [WorksId, number, number][], [UnitId, number][], number, number, number, number, UnitId | '', number, number, 0 | [number, number], number][]).forEach((c, n) => {
     const s = w.cities[n];
     if (!s) return;
     Object.assign(s, {
       owner: c[0], hp: (c[1] / 100) * c[2], max: c[2], cap: c[3], capBy: c[4], works: c[5].filter((k) => WORKS[k[0]]).map((k) => ({ k: k[0], left: k[1], cool: k[2] })),
-      q: c[6].filter((q) => UNITS[q[0]]).map((q) => ({ u: q[0], left: q[1] })), rx: c[7], rz: c[8], off: c[9], hit: c[10], loop: c[11],
+      q: c[6].filter((q) => UNITS[q[0]]).map((q) => ({ u: q[0], left: q[1] })), rx: c[7], rz: c[8], off: c[9], hit: c[10], loop: c[11], dev: c[12], devLeft: c[13], deal: c[14] ? { by: c[14][0], left: c[14][1] } : null, ruin: c[15],
     });
   });
 }
