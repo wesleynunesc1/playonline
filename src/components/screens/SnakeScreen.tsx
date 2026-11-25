@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Pause, Play, Volume2, VolumeX } from 'lucide-react';
-import { useGameStore } from '../../stores/useGameStore';
+import { useApp } from '../../ui';
 import { sound } from '../../utils/audio';
 import { Button } from '../common/Button';
 import { BONUS_POINTS, Direction, FOOD_POINTS, SnakeGame, createSnake, step, stepMs, turn } from '../../games/snake';
@@ -33,9 +33,9 @@ const readBest = (): number => {
 };
 
 export const SnakeScreen: React.FC = () => {
-  const setScreen = useGameStore((s) => s.setScreen);
-  const soundEnabled = useGameStore((s) => s.soundEnabled);
-  const toggleSound = useGameStore((s) => s.toggleSound);
+  const setScreen = useApp((s) => s.setScreen);
+  const soundEnabled = useApp((s) => s.soundEnabled);
+  const toggleSound = useApp((s) => s.toggleSound);
 
   const [walls, setWalls] = useState(true);
   const [status, setStatusState] = useState<Status>('ready');

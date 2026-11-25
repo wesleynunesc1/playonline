@@ -1,130 +1,79 @@
 import React, { useEffect } from 'react';
-import { useGameStore } from '../../stores/useGameStore';
+import confetti from 'canvas-confetti';
+import { COUNTRIES } from '../../data/countries';
+import { GENERALS, TERRAIN_INFO, UNITS, UNIT_INFO } from '../../data/content';
+import { Tactic, game, useGame } from '../../engine/state';
+import { BOSS, TACTICS, autoBattle, battleRound, closeBattle, retreat } from '../../engine/war';
+import { formatNumber } from '../../utils/formatters';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
-import { COUNTRIES_DATA } from '../../data/countries';
-import { formatNumber } from '../../utils/formatters';
-import confetti from 'canvas-confetti';
-import { Trophy, Skull, Swords, ArrowRight } from 'lucide-react';
+import { Bar } from '../common/Kit';
 
+const TITLE = { won: 'Vitória!', lost: 'Derrota', fled: 'Retirada', '': '' };
+const ICONS = 12;
+
+/** Batalha em rodadas: leia a tática inimiga e escolha a que vence */
 export const BattleModal: React.FC = () => {
-  const activeModal = useGameStore((state) => state.activeModal);
-  const lastBattleResult = useGameStore((state) => state.lastBattleResult);
-  const closeModal = useGameStore((state) => state.closeModal);
-  const militaryPower = useGameStore((state) => state.militaryPower);
-
+  useGame();
+  const b = game()?.battle;
   useEffect(() => {
-    if (activeModal === 'battle_result' && lastBattleResult?.won) {
-      // Disparar confetes de comemoração
-      try {
-        confetti({
-          particleCount: 70,
-          spread: 60,
-          origin: { y: 0.6 },
-          colors: ['#3b82f6', '#10b981', '#f59e0b', '#ffffff'],
-        });
-      } catch {
-        // Ignora caso ambiente não suporte canvas
-      }
-    }
-  }, [activeModal, lastBattleResult]);
-
-  if (activeModal !== 'battle_result' || !lastBattleResult) {
-    return null;
-  }
-
-  const targetCountry = COUNTRIES_DATA[lastBattleResult.targetCountryId];
-  if (!targetCountry) return null;
-  const { defensive, attackerId } = lastBattleResult;
-  const attackerName = attackerId ? COUNTRIES_DATA[attackerId].name : 'um rival';
+    if (b?.done === 'won') confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+  }, [b?.done]);
+  if (!b) return null;
+  const base = COUNTRIES[b.target];
+  const name = b.boss ? BOSS.name : base.name;
+  const general = GENERALS.find((x) => x.id === b.general);
+  const units = UNITS.filter((u) => b.army[u] > 0);
+  const soldiers = (ratio: number, icons: string[], side: string) =>
+    Array.from({ length: Math.ceil(ratio * ICONS) }, (_, i) => (
+      <span key={i} className={`battle-unit ${side}`} style={{ animationDelay: `${(i % 5) * 0.13}s` }}>{icons[i % icons.length]}</span>
+    ));
 
   return (
-    <Modal
-      isOpen={activeModal === 'battle_result'}
-      onClose={closeModal}
-      maxWidth="sm"
-      showCloseButton={false}
-    >
-      <div className="text-center py-2 space-y-4">
-        {/* Ícone e Título da Batalha */}
-        {lastBattleResult.won ? (
-          <div className="space-y-2 animate-in zoom-in-95 duration-200">
-            <div className="w-16 h-16 mx-auto rounded-2xl bg-emerald-500/10 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
-              <Trophy size={36} />
-            </div>
-            <h2 className="text-xl font-extrabold text-emerald-400 tracking-wide uppercase">
-              {defensive ? 'Invasão Repelida!' : 'Território Conquistado!'}
-            </h2>
-            <p className="text-sm text-slate-300">
-              <span className="text-lg mr-1">{targetCountry.flag}</span>
-              <strong>{targetCountry.name}</strong> {defensive ? `resistiu ao ataque de ${attackerName}.` : 'agora faz parte do seu império.'}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2 animate-in zoom-in-95 duration-200">
-            <div className="w-16 h-16 mx-auto rounded-2xl bg-rose-500/10 border border-rose-500/40 flex items-center justify-center text-rose-400">
-              <Skull size={36} />
-            </div>
-            <h2 className="text-xl font-extrabold text-rose-400 tracking-wide uppercase">
-              {defensive ? 'Território Perdido!' : 'Invasão Fracassou!'}
-            </h2>
-            <p className="text-sm text-slate-300">
-              {defensive ? `${attackerName} rompeu suas defesas em ` : 'Suas tropas foram rechaçadas pelas defesas de '}
-              <span className="font-semibold text-slate-100">{targetCountry.name}</span>.
-            </p>
-          </div>
-        )}
-
-        {/* Relatório de Combate */}
-        <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 space-y-2.5 text-xs text-left">
-          <div className="flex items-center justify-between pb-1.5 border-b border-slate-800/80 font-semibold text-slate-400">
-            <span className="flex items-center gap-1.5">
-              <Swords size={14} /> Relatório de Confronto
-            </span>
-            <span className={lastBattleResult.won ? 'text-emerald-400' : 'text-rose-400'}>
-              {lastBattleResult.won ? 'VITÓRIA' : 'DERROTA'}
-            </span>
-          </div>
-
-          <div className="flex items-center justify-between text-slate-300">
-            <span>Força das Suas Tropas:</span>
-            <span className="font-mono font-bold text-blue-400">{formatNumber(lastBattleResult.playerStrength)}</span>
-          </div>
-
-          <div className="flex items-center justify-between text-slate-300">
-            <span>Força Inimiga:</span>
-            <span className="font-mono font-bold text-rose-400">{formatNumber(lastBattleResult.enemyStrength)}</span>
-          </div>
-
-          <div className="flex items-center justify-between text-slate-300">
-            <span>Baixas Sofridas:</span>
-            <span className="font-mono font-bold text-amber-400">-{formatNumber(lastBattleResult.playerCasualties)} tropas</span>
-          </div>
-
-          {lastBattleResult.incomeGained !== 0 && (
-            <div className={`flex items-center justify-between font-semibold pt-1 border-t border-slate-800 ${lastBattleResult.won ? 'text-emerald-300' : 'text-rose-300'}`}>
-              <span>{lastBattleResult.won ? 'Renda Incorporada:' : 'Renda Perdida:'}</span>
-              <span className="font-mono text-sm">{lastBattleResult.won ? '+' : '-'}${Math.abs(lastBattleResult.incomeGained)}/s</span>
-            </div>
-          )}
-
-          <div className="flex items-center justify-between text-slate-400 pt-1 text-[11px]">
-            <span>Força Militar Restante:</span>
-            <span className="font-mono text-slate-200">⚔ {formatNumber(militaryPower)}</span>
-          </div>
-        </div>
-
-        {/* Botão de Fechamento */}
-        <Button
-          variant={lastBattleResult.won ? 'primary' : 'secondary'}
-          size="lg"
-          fullWidth
-          onClick={closeModal}
-          icon={<ArrowRight size={18} />}
-        >
-          {lastBattleResult.won ? 'Continuar' : 'Reagrupar Tropas'}
-        </Button>
+    <Modal isOpen onClose={b.done ? closeBattle : () => {}} maxWidth="lg" showCloseButton={false}
+      title={b.done ? TITLE[b.done] : <>⚔️ Batalha por {b.boss ? `${BOSS.icon} ${name}` : `${base.flag} ${name}`}</>}
+      subtitle={b.done ? name : `Rodada ${b.round}${b.boss ? '' : ` • ${TERRAIN_INFO[base.terrain].icon} ${TERRAIN_INFO[base.terrain].name}`}`}>
+      <div className={`battlefield terrain-${b.boss ? 'deserto' : base.terrain}`} key={b.round}>
+        <div className="battle-side">{soldiers(b.a / b.a0, units.length ? units.map((u) => UNIT_INFO[u].icon) : ['🪖'], 'march-right')}</div>
+        {b.round > 1 && !b.done && <span className="battle-boom">💥</span>}
+        <div className="battle-side justify-end">{b.boss ? <span className="text-6xl battle-unit march-left">{BOSS.icon}</span> : soldiers(b.d / b.d0, ['🪖', '🛡️', '✈️'], 'march-left')}</div>
       </div>
+      <div className="grid grid-cols-2 gap-4 text-xs">
+        <div className="space-y-1">
+          <p className="text-blue-300 font-bold">{general ? `${general.icon} ${general.name}` : 'Suas tropas'} • {formatNumber(b.a)}</p>
+          <Bar value={b.a / b.a0} color="bg-blue-500" />
+        </div>
+        <div className="space-y-1 text-right">
+          <p className="text-rose-300 font-bold">{name} • {formatNumber(b.d)}</p>
+          <Bar value={b.d / b.d0} color="bg-rose-500" />
+        </div>
+      </div>
+      {b.done ? (
+        <>
+          <ul className="text-sm text-center text-slate-200 space-y-1">{b.summary.map((s) => <li key={s}>{s}</li>)}</ul>
+          <Button size="lg" fullWidth onClick={closeBattle}>Continuar</Button>
+        </>
+      ) : (
+        <>
+          <p className="text-center text-sm text-slate-200">
+            Batedores dizem que o inimigo vai <strong className="text-amber-300">{TACTICS[b.hint].name.toLowerCase()}</strong> {TACTICS[b.hint].icon}
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            {(Object.keys(TACTICS) as Tactic[]).map((t) => (
+              <button key={t} onClick={() => battleRound(t)} className="rounded-xl bg-slate-800 hover:bg-blue-700 border border-slate-600 p-3 text-xs text-slate-100 active:scale-95 transition">
+                <span className="block text-2xl">{TACTICS[t].icon}</span>
+                <span className="block font-bold">{TACTICS[t].name}</span>
+                <span className="block text-slate-400">{TACTICS[t].vs}</span>
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Button size="sm" variant="outline" onClick={autoBattle}>Resolver automático</Button>
+            <Button size="sm" variant="outline" onClick={retreat}>🏳️ Retirada</Button>
+          </div>
+          <ul className="text-xs text-slate-400 min-h-[2rem]">{b.log.map((l, i) => <li key={i}>{l}</li>)}</ul>
+        </>
+      )}
     </Modal>
   );
 };

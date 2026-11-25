@@ -1,65 +1,89 @@
-import { CountryBaseData, CountryId } from '../types/game';
+import { WORLD_TABLE } from './worldTable';
 
-type Def = Omit<CountryBaseData, 'id'>;
+export type Res = 'oil' | 'iron' | 'food' | 'uranium';
+export const RES_LIST: Res[] = ['oil', 'iron', 'food', 'uranium'];
+export type Terrain = 'planicie' | 'montanha' | 'deserto' | 'selva' | 'frio';
 
-/**
- * Definições imutáveis dos países jogáveis.
- * `numericId` liga cada país ao seu polígono real no mapa (ISO 3166 numérico).
- * Para adicionar um país: inclua o ID em CountryId e uma entrada aqui.
- */
-const DEFS: Record<CountryId, Def> = {
-  // ===== América do Sul =====
-  BRA: { name: 'Brasil', iso: 'BR', numericId: '076', flag: '🇧🇷', baseIncome: 28, initialMilitary: 120, baseDefense: 110, population: '215M', region: 'América do Sul', anchor: [-51, -10], description: 'Gigante continental com agricultura potente e a maior biodiversidade do planeta.' },
-  ARG: { name: 'Argentina', iso: 'AR', numericId: '032', flag: '🇦🇷', baseIncome: 19, initialMilitary: 85, baseDefense: 80, population: '46M', region: 'América do Sul', anchor: [-65, -35], description: 'Planícies pampeanas férteis e grande tradição agropecuária.' },
-  CHL: { name: 'Chile', iso: 'CL', numericId: '152', flag: '🇨🇱', baseIncome: 20, initialMilitary: 80, baseDefense: 85, population: '19M', region: 'América do Sul', anchor: [-71, -28], description: 'Faixa costeira do Pacífico, líder mundial em cobre.' },
-  COL: { name: 'Colômbia', iso: 'CO', numericId: '170', flag: '🇨🇴', baseIncome: 18, initialMilitary: 85, baseDefense: 80, population: '52M', region: 'América do Sul', anchor: [-73.5, 4], description: 'Porta dos Andes, conectando dois oceanos.' },
-  PER: { name: 'Peru', iso: 'PE', numericId: '604', flag: '🇵🇪', baseIncome: 16, initialMilitary: 75, baseDefense: 75, population: '34M', region: 'América do Sul', anchor: [-75, -9.5], description: 'Nação andina com imenso patrimônio mineral.' },
-  VEN: { name: 'Venezuela', iso: 'VE', numericId: '862', flag: '🇻🇪', baseIncome: 17, initialMilitary: 80, baseDefense: 75, population: '28M', region: 'América do Sul', anchor: [-66, 7], description: 'Detentora das maiores reservas de petróleo comprovadas do mundo.' },
-  BOL: { name: 'Bolívia', iso: 'BO', numericId: '068', flag: '🇧🇴', baseIncome: 12, initialMilitary: 60, baseDefense: 60, population: '12M', region: 'América do Sul', anchor: [-64.5, -17], description: 'Coração do triângulo do lítio, recurso vital do século XXI.' },
-  URY: { name: 'Uruguai', iso: 'UY', numericId: '858', flag: '🇺🇾', baseIncome: 14, initialMilitary: 55, baseDefense: 58, population: '3.4M', region: 'América do Sul', anchor: [-56, -32.8], description: 'Pequena nação estável com forte setor de serviços e portos.' },
+export interface Country {
+  id: string;
+  numericId: string;
+  name: string;
+  flag: string;
+  region: string;
+  income: number;
+  defense: number;
+  anchor: [number, number];
+  res: Res;
+  terrain: Terrain;
+  coastal: boolean;
+  neighbors: string[];
+}
 
-  // ===== América do Norte e Caribe =====
-  MEX: { name: 'México', iso: 'MX', numericId: '484', flag: '🇲🇽', baseIncome: 22, initialMilitary: 95, baseDefense: 90, population: '128M', region: 'América do Norte', anchor: [-102, 23.5], description: 'Ponte estratégica entre as Américas com vibrante indústria.' },
-  USA: { name: 'Estados Unidos', iso: 'US', numericId: '840', flag: '🇺🇸', baseIncome: 50, initialMilitary: 200, baseDefense: 190, population: '335M', region: 'América do Norte', anchor: [-98, 39], description: 'Potência global com economia sólida e alta capacidade industrial.' },
-  CAN: { name: 'Canadá', iso: 'CA', numericId: '124', flag: '🇨🇦', baseIncome: 35, initialMilitary: 120, baseDefense: 130, population: '38M', region: 'América do Norte', anchor: [-106, 57], description: 'Vasta nação rica em recursos naturais e fronteira polar.' },
-  CUB: { name: 'Cuba', iso: 'CU', numericId: '192', flag: '🇨🇺', baseIncome: 12, initialMilitary: 70, baseDefense: 72, population: '11M', region: 'Caribe', anchor: [-79, 21.7], description: 'Ilha estratégica que controla as rotas do Caribe.' },
+const flagOf = (id: string) => String.fromCodePoint(...[...id].map((c) => 127397 + c.charCodeAt(0)));
 
-  // ===== Europa =====
-  GBR: { name: 'Reino Unido', iso: 'GB', numericId: '826', flag: '🇬🇧', baseIncome: 45, initialMilitary: 160, baseDefense: 160, population: '67M', region: 'Europa', anchor: [-2, 53.5], description: 'Centro financeiro global com marinha de longo alcance.' },
-  FRA: { name: 'França', iso: 'FR', numericId: '250', flag: '🇫🇷', baseIncome: 46, initialMilitary: 160, baseDefense: 165, population: '68M', region: 'Europa', anchor: [2.5, 46.5], description: 'Potência nuclear e diplomática no coração da Europa.' },
-  DEU: { name: 'Alemanha', iso: 'DE', numericId: '276', flag: '🇩🇪', baseIncome: 50, initialMilitary: 150, baseDefense: 160, population: '84M', region: 'Europa', anchor: [10.4, 51], description: 'Motor industrial da Europa e líder em engenharia de precisão.' },
-  RUS: { name: 'Rússia', iso: 'RU', numericId: '643', flag: '🇷🇺', baseIncome: 48, initialMilitary: 210, baseDefense: 205, population: '144M', region: 'Eurásia', anchor: [95, 62], description: 'Maior território do planeta, com vastas reservas de gás e petróleo.' },
+const LIST: Country[] = WORLD_TABLE.trim().split('\n').map((row) => {
+  const [id, numericId, name, region, income, defense, lon, lat, res, terrain, coastal, nb] = row.split('|');
+  return {
+    id, numericId, name, region,
+    flag: flagOf(id),
+    income: Number(income),
+    defense: Number(defense),
+    anchor: [Number(lon), Number(lat)],
+    res: res as Res,
+    terrain: terrain as Terrain,
+    coastal: coastal === '1',
+    neighbors: nb.trim() ? nb.trim().split(' ') : [],
+  };
+});
 
-  // ===== África =====
-  EGY: { name: 'Egito', iso: 'EG', numericId: '818', flag: '🇪🇬', baseIncome: 20, initialMilitary: 110, baseDefense: 100, population: '105M', region: 'África', anchor: [30, 26.5], description: 'Guardião do Canal de Suez, artéria do comércio mundial.' },
-  NGA: { name: 'Nigéria', iso: 'NG', numericId: '566', flag: '🇳🇬', baseIncome: 22, initialMilitary: 90, baseDefense: 85, population: '220M', region: 'África', anchor: [8, 9.5], description: 'Nação mais populosa da África e potência petrolífera.' },
-  ZAF: { name: 'África do Sul', iso: 'ZA', numericId: '710', flag: '🇿🇦', baseIncome: 24, initialMilitary: 95, baseDefense: 92, population: '60M', region: 'África', anchor: [24, -29], description: 'Economia mais diversificada do continente, rica em ouro e platina.' },
+export const COUNTRIES: Record<string, Country> = Object.fromEntries(LIST.map((c) => [c.id, c]));
+export const COUNTRY_IDS = LIST.map((c) => c.id);
+export const TOTAL_COUNTRIES = LIST.length;
+export const NUMERIC_TO_COUNTRY: Record<string, string> = Object.fromEntries(LIST.map((c) => [c.numericId, c.id]));
+export const REGIONS = [...new Set(LIST.map((c) => c.region))];
+export const BY_REGION: Record<string, string[]> = Object.fromEntries(REGIONS.map((r) => [r, LIST.filter((c) => c.region === r).map((c) => c.id)]));
+export const BY_RES = (res: Res) => LIST.filter((c) => c.res === res).map((c) => c.id);
 
-  // ===== Ásia e Oceania =====
-  CHN: { name: 'China', iso: 'CN', numericId: '156', flag: '🇨🇳', baseIncome: 55, initialMilitary: 220, baseDefense: 200, population: '1.4B', region: 'Ásia', anchor: [103, 35], description: 'Fábrica do mundo com imenso contingente militar e tecnológico.' },
-  JPN: { name: 'Japão', iso: 'JP', numericId: '392', flag: '🇯🇵', baseIncome: 45, initialMilitary: 140, baseDefense: 150, population: '125M', region: 'Ásia', anchor: [138.5, 36.5], description: 'Arquipélago de alta tecnologia e forte economia industrial.' },
-  KOR: { name: 'Coreia do Sul', iso: 'KR', numericId: '410', flag: '🇰🇷', baseIncome: 40, initialMilitary: 150, baseDefense: 145, population: '52M', region: 'Ásia', anchor: [128, 36.3], description: 'Potência em semicondutores com forças armadas modernas.' },
-  IND: { name: 'Índia', iso: 'IN', numericId: '356', flag: '🇮🇳', baseIncome: 46, initialMilitary: 190, baseDefense: 180, population: '1.4B', region: 'Ásia', anchor: [79, 22], description: 'Democracia mais populosa do mundo e polo tecnológico emergente.' },
-  AUS: { name: 'Austrália', iso: 'AU', numericId: '036', flag: '🇦🇺', baseIncome: 38, initialMilitary: 120, baseDefense: 125, population: '26M', region: 'Oceania', anchor: [134, -25], description: 'Continente-nação rico em minérios e posição estratégica no Pacífico.' },
+const RAD = Math.PI / 180;
+/** Distância em graus de arco entre dois países */
+export function distance(a: string, b: string): number {
+  const [lo1, la1] = COUNTRIES[a].anchor;
+  const [lo2, la2] = COUNTRIES[b].anchor;
+  const cos = Math.sin(la1 * RAD) * Math.sin(la2 * RAD) + Math.cos(la1 * RAD) * Math.cos(la2 * RAD) * Math.cos((lo1 - lo2) * RAD);
+  return Math.acos(Math.min(1, Math.max(-1, cos))) / RAD;
+}
+
+/** Habilidade única: nações famosas têm a sua; as demais herdam a do seu recurso principal */
+export interface Ability { name: string; text: string; income?: number; attack?: number; defense?: number; science?: number; recruit?: number; diplomacy?: number; food?: number; spy?: number }
+const ABILITIES: Record<string, Ability> = {
+  BR: { name: 'Celeiro do Mundo', text: '+50% comida e +10% renda', food: 0.5, income: 0.1 },
+  US: { name: 'Superpotência', text: '+15% ataque', attack: 0.15 },
+  CN: { name: 'Fábrica do Mundo', text: 'Recrutar custa 20% menos', recruit: 0.2 },
+  RU: { name: 'General Inverno', text: '+25% defesa', defense: 0.25 },
+  DE: { name: 'Engenharia', text: '+20% renda', income: 0.2 },
+  JP: { name: 'Alta Tecnologia', text: '+30% ciência', science: 0.3 },
+  GB: { name: 'Serviço Secreto', text: '+20% espionagem', spy: 20 },
+  FR: { name: 'Arte da Diplomacia', text: 'Relações crescem 50% mais', diplomacy: 0.5 },
+  IN: { name: 'Multidão', text: 'Recrutar custa 15% menos', recruit: 0.15 },
+  AR: { name: 'Raça', text: '+10% ataque', attack: 0.1 },
+  CH: { name: 'Banco Neutro', text: '+30% renda', income: 0.3 },
+  KR: { name: 'Semicondutores', text: '+25% ciência', science: 0.25 },
+  IL: { name: 'Inteligência', text: '+15% espionagem', spy: 15 },
+  UY: { name: 'Pequeno Gigante', text: '+20% defesa', defense: 0.2 },
+  CU: { name: 'Guerrilha', text: '+20% defesa', defense: 0.2 },
 };
+const BY_RESOURCE: Record<Res, Ability> = {
+  oil: { name: 'Ouro Negro', text: '+10% renda', income: 0.1 },
+  iron: { name: 'Forjas', text: 'Recrutar custa 10% menos', recruit: 0.1 },
+  food: { name: 'Terras Férteis', text: '+25% comida', food: 0.25 },
+  uranium: { name: 'Pesquisa Atômica', text: '+15% ciência', science: 0.15 },
+};
+export const abilityOf = (id: string): Ability => ABILITIES[id] ?? BY_RESOURCE[COUNTRIES[id].res];
 
-export const COUNTRIES_DATA = Object.fromEntries(
-  Object.entries(DEFS).map(([id, def]) => [id, { id, ...def }])
-) as Record<CountryId, CountryBaseData>;
-
-export const INITIAL_COUNTRY_IDS = Object.keys(DEFS) as CountryId[];
-
-export const TOTAL_COUNTRIES = INITIAL_COUNTRY_IDS.length;
-
-/** Mapa ISO numérico → ID do jogo, usado pelo mapa vetorial */
-export const NUMERIC_TO_COUNTRY: Record<string, CountryId> = Object.fromEntries(
-  INITIAL_COUNTRY_IDS.map((id) => [DEFS[id].numericId, id])
-);
-
-/** Dificuldade estimada ao escolher a nação (nações pobres = começo mais difícil) */
-export function getDifficulty(id: CountryId): { label: string; color: string } {
-  const income = DEFS[id].baseIncome;
-  if (income < 18) return { label: 'Difícil', color: 'text-rose-300 bg-rose-500/10 border-rose-500/30' };
-  if (income < 35) return { label: 'Média', color: 'text-amber-300 bg-amber-500/10 border-amber-500/30' };
-  return { label: 'Fácil', color: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30' };
+export function getDifficulty(id: string): { label: string; color: string } {
+  const i = COUNTRIES[id].income;
+  if (i < 12) return { label: 'Extrema', color: 'text-rose-300' };
+  if (i < 20) return { label: 'Difícil', color: 'text-orange-300' };
+  if (i < 35) return { label: 'Média', color: 'text-amber-300' };
+  return { label: 'Fácil', color: 'text-emerald-300' };
 }

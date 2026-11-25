@@ -1,8 +1,9 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { geoGraticule10, geoNaturalEarth1, geoPath } from 'd3-geo';
-import { useGameStore } from '../../stores/useGameStore';
-import { COUNTRIES_DATA, INITIAL_COUNTRY_IDS, NUMERIC_TO_COUNTRY } from '../../data/countries';
-import { CountryId, CountryRuntimeState, Strike, Threat } from '../../types/game';
+import { useApp } from '../../ui';
+import { COUNTRIES, COUNTRY_IDS, NUMERIC_TO_COUNTRY } from '../../data/countries';
+import { Game, PLAYER, ZOMBIES, game, rivalDef, useGame } from '../../engine/state';
+import { reach } from '../../engine/calc';
 import { useWorldGeo } from '../../services/worldGeo';
 import { ZoomIn, ZoomOut, LocateFixed, Loader2 } from 'lucide-react';
 
@@ -11,9 +12,12 @@ const H = 520;
 const MIN_K = 1;
 const MAX_K = 14;
 const DRAG_THRESHOLD_PX = 6;
-const MARKER_PX = 24;
-const DETAIL_PX_PER_UNIT = 1.9;
+const MARKER_PX = 22;
+const DETAIL_PX_PER_UNIT = 4;
 
+type CountryId = string;
+type Strike = NonNullable<Game['strike']>;
+type Threat = NonNullable<Game['threat']>;
 interface View { k: number; x: number; y: number }
 interface Shape { key: string; d: string; countryId?: CountryId }
 type Point = [number, number];
@@ -27,34 +31,27 @@ const clampView = (v: View): View => {
   };
 };
 
+/** Estado visual de cada país em texto, para redesenhar só quando algo muda */
+function visualOf(id: string, g: Game, reachable: boolean, selected: string): string {
+  const c = g.countries[id];
+  const fill = c.owner === PLAYER ? (id === g.capital ? 'capital' : 'owned') : c.sab > 0 ? 'sabotaged' : c.owner || (c.vassal ? 'vassal' : 'rival');
+  return `${fill}|${id === selected ? 'land-selected' : g.threat?.target === id ? 'land-threat' : c.siege ? 'land-siege' : reachable ? 'land-reach' : ''}`;
+}
+
 /** Polígonos dos países. Memoizado: não re-renderiza ao arrastar/zoom. */
-const CountryShapes = memo(function CountryShapes({
-  shapes,
-  countries,
-  playerCountryId,
-  selectedCountryId,
-  threatTargetId,
-}: {
-  shapes: Shape[];
-  countries: Record<CountryId, CountryRuntimeState>;
-  playerCountryId: CountryId | null;
-  selectedCountryId: CountryId | null;
-  threatTargetId?: CountryId;
-}) {
+const CountryShapes = memo(function CountryShapes({ shapes, visuals }: { shapes: Shape[]; visuals: string }) {
+  const look = Object.fromEntries(visuals.split(';').map((v) => v.split(':')));
   return (
     <g>
       {shapes.map(({ key, d, countryId }) => {
-        if (!countryId) {
-          return <path key={key} d={d} className="land-inert" vectorEffect="non-scaling-stroke" />;
-        }
-        const c = countries[countryId];
-        const cls = [
-          'land-playable',
-          c.owner === 'player' ? (countryId === playerCountryId ? 'land-capital' : 'land-owned') : c.sabotageSeconds > 0 ? 'land-sabotaged' : 'land-rival',
-          countryId === selectedCountryId ? 'land-selected' : '',
-          countryId === threatTargetId ? 'land-threat' : '',
-        ].join(' ');
-        return <path key={key} d={d} data-id={countryId} className={cls} vectorEffect="non-scaling-stroke" />;
+        if (!countryId) return <path key={key} d={d} className="land-inert" vectorEffect="non-scaling-stroke" />;
+        const [fill, extra] = (look[countryId] as string).split('|');
+        const rival = /^r\d/.test(fill);
+        return (
+          <path key={key} d={d} data-id={countryId} vectorEffect="non-scaling-stroke"
+            className={`land-playable ${rival ? '' : `land-${fill}`} ${extra}`}
+            style={rival ? { fill: rivalDef(fill).color } : undefined} />
+        );
       })}
     </g>
   );
@@ -70,8 +67,8 @@ function arcPath([x1, y1]: Point, [x2, y2]: Point): string {
 const SPARK_ANGLES = Array.from({ length: 14 }, (_, i) => Math.round((i * 360) / 14));
 
 const StrikeLayer = ({ strike, anchors, scale }: { strike: Strike; anchors: Record<CountryId, Point>; scale: number }) => {
-  const from = anchors[strike.fromId];
-  const to = anchors[strike.toId];
+  const from = anchors[strike.from];
+  const to = anchors[strike.to];
   const d = arcPath(from, to);
   const color = strike.hostile ? '#f43f5e' : '#fbbf24';
   return (
@@ -118,9 +115,9 @@ const SupplyLayer = memo(function SupplyLayer({ capital, owned, anchors, scale }
   );
 });
 
-const ThreatLayer = ({ threat, anchors }: { threat: Threat; anchors: Record<CountryId, Point> }) => (
+const ThreatLayer = ({ threat, from, anchors }: { threat: Threat; from?: CountryId; anchors: Record<CountryId, Point> }) => (
   <path
-    d={arcPath(anchors[threat.attackerId], anchors[threat.targetId])}
+    d={arcPath(from ? anchors[from] : [anchors[threat.target][0], -60], anchors[threat.target])}
     className="threat-path"
     vectorEffect="non-scaling-stroke"
     pointerEvents="none"
@@ -129,12 +126,17 @@ const ThreatLayer = ({ threat, anchors }: { threat: Threat; anchors: Record<Coun
 
 export const InteractiveMap: React.FC = () => {
   const geo = useWorldGeo();
-  const countries = useGameStore((s) => s.countries);
-  const playerCountryId = useGameStore((s) => s.playerCountryId);
-  const selectedCountryId = useGameStore((s) => s.selectedCountryId);
-  const selectCountry = useGameStore((s) => s.selectCountry);
-  const strike = useGameStore((s) => s.strike);
-  const threat = useGameStore((s) => s.threat);
+  const tickVersion = useGame();
+  const g = game();
+  const selected = useApp((s) => s.selected);
+  const selectCountry = useApp((s) => s.select);
+  const { strike, threat, capital } = g;
+  const playerCountryId = capital;
+  // Um passo de jogo = um recálculo; arrastar o mapa não passa por aqui
+  const { visuals, reachable } = useMemo(() => {
+    const near = new Set(COUNTRY_IDS.filter((id) => g.countries[id].owner !== PLAYER && reach(id) && !g.countries[id].vassal));
+    return { reachable: near, visuals: COUNTRY_IDS.map((id) => `${id}:${visualOf(id, g, near.has(id), selected)}`).join(';') };
+  }, [g, tickVersion, selected]);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [view, setView] = useState<View>({ k: 1, x: 0, y: 0 });
@@ -155,12 +157,12 @@ export const InteractiveMap: React.FC = () => {
   }, [geo, projection]);
   // Um único contorno de todos os continentes: relevo e brilho costeiro baratos
   const coast = useMemo(() => shapes.map((s) => s.d).join(''), [shapes]);
-  const ownedKey = INITIAL_COUNTRY_IDS.filter((id) => countries[id].owner === 'player' && id !== playerCountryId).join(',');
+  const ownedKey = COUNTRY_IDS.filter((id) => g.countries[id].owner === PLAYER && id !== playerCountryId).slice(0, 24).join(',');
   const graticule = useMemo(() => (projection ? geoPath(projection)(geoGraticule10()) ?? '' : ''), [projection]);
   const anchors = useMemo(() => {
     if (!projection) return null;
     return Object.fromEntries(
-      INITIAL_COUNTRY_IDS.map((id) => [id, (projection(COUNTRIES_DATA[id].anchor) ?? [0, 0]) as Point])
+      COUNTRY_IDS.map((id) => [id, (projection(COUNTRIES[id].anchor) ?? [0, 0]) as Point])
     ) as Record<CountryId, Point>;
   }, [projection]);
 
@@ -337,36 +339,33 @@ export const InteractiveMap: React.FC = () => {
           <path d={coast} className="coast coast-far" vectorEffect="non-scaling-stroke" />
           <path d={coast} className="coast coast-near" vectorEffect="non-scaling-stroke" />
           <path d={coast} className="land-depth" transform={`translate(0,${2.6 / Math.sqrt(view.k)})`} />
-          <CountryShapes
-            shapes={shapes}
-            countries={countries}
-            playerCountryId={playerCountryId}
-            selectedCountryId={selectedCountryId}
-            threatTargetId={threat?.targetId}
-          />
+          <CountryShapes shapes={shapes} visuals={visuals} />
 
           {/* Marcadores com tamanho constante na tela */}
           {anchors &&
-            INITIAL_COUNTRY_IDS.map((id) => {
-              const c = countries[id];
+            COUNTRY_IDS.map((id) => {
+              const c = g.countries[id];
               const [x, y] = anchors[id];
-              const owned = c.owner === 'player';
-              const selected = id === selectedCountryId;
-              const ring = selected ? '#fbbf24' : owned ? '#60a5fa' : c.sabotageSeconds > 0 ? '#f43f5e' : '#64748b';
+              const owned = c.owner === PLAYER;
+              const isSelected = id === selected;
+              const rivalCapital = g.rivals[c.owner]?.capital === id;
+              // Longe, mostra só o que importa; de perto, todos
+              if (!isSelected && !rivalCapital && id !== capital && pxPerUnit < (owned || reachable.has(id) ? 1.1 : COUNTRIES[id].income >= 30 ? 1.8 : 3)) return null;
+              const ring = isSelected ? '#fbbf24' : owned ? '#60a5fa' : g.rivals[c.owner] ? rivalDef(c.owner).color : c.owner === ZOMBIES ? '#84cc16' : reachable.has(id) ? '#facc15' : '#64748b';
               return (
                 <g key={id} data-id={id} transform={`translate(${x},${y}) scale(${markerScale})`} className="cursor-pointer">
-                  <circle r={MARKER_PX / 2} fill="#0b1220" fillOpacity={0.9} stroke={ring} strokeWidth={selected ? 2.5 : 1.5} />
+                  <circle r={MARKER_PX / 2} fill="#0b1220" fillOpacity={0.9} stroke={ring} strokeWidth={isSelected ? 2.5 : 1.5} />
                   <text y={4.5} textAnchor="middle" fontSize={13} className="emoji-text" pointerEvents="none">
-                    {COUNTRIES_DATA[id].flag}
+                    {rivalCapital ? rivalDef(c.owner).icon : id === capital ? '👑' : c.owner === ZOMBIES ? '🧟' : COUNTRIES[id].flag}
                   </text>
-                  {(showDetails || selected) && (
+                  {(showDetails || isSelected) && (
                     <g pointerEvents="none">
                       <rect x={-42} y={15} width={84} height={30} rx={7} fill="#0b1220" fillOpacity={0.88} stroke={ring} strokeOpacity={0.6} />
                       <text y={28} textAnchor="middle" fontSize={10.5} fontWeight={700} fill="#f1f5f9" className="font-sans">
-                        {COUNTRIES_DATA[id].name}
+                        {COUNTRIES[id].name}
                       </text>
                       <text y={40} textAnchor="middle" fontSize={9} fontWeight={600} fill={owned ? '#34d399' : '#fda4af'} className="font-mono">
-                        {owned ? `+$${c.income}/s` : `🛡 ${c.defense}`}
+                        {owned ? `🛡 ${Math.round(c.def)} 🙂${Math.round(c.happy)}` : `🛡 ${Math.round(c.def)}`}
                       </text>
                     </g>
                   )}
@@ -390,7 +389,7 @@ export const InteractiveMap: React.FC = () => {
             </>
           )}
 
-          {anchors && threat && <ThreatLayer threat={threat} anchors={anchors} />}
+          {anchors && threat && <ThreatLayer threat={threat} from={g.rivals[threat.by]?.capital} anchors={anchors} />}
 
           {anchors && strike && <StrikeLayer strike={strike} anchors={anchors} scale={markerScale} />}
         </g>
@@ -408,7 +407,7 @@ export const InteractiveMap: React.FC = () => {
       )}
 
       {/* Controles */}
-      <div className="absolute right-3 bottom-3 z-20 flex flex-col gap-2">
+      <div className="absolute right-2 bottom-2 z-20 flex flex-col gap-2">
         {[
           { icon: <ZoomIn size={18} />, label: 'Aproximar', fn: () => zoomAt(1.5, center()) },
           { icon: <ZoomOut size={18} />, label: 'Afastar', fn: () => zoomAt(1 / 1.5, center()) },
@@ -418,13 +417,6 @@ export const InteractiveMap: React.FC = () => {
             {b.icon}
           </button>
         ))}
-      </div>
-
-      <div className="absolute left-3 bottom-3 z-20 hidden sm:flex items-center gap-3 glass-panel px-3 py-2 rounded-xl text-[11px] text-slate-300 pointer-events-none">
-        <span className="flex items-center gap-1.5"><i className="w-3 h-3 rounded-sm bg-blue-500" />Seu império</span>
-        <span className="flex items-center gap-1.5"><i className="w-3 h-3 rounded-sm bg-slate-600" />Rival</span>
-        <span className="flex items-center gap-1.5"><i className="w-3 h-3 rounded-sm bg-rose-600" />Sabotado</span>
-        <span className="text-slate-500">• Pinça/roda para zoom</span>
       </div>
     </div>
   );

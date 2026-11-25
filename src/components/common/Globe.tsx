@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { geoDistance, geoGraticule10, geoOrthographic, geoPath } from 'd3-geo';
 import { useWorldGeo } from '../../services/worldGeo';
-import { COUNTRIES_DATA, INITIAL_COUNTRY_IDS } from '../../data/countries';
+import { COUNTRIES } from '../../data/countries';
 
 const FRAME_MS = 33;
 const STARS = Array.from({ length: 160 }, () => ({
@@ -10,7 +10,7 @@ const STARS = Array.from({ length: 160 }, () => ({
   r: 0.4 + Math.random() * 1.3,
   phase: Math.random() * Math.PI * 2,
 }));
-const CITIES = INITIAL_COUNTRY_IDS.map((id) => COUNTRIES_DATA[id].anchor);
+const CITIES = Object.values(COUNTRIES).filter((c) => c.income >= 20).map((c) => c.anchor);
 const GRATICULE = geoGraticule10();
 
 /** Planeta girando com estrelas, atmosfera e luzes de cidades (fundo do menu) */

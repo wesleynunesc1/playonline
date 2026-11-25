@@ -1,166 +1,73 @@
 import React, { useState } from 'react';
-import { useGameStore } from '../../stores/useGameStore';
-import { COUNTRIES_DATA, INITIAL_COUNTRY_IDS } from '../../data/countries';
-import { CountryId } from '../../types/game';
+import { ArrowLeft, ChevronRight, Search } from 'lucide-react';
+import { useApp } from '../../ui';
+import { COUNTRIES, REGIONS, abilityOf, getDifficulty } from '../../data/countries';
+import { RES_INFO, RIVALS, TERRAIN_INFO } from '../../data/content';
+import { newGame, scenarioOf } from '../../engine/state';
 import { Button } from '../common/Button';
-import { ArrowLeft, ChevronRight, DollarSign, Shield, Users, Globe } from 'lucide-react';
-import { sound } from '../../utils/audio';
+import { Card, Row } from '../common/Kit';
+
+const plain = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
 export const SelectCountryScreen: React.FC = () => {
-  const [selectedId, setSelectedId] = useState<CountryId>('BRA');
-  const startNewGame = useGameStore((state) => state.startNewGame);
-  const setScreen = useGameStore((state) => state.setScreen);
-
-  const selectedCountry = COUNTRIES_DATA[selectedId];
-
-  const handleSelect = (id: CountryId) => {
-    sound.playClick();
-    setSelectedId(id);
-  };
-
-  const handleStartGame = () => {
-    startNewGame(selectedId);
+  const setScreen = useApp((s) => s.setScreen);
+  const mode = useApp((s) => s.mode);
+  const [id, setId] = useState('BR');
+  const [query, setQuery] = useState('');
+  const c = COUNTRIES[id];
+  const diff = getDifficulty(id);
+  const sc = scenarioOf(mode);
+  const rival = RIVALS.find((r) => r.capital === id);
+  const start = () => {
+    newGame(id, mode);
+    setScreen('game');
   };
 
   return (
-    <div className="relative w-full h-full flex flex-col bg-[#070a12] text-slate-100 overflow-hidden select-none">
-      {/* Header Fixo */}
-      <header className="flex items-center justify-between px-4 sm:px-8 py-3.5 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md z-10 shrink-0">
-        <button
-          onClick={() => setScreen('home')}
-          className="flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-slate-100 transition-colors"
-        >
-          <ArrowLeft size={16} /> Voltar ao Menu
-        </button>
-        <div className="text-center">
-          <h2 className="text-base sm:text-lg font-black tracking-wide uppercase text-slate-100">
-            Escolha Sua Nação
-          </h2>
-          <p className="text-[11px] text-slate-400 hidden xs:block">
-            Defina a sede soberana do seu império global
-          </p>
-        </div>
-        <div className="w-16" /> {/* Espaçador para balancear header */}
+    <div className="w-full h-full flex flex-col bg-[#070a12] overflow-hidden">
+      <header className="flex items-center gap-3 px-4 py-3 border-b border-slate-800 shrink-0">
+        <button onClick={() => setScreen('home')} className="glass-btn h-10 px-3 gap-2 text-xs"><ArrowLeft size={16} /> Voltar</button>
+        <h2 className="font-black">{sc ? `${sc.icon} ${sc.name}` : 'Escolha sua nação'}</h2>
       </header>
-
-      {/* Conteúdo Principal com Scroll */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 max-w-6xl mx-auto w-full flex flex-col md:flex-row gap-6">
-        {/* Lista/Grade de Países */}
-        <div className="flex-1 order-2 md:order-1">
-          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-            {INITIAL_COUNTRY_IDS.map((id) => {
-              const country = COUNTRIES_DATA[id];
-              const isSelected = selectedId === id;
-
+      <div className="flex-1 min-h-0 flex flex-col md:flex-row gap-4 p-4 max-w-6xl mx-auto w-full">
+        <aside className="md:w-80 md:order-2 shrink-0 space-y-3">
+          <Card title={<span className="text-xl">{c.flag} {c.name}</span>}>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              <Row label="Renda">$ {c.income}/s</Row>
+              <Row label="Defesa">{c.defense}</Row>
+              <Row label="Recurso">{RES_INFO[c.res].icon}</Row>
+              <Row label="Terreno">{TERRAIN_INFO[c.terrain].icon}</Row>
+            </div>
+            <Row label="Dificuldade" tone={diff.color}>{diff.label}</Row>
+            <p className="text-amber-200">★ {abilityOf(id).name}: {abilityOf(id).text}</p>
+            {rival && <p className="text-slate-400">Você toma o lugar de {rival.icon} {rival.leader}.</p>}
+          </Card>
+          <Button size="lg" fullWidth onClick={start} icon={<ChevronRight size={18} />}>Liderar esta nação</Button>
+        </aside>
+        <div className="flex-1 min-h-0 flex flex-col gap-3">
+          <label className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-xl px-3">
+            <Search size={16} className="text-slate-400" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar país" className="flex-1 bg-transparent py-2.5 text-sm outline-none" />
+          </label>
+          <div className="flex-1 overflow-y-auto space-y-4">
+            {REGIONS.map((r) => {
+              const list = Object.values(COUNTRIES).filter((x) => x.region === r && plain(x.name).includes(plain(query))).sort((a, b) => b.income - a.income);
+              if (!list.length) return null;
               return (
-                <div
-                  key={id}
-                  onClick={() => handleSelect(id)}
-                  className={`p-3 rounded-2xl border cursor-pointer transition-all duration-150 flex flex-col justify-between ${
-                    isSelected
-                      ? 'bg-blue-950/60 border-blue-500 shadow-lg shadow-blue-950/50 scale-[1.02]'
-                      : 'bg-slate-900/60 border-slate-800/80 hover:bg-slate-800/60 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-2xl">{country.flag}</span>
-                    <span
-                      className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
-                        isSelected ? 'bg-blue-500/20 text-blue-300' : 'bg-slate-800 text-slate-400'
-                      }`}
-                    >
-                      {country.iso}
-                    </span>
+                <section key={r}>
+                  <h3 className="text-xs font-bold text-slate-400 mb-2">{r}</h3>
+                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+                    {list.map((x) => (
+                      <button key={x.id} onClick={() => setId(x.id)} className={`flex items-center gap-2 p-2.5 rounded-xl border text-left text-xs ${x.id === id ? 'bg-blue-950 border-blue-500' : 'bg-slate-900/60 border-slate-800 hover:border-slate-600'}`}>
+                        <span className="text-lg">{x.flag}</span>
+                        <span className="flex-1 truncate font-bold text-slate-100">{x.name}</span>
+                        <span className="font-mono text-emerald-400">${x.income}</span>
+                      </button>
+                    ))}
                   </div>
-
-                  <div>
-                    <h3 className="font-bold text-sm text-slate-100 leading-tight">
-                      {country.name}
-                    </h3>
-                    <span className="text-[11px] text-slate-400 block mt-0.5">
-                      {country.region}
-                    </span>
-                  </div>
-
-                  <div className="mt-2.5 pt-2 border-t border-slate-800/80 grid grid-cols-2 gap-1 text-[11px] font-mono">
-                    <span className="text-emerald-400 font-semibold">+${country.baseIncome}/s</span>
-                    <span className="text-blue-400 font-semibold text-right">⚔ {country.initialMilitary}</span>
-                  </div>
-                </div>
+                </section>
               );
             })}
-          </div>
-        </div>
-
-        {/* Painel Lateral com Detalhes da Nação Selecionada */}
-        <div className="w-full md:w-80 shrink-0 order-1 md:order-2 flex flex-col gap-4">
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-            {/* Header do País */}
-            <div className="flex items-center gap-3">
-              <span className="text-4xl">{selectedCountry.flag}</span>
-              <div>
-                <h3 className="text-xl font-black text-slate-100 leading-tight">
-                  {selectedCountry.name}
-                </h3>
-                <span className="text-xs text-blue-400 font-medium">
-                  {selectedCountry.region} • ISO {selectedCountry.iso}
-                </span>
-              </div>
-            </div>
-
-            <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
-              {selectedCountry.description}
-            </p>
-
-            {/* Atributos da Nação */}
-            <div className="space-y-2 text-xs">
-              <div className="flex items-center justify-between p-2.5 bg-slate-950/70 rounded-xl border border-slate-800">
-                <span className="text-slate-400 flex items-center gap-1.5">
-                  <DollarSign size={14} className="text-emerald-400" /> Renda Inicial
-                </span>
-                <span className="font-mono font-bold text-emerald-400">
-                  +${selectedCountry.baseIncome}/s
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between p-2.5 bg-slate-950/70 rounded-xl border border-slate-800">
-                <span className="text-slate-400 flex items-center gap-1.5">
-                  <Shield size={14} className="text-blue-400" /> Força Militar
-                </span>
-                <span className="font-mono font-bold text-blue-400">
-                  ⚔ {selectedCountry.initialMilitary}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between p-2.5 bg-slate-950/70 rounded-xl border border-slate-800">
-                <span className="text-slate-400 flex items-center gap-1.5">
-                  <Users size={14} className="text-amber-400" /> População
-                </span>
-                <span className="font-mono font-bold text-slate-200">
-                  {selectedCountry.population}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between p-2.5 bg-slate-950/70 rounded-xl border border-slate-800">
-                <span className="text-slate-400 flex items-center gap-1.5">
-                  <Globe size={14} className="text-indigo-400" /> Defesa Territorial
-                </span>
-                <span className="font-mono font-bold text-slate-200">
-                  🛡 {selectedCountry.baseDefense}
-                </span>
-              </div>
-            </div>
-
-            {/* Ação de Início */}
-            <Button
-              variant="primary"
-              size="lg"
-              fullWidth
-              onClick={handleStartGame}
-              icon={<ChevronRight size={18} />}
-            >
-              LIDERAR ESTA NAÇÃO
-            </Button>
           </div>
         </div>
       </div>

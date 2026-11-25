@@ -82,6 +82,10 @@
 .land-owned { fill: url(#gradOwned); stroke: #93c5fd; }
 .land-capital { fill: url(#gradCapital); stroke: #ecfeff; stroke-width: 1.8; }
 .land-sabotaged { fill: #9f1239; }
+.land-reach { stroke: #facc15; stroke-width: 1.5; }
+.land-siege { stroke: #fb923c; stroke-width: 2.4; stroke-dasharray: 4 3; }
+.land-vassal { fill: #67a8d8; }
+.land-Z { fill: #4d7c0f; }
 .land-playable:hover { fill-opacity: 0.8; stroke: #fff; }
 .land-selected { stroke: #fbbf24; stroke-width: 2.4; }
 .land-threat { stroke: #f43f5e; stroke-width: 2.6; fill: #881337; }
@@ -116,6 +120,26 @@
 .impact-flash { inset: 0; opacity: 0; background: radial-gradient(circle, #fff7ed, rgba(251, 191, 36, 0.4) 60%); animation: flash 0.35s 0.8s ease-out; }
 .impact-hostile { background: radial-gradient(circle, #fecdd3, rgba(225, 29, 72, 0.5) 60%); }
 @keyframes flash { from { opacity: 0.6; } to { opacity: 0; } }
+
+/* ===== Batalha ===== */
+.battlefield { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 1rem; height: 130px; padding: 0.75rem; border-radius: 0.75rem; overflow: hidden; border: 1px solid #334155; }
+.terrain-planicie { background: linear-gradient(#38bdf8 30%, #65a30d 31%, #365314); }
+.terrain-montanha { background: linear-gradient(#94a3b8 35%, #57534e 36%, #292524); }
+.terrain-deserto { background: linear-gradient(#fdba74 30%, #ca8a04 31%, #713f12); }
+.terrain-selva { background: linear-gradient(#0e7490 25%, #166534 26%, #052e16); }
+.terrain-frio { background: linear-gradient(#7dd3fc 30%, #e2e8f0 31%, #94a3b8); }
+.battle-side { flex: 1; display: flex; flex-wrap: wrap; align-content: center; gap: 2px; font-size: 1.35rem; }
+.battle-unit { display: inline-block; filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.6)); }
+.march-right { animation: march-right 0.7s ease-in-out infinite alternate; }
+.march-left { animation: march-left 0.7s ease-in-out infinite alternate; }
+@keyframes march-right { from { transform: translate(-4px, 0); } to { transform: translate(6px, -4px); } }
+@keyframes march-left { from { transform: translate(4px, 0); } to { transform: translate(-6px, -4px); } }
+.battle-boom { position: absolute; left: 50%; top: 50%; font-size: 4rem; animation: boom 0.6s ease-out both; }
+@keyframes boom { from { opacity: 1; transform: translate(-50%, -50%) scale(0.2); } to { opacity: 0; transform: translate(-50%, -50%) scale(1.8); } }
+.chest-pop { animation: chest-pop 0.5s cubic-bezier(0.2, 1.6, 0.4, 1); }
+@keyframes chest-pop { from { opacity: 0; transform: scale(0.2) rotate(-15deg); } }
+.news-in { animation: news-in 0.4s ease-out; }
+@keyframes news-in { from { opacity: 0; transform: translateX(40px); } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
