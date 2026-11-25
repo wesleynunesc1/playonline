@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { sound } from '../utils/audio';
 import { CAPTURE_S, CITIES, CITY, City, EVENTS, NUKES, POWERS, PowerId, UNITS, UNIT_IDS, UnitId, WORKS_IDS, WorksId } from './data';
-import { W, fxQueue } from './match';
+import { W, fxQueue, prefs } from './match';
 import { Fx, Unit, World, allied, eyes, hasRule, mods } from './sim';
 import { fxTexture, makeRenderer, mat } from './models';
 import { Post } from './post';
@@ -12,6 +12,7 @@ import { BOUNDS, PHONE, Y, spread } from './terrain';
 import { UNIT_NIGHT, UNIT_TIME, unitGeometry, unitMaterial } from './units';
 import { wonderGeometry, worksGeometry } from './works';
 import { WONDERS } from './nation';
+import { seasonOf } from './realm';
 
 /** Mundo aberto em 3D: terreno, cidades, tropas, efeitos e visão. Lê o estado da partida a cada quadro. */
 export interface Tap { x: number; z: number; unit: Unit | null; city: City | null }
@@ -29,14 +30,16 @@ export const savedQuality = (): Quality | 'auto' => {
 const DAY_S = 420;
 interface Shell { k: 'bala' | 'canhao' | 'missil'; x1: number; y1: number; z1: number; x2: number; y2: number; z2: number; t: number; dur: number }
 interface Part { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; max: number; s0: number; s1: number; r: number; g: number; b: number; a: number }
-const TURRET: UnitId[] = ['tanque', 'artilharia', 'foguete', 'antiaerea', 'blindado'];
+const TURRET: UnitId[] = ['corveta', 'colosso', 'tanque', 'artilharia', 'foguete', 'antiaerea', 'blindado'];
 interface Later { at: number; run: () => void }
 
 const BY_POP = CITIES.map((_, i) => i).sort((a, b) => CITIES[b].pop - CITIES[a].pop);
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const altitude = (k: UnitId) => (k === 'caca' ? 1.3 : k === 'heli' ? 0.85 : k === 'recon' ? 1 : k === 'fpv' ? 0.45 : 0);
 /** Infantaria aparece como um grupo de três */
-const SQUAD = (k: UnitId) => (UNITS[k].cls === 'inf' && k !== 'moto' ? 3 : 1);
+const SQUAD = (k: UnitId) => (UNITS[k].cls === 'inf' && k !== 'moto' && k !== 'general' ? 3 : 1);
+/** Navio flutua; o resto acompanha o chão */
+const ground = (u: Unit, x: number, z: number) => (UNITS[u.k].sea ? 0.03 : Math.max(0.02, Y(x, z)));
 const PER_KIND = 130;
 
 /** Partículas em um único desenho */
@@ -135,7 +138,11 @@ export class World3D {
   private flags!: { pole: THREE.InstancedMesh; cloth: THREE.InstancedMesh; sig: string };
   private cranes!: THREE.InstancedMesh;
   private crates!: THREE.InstancedMesh;
+  private trucks!: THREE.InstancedMesh;
+  private minesMesh!: THREE.InstancedMesh;
+  private wallMesh!: THREE.InstancedMesh;
   private wonders = new Map<string, THREE.Mesh>();
+  private vanAt: { x: number; z: number }[] = [];
   private heard = 0;
   private scenery: Scenery;
   private flashes: THREE.PointLight[] = [];
@@ -255,6 +262,7 @@ export class World3D {
       this.camera.position.add(d);
       if (d.length() < 0.004) this.goal = null;
     }
+    if (this.film) this.film(performance.now());
     if (this.orbit) {
       const a = performance.now() / 26000;
       this.controls.target.set(21.5, Y(21.5, -13), -13);
@@ -305,6 +313,26 @@ export class World3D {
   get mask() {
     return this.scenery.mask;
   }
+  /** Foto da tela, sem a interface */
+  photo(): string {
+    if (this.post) this.post.render(0);
+    else this.renderer.render(this.scene, this.camera);
+    return this.canvas.toDataURL('image/jpeg', 0.92);
+  }
+  /** Abertura: do mapa inteiro até a sua cidade */
+  intro(x: number, z: number) {
+    this.overview(x, z);
+    const from = this.camera.position.clone();
+    const t0 = performance.now();
+    this.film = (now) => {
+      const k = Math.min(1, (now - t0) / 4200);
+      const e = k * k * (3 - 2 * k);
+      this.controls.target.set(THREE.MathUtils.lerp(x * 0.4, x, e), Y(x, z), THREE.MathUtils.lerp(z * 0.4, z, e));
+      this.camera.position.set(THREE.MathUtils.lerp(from.x, x + Math.sin((1 - e) * 1.2) * 6, e), THREE.MathUtils.lerp(from.y, Y(x, z) + 7.5, e), THREE.MathUtils.lerp(from.z, z + 7, e));
+      if (k >= 1) this.film = null;
+    };
+  }
+  private film: ((now: number) => void) | null = null;
   /** Segue o próximo míssil nuclear em voo */
   chase() {
     const a = this.actors.find((x) => x.o.name === 'nuke');
@@ -346,7 +374,9 @@ export class World3D {
     const clear = 1 - Math.max(k.mist * 0.86, k.rain * 0.55);
     fog.near = (30 + this.dist * 0.9) * clear;
     fog.far = fog.near + 150 * clear + this.dist * 0.6;
-    this.scenery.update(dt, this.controls.target, this.dist, k, this.sunDir);
+    const cold = w && w.x.winter > 0 ? 0.55 : 0;
+    this.sun.intensity *= 1 - cold * 0.7;
+    this.scenery.update(dt, this.controls.target, this.dist, k, this.sunDir, w ? seasonOf(w.t) : 0, cold);
   }
   private sky: Sky = { light: 1, warm: 0, rain: 0, mist: 0 };
   center() {
@@ -395,6 +425,12 @@ export class World3D {
     this.cranes.castShadow = true;
     this.crates = inst(mergeGeometries([new THREE.BoxGeometry(0.13, 0.11, 0.13).translate(0, 0.055, 0).toNonIndexed(), new THREE.BoxGeometry(0.14, 0.02, 0.03).translate(0, 0.06, 0).toNonIndexed(), new THREE.BoxGeometry(0.03, 0.02, 0.14).translate(0, 0.115, 0).toNonIndexed()])!, mat('#c98b3a', { rough: 0.7 }), 12);
     this.crates.castShadow = true;
+    const truck = mergeGeometries([new THREE.BoxGeometry(0.16, 0.07, 0.07).translate(-0.02, 0.055, 0).toNonIndexed(), new THREE.BoxGeometry(0.05, 0.06, 0.065).translate(0.09, 0.045, 0).toNonIndexed(), new THREE.BoxGeometry(0.2, 0.02, 0.06).translate(0, 0.012, 0).toNonIndexed()])!;
+    this.trucks = inst(truck, mat('#ffffff', { rough: 0.6 }), 12);
+    this.trucks.setColorAt(0, new THREE.Color());
+    this.minesMesh = inst(new THREE.CylinderGeometry(0.035, 0.045, 0.02, 10).translate(0, 0.01, 0), mat('#7a2a20'), 80);
+    this.wallMesh = inst(mergeGeometries([-0.3, -0.1, 0.1, 0.3].map((z) => new THREE.BoxGeometry(0.08, 0.12, 0.16).translate(0, 0.06, z * 1.4).toNonIndexed()))!, mat('#b7b2a6'), 40);
+    this.trucks.castShadow = this.wallMesh.castShadow = true;
     for (const d of WONDERS) {
       const m = new THREE.Mesh(wonderGeometry(d.id), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.15 }));
       m.castShadow = m.receiveShadow = true;
@@ -428,7 +464,7 @@ export class World3D {
     U.fogMap.value = this.fogTex;
   }
   private open(w: World) {
-    return hasRule(w, 'aberto') || !w.players[W.me].alive || !!w.over || !!(mods.get(W.me)?.vision && mods.get(W.me)!.vision! > 5);
+    return W.spec || hasRule(w, 'aberto') || !w.players[W.me].alive || !!w.over || !!(mods.get(W.me)?.vision && mods.get(W.me)!.vision! > 5);
   }
   private updateFog(w: World, now: number) {
     if (now < this.fogAt) return;
@@ -479,7 +515,7 @@ export class World3D {
       for (const m of this.units.values()) m.count = 0;
       this.works.forEach((m) => { m.count = 0; });
       this.worksSig = this.flags.sig = '';
-      this.flags.pole.count = this.flags.cloth.count = this.cranes.count = this.crates.count = 0;
+      this.flags.pole.count = this.flags.cloth.count = this.cranes.count = this.crates.count = this.trucks.count = this.minesMesh.count = this.wallMesh.count = 0;
       this.wonders.forEach((m) => { m.visible = false; });
       this.discs.count = this.barBack.count = this.barFill.count = 0;
     }
@@ -555,7 +591,7 @@ export class World3D {
       v.bank += (THREE.MathUtils.clamp(turn * 1.2, -0.7, 0.7) - v.bank) * Math.min(1, dt * 4);
       if (moving) v.step += dt * 11;
       const friend = allied(w, u.o, W.me);
-      v.seen = friend || this.sees(w, u.x, u.z);
+      v.seen = friend || (this.sees(w, u.x, u.z) && (u.k !== 'submarino' || w.units.some((o) => o.o === W.me && Math.hypot(o.x - u.x, o.z - u.z) < 1.2)));
       if (!v.seen || Math.hypot(v.x - this.controls.target.x, v.z - this.controls.target.z) > far) continue;
       const mesh = this.units.get(u.k)!;
       const squad = SQUAD(u.k);
@@ -570,23 +606,23 @@ export class World3D {
         const off = squad > 1 ? 0.075 * zoom : 0;
         const bob = squad > 1 && moving ? Math.abs(Math.sin(v.step + n)) * 0.008 * zoom : alt ? Math.sin(now / 420 + u.i) * 0.03 : 0;
         q.setFromAxisAngle(up, -v.hull);
-        pos.set(v.x + Math.cos(a) * off, Y(v.x + Math.cos(a) * off, v.z + Math.sin(a) * off) + alt + bob, v.z + Math.sin(a) * off);
+        pos.set(v.x + Math.cos(a) * off, ground(u, v.x + Math.cos(a) * off, v.z + Math.sin(a) * off) + alt + bob, v.z + Math.sin(a) * off);
         mesh.setMatrixAt(count[u.k], m.compose(pos, q, size.setScalar(s)));
         (mesh.geometry.attributes.anim as THREE.InstancedBufferAttribute).setXYZW(count[u.k], squad > 1 && moving ? v.step + n * 1.3 : 0, v.dir - v.hull, v.kick, UNITS[u.k].cls === 'ar' ? v.bank : 0);
         mesh.setColorAt(count[u.k]++, tint);
       }
       // Estrelas de veterano
-      if (u.star && this.dist < 14 && Math.random() < dt * u.star * 2) this.fire.add(v.x, Y(v.x, v.z) + alt + 0.16, v.z, { life: 0.7, s0: 0.05, s1: 0.02, vy: 0.2, g: 0.85, b: 0.3 });
-      if (u.k === 'caca' && moving && this.dist < 30) this.smoke.add(v.x - Math.cos(v.dir) * 0.14, Y(v.x, v.z) + alt, v.z - Math.sin(v.dir) * 0.14, { life: 0.9, s0: 0.03, s1: 0.1, a: 0.3 });
+      if (u.star && this.dist < 14 && Math.random() < dt * u.star * 2) this.fire.add(v.x, ground(u, v.x, v.z) + alt + 0.16, v.z, { life: 0.7, s0: 0.05, s1: 0.02, vy: 0.2, g: 0.85, b: 0.3 });
+      if (u.k === 'caca' && moving && this.dist < 30) this.smoke.add(v.x - Math.cos(v.dir) * 0.14, ground(u, v.x, v.z) + alt, v.z - Math.sin(v.dir) * 0.14, { life: 0.9, s0: 0.03, s1: 0.1, a: 0.3 });
       // Poeira dos veículos
       if (moving && UNITS[u.k].cls === 'vei' && this.dist < 22 && Math.random() < dt * 5) this.smoke.add(v.x - Math.cos(v.dir) * 0.1, Y(v.x - Math.cos(v.dir) * 0.1, v.z - Math.sin(v.dir) * 0.1) + 0.02, v.z - Math.sin(v.dir) * 0.1, { life: 0.9, s0: 0.06, s1: 0.28, vy: 0.08, r: 0.72, g: 0.62, b: 0.48, a: 0.4 });
       const picked = this.selected.has(u.i);
       if (discs < 400) {
-        pos.set(v.x, Y(v.x, v.z) + 0.04, v.z);
+        pos.set(v.x, ground(u, v.x, v.z) + 0.04, v.z);
         this.discs.setMatrixAt(discs, m.compose(pos, q.identity(), size.setScalar((picked ? 0.17 : 0.11) * zoom)));
         this.discs.setColorAt(discs++, tint.set(picked ? '#ffffff' : color));
       }
-      if ((u.hp < u.max * 0.98 || picked) && bars < 590 && this.dist < 40) this.bar(bars++, v.x, Y(v.x, v.z) + alt + 0.2 * zoom, v.z, 0.22 * zoom, u.hp / u.max, color);
+      if ((u.hp < u.max * 0.98 || picked) && bars < 590 && this.dist < 40) this.bar(bars++, v.x, ground(u, v.x, v.z) + alt + 0.2 * zoom, v.z, 0.22 * zoom, u.hp / u.max, color);
     }
     for (const id of this.shown.keys()) if (!alive.has(id)) this.shown.delete(id);
     for (const id of this.selected) if (!alive.has(id)) this.selected.delete(id);
@@ -627,6 +663,27 @@ export class World3D {
       this.crates.setMatrixAt(i, m.makeRotationY(now / 1400 + i).scale(new THREE.Vector3().setScalar(Math.min(1.8, this.zoom))).setPosition(c.x, Y(c.x, c.z) + 0.03 + Math.abs(Math.sin(now / 420 + i)) * 0.05, c.z));
       if (this.dist < 30 && Math.random() < 0.12) this.fire.add(c.x, Y(c.x, c.z) + 0.2, c.z, { life: 1.2, s0: 0.05, s1: 0.02, vy: 0.5, g: 0.9, b: 0.5 });
     });
+    const vans = [...w.x.convoys.map((c) => ({ x: c.x, z: c.z, a: Math.atan2(c.tz - c.z, c.tx - c.x), color: w.players[c.a].color })), ...(w.x.merchant ? [{ x: w.x.merchant.x, z: w.x.merchant.z, a: Math.atan2(CITY[w.x.merchant.city].z - w.x.merchant.z, CITY[w.x.merchant.city].x - w.x.merchant.x), color: '#f2c230' }] : [])].slice(0, 12);
+    vans.forEach((v, i) => {
+      // Desliza entre um segundo e outro
+      const k = this.vanAt[i] ?? (this.vanAt[i] = { x: v.x, z: v.z });
+      if (Math.hypot(k.x - v.x, k.z - v.z) > 3) Object.assign(k, { x: v.x, z: v.z });
+      k.x += (v.x - k.x) * 0.06;
+      k.z += (v.z - k.z) * 0.06;
+      this.trucks.setMatrixAt(i, m.makeRotationY(-v.a).scale(new THREE.Vector3().setScalar(Math.min(1.8, this.zoom))).setPosition(k.x, Y(k.x, k.z) + 0.03, k.z));
+      this.trucks.setColorAt(i, new THREE.Color(v.color));
+    });
+    this.trucks.count = vans.length;
+    this.trucks.instanceMatrix.needsUpdate = true;
+    if (this.trucks.instanceColor) this.trucks.instanceColor.needsUpdate = true;
+    const mines = w.x.mines.filter((k) => allied(w, k.o, W.me)).slice(0, 80);
+    mines.forEach((k, i) => this.minesMesh.setMatrixAt(i, m.makeTranslation(k.x, Y(k.x, k.z), k.z)));
+    this.minesMesh.count = mines.length;
+    this.minesMesh.instanceMatrix.needsUpdate = true;
+    const walls = w.x.walls.slice(0, 40);
+    walls.forEach((k, i) => this.wallMesh.setMatrixAt(i, m.makeRotationY(i * 1.3).setPosition(k.x, Y(k.x, k.z), k.z)));
+    this.wallMesh.count = walls.length;
+    this.wallMesh.instanceMatrix.needsUpdate = true;
     this.crates.count = list.length;
     this.crates.instanceMatrix.needsUpdate = true;
     this.wonders.forEach((mesh, id) => {
@@ -661,21 +718,21 @@ export class World3D {
     }
   }
   private drawWorks(w: World) {
-    const sig = w.cities.map((c) => (c.works.length ? c.owner + c.works.map((k) => k.k + (k.left > 0 ? '~' : '')).join() : '')).join('|');
+    const sig = w.cities.map((c) => (c.works.length ? c.owner + c.works.map((k) => k.k + (k.left > 0 ? '~' : '') + (k.lv ?? 1) + (k.px ?? '') + (k.pz ?? '')).join() : '')).join('|');
     if (sig === this.worksSig) return;
     this.worksSig = sig;
     const n = {} as Record<WorksId, number>;
     let cranes = 0;
     for (const c of w.cities) {
       c.works.forEach((k, i) => {
-        const { x, z } = this.slot(c.id, i, k.k);
+        const { x, z } = this.slot(c.id, i, k.k, k.px, k.pz);
         const list = this.works.get(k.k)!;
         const at = n[k.k] ?? 0;
         if (at >= 140) return;
         n[k.k] = at + 1;
         const s = k.k === 'comando' ? 0.085 : 0.08;
         // Em obras: ainda saindo do chão
-        const m = new THREE.Matrix4().compose(new THREE.Vector3(x, Y(x, z), z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), i * 0.9), new THREE.Vector3(s, k.left > 0 ? s * 0.35 : s, s));
+        const m = new THREE.Matrix4().compose(new THREE.Vector3(x, Y(x, z), z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), i * 0.9), new THREE.Vector3(s, (k.left > 0 ? s * 0.35 : s) * (1 + ((k.lv ?? 1) - 1) * 0.12), s));
         list.setMatrixAt(at, m);
         list.setColorAt(at, new THREE.Color(w.players[c.owner]?.color ?? '#9aa3ad'));
         if (k.left > 0 && cranes < 80) this.cranes.setMatrixAt(cranes++, new THREE.Matrix4().makeRotationY(i * 1.7).setPosition(x + 0.1, Y(x, z), z));
@@ -689,9 +746,10 @@ export class World3D {
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     });
   }
-  private slot(city: number, i: number, k: WorksId) {
+  private slot(city: number, i: number, k: WorksId, px = 0, pz = 0) {
     const c = CITY[city];
     if (k === 'comando') return { x: c.x, z: c.z };
+    if (px || pz) return { x: c.x + px, z: c.z + pz };
     const r = spread(c) * 0.75 + 0.28;
     let a = i * 2.4 + (city % 10);
     // Nunca dentro do mar
@@ -887,6 +945,24 @@ export class World3D {
         for (let i = 0; i < 3; i++) this.boom(x2 + rand(-0.3, 0.3), Y(x2 + rand(-0.3, 0.3), z2 + rand(-0.3, 0.3)) + 4 + rand(-0.3, 0.3), z2 + rand(-0.3, 0.3), 1.6);
         this.ring(x2, z2, 2.5, '#7dd3fc', 1);
       } });
+    } else if (k === 'fogos') {
+      // Fogos de artifício
+      for (let n = 0; n < 9; n++) this.later.push({ at: now + n * 380, run: () => {
+        const [fx, fz, fy] = [x2 + rand(-0.7, 0.7), z2 + rand(-0.7, 0.7), Y(x2, z2) + rand(1, 1.7)];
+        const [r, g, b] = [[1, 0.3, 0.3], [0.3, 0.8, 1], [1, 0.85, 0.3], [0.5, 1, 0.5], [1, 0.4, 0.9]][n % 5];
+        for (let i = 0; i < 26; i++) {
+          const [a, e] = [rand(0, 6.28), rand(-1.4, 1.4)];
+          this.fire.add(fx, fy, fz, { life: rand(0.8, 1.4), s0: 0.08, s1: 0.02, vx: Math.cos(a) * Math.cos(e) * 0.9, vz: Math.sin(a) * Math.cos(e) * 0.9, vy: Math.sin(e) * 0.9, r, g, b });
+        }
+      } });
+      this.play(x2, z2, 400, () => sound.playVictory());
+    } else if (k === 'meteoro') {
+      const g = this.body(new THREE.IcosahedronGeometry(0.16, 1), '#3a2a20');
+      this.actors.push({ o: g, t: 0, dur: 1.4, move: (t) => {
+        g.position.set(x2 + (1 - t) * 9, Y(x2, z2) + (1 - t) * 12, z2 - (1 - t) * 5);
+        this.fire.add(g.position.x, g.position.y, g.position.z, { life: 0.7, s0: 0.5, s1: 0.1 });
+      } });
+      this.later.push({ at: now + 1400, run: () => { this.boom(x2, Y(x2, z2) + 0.2, z2, 2.4); this.mark(x2, z2, 0.9); this.ring(x2, z2, 2.4, '#ffb066', 1.2); this.shake = 1; } });
     } else if (k === 'caixa') {
       if (!near) return;
       this.ring(x2, z2, 0.7, '#facc15', 0.8);
@@ -1002,7 +1078,10 @@ export class World3D {
       l.intensity = 14 * s;
     }
     this.play(x, z, 160, () => sound.playImpact());
-    if (Math.hypot(x - this.controls.target.x, z - this.controls.target.z) < 4 && this.dist < 14) this.shake = Math.max(this.shake, 0.25 * s);
+    if (Math.hypot(x - this.controls.target.x, z - this.controls.target.z) < 4 && this.dist < 14) {
+      this.shake = Math.max(this.shake, 0.25 * s);
+      if (prefs.vibe && s > 0.8) navigator.vibrate?.(25);
+    }
   }
   private mark(x: number, z: number, r: number) {
     this.scorch.setMatrixAt(this.scorchN % 90, new THREE.Matrix4().makeTranslation(x, Y(x, z) + 0.012, z).scale(new THREE.Vector3(r, 1, r)));
@@ -1013,6 +1092,7 @@ export class World3D {
   /** Clarão, onda de choque, bola de fogo e cogumelo */
   private nuke(x: number, z: number, now: number, s: number) {
     this.onFlash();
+    if (prefs.vibe) navigator.vibrate?.([120, 60, 240]);
     sound.playNuke();
     this.shake = 1 + s * 0.6;
     this.post?.blast(new THREE.Vector3(x, Y(x, z) + s, z), s);
@@ -1106,6 +1186,7 @@ export class World3D {
       start = { x: e.clientX, y: e.clientY, n: touches };
       this.goal = null;
       this.follow = null;
+      this.film = null;
       if (this.boxing) this.controls.enabled = false;
     });
     this.canvas.addEventListener('pointermove', (e) => {

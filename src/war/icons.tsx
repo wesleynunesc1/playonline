@@ -7,6 +7,7 @@ import {
 
 /** Ícones de traço no lugar dos emojis do catálogo */
 const MAP: Record<string, React.ElementType> = {
+  '⚓': Anchor, '🌊': Ship, '🚧': AlertTriangle, '💣': Bomb, '🕵️': Eye, '🗿': Mountain, '🎁': Package, '🏃': Users, '⭐': Star, '😀': Heart, '🏠': Home, '🏳️': Flag,
   '🛡️': Shield, '🔥': Flame, '🚚': Truck, '🏗️': Wrench, '🌆': Building2, '🤝': Handshake, '🏙️': Building, '📦': Package, '🪖': Users, '🗺️': MapIcon, '🔬': FlaskConical, '🏭': Factory, '🌃': Building2, '👑': Crown, '🛰️': Satellite, '☢️': Radiation, '🏆': Trophy, '🏡': Home,
   '🌎': Globe2, '💀': Skull, '🤖': Bot, '⚔️': Swords, '💰': Coins, '⏩': Timer, '⚡': Zap, '👁️': Eye, '🚫': Plane, '🕊️': Leaf, '🙅': Shield, '🛩️': Plane, '🏚️': HeartCrack, '🏰': Castle, '📈': TrendingUp, '🎲': Dices,
   '🛢️': Fuel, '🌬️': Wind, '🌧️': CloudRain, '🌫️': CloudFog, '🚩': Flag, '🏷️': BadgeDollarSign, '📣': Megaphone, '🔌': PlugZap, '🌽': Wheat, '☀️': Sun, '💻': Cpu, '💼': WalletCards,

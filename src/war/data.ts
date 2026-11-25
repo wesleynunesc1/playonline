@@ -28,6 +28,42 @@ export const ROADS: [City, City][] = (() => {
   }
   return out;
 })();
+// ===== Terra e mar =====
+/** Contorno de cada município em coordenadas do mundo */
+export const RINGS = new Map(CITIES.map((c) => [c.id, c.rings.map((enc) => {
+  const out: [number, number][] = [[enc[0], enc[1]]];
+  for (let i = 2; i < enc.length; i += 2) out.push([out[out.length - 1][0] + enc[i], out[out.length - 1][1] + enc[i + 1]]);
+  return out.map(([x, y]) => [wx(x), wz(y)] as const);
+})]));
+/** Estados vizinhos, em contorno simples */
+export const NEIGHBORS = ([[-41.3, -2.95], [-43, -2.6], [-50, -2.2], [-60, -2], [-60, -25], [-25, -25], [-34.8, -8.2], [-34.85, -7], [-35.3, -5.1], [-36.2, -5.1], [-37.2, -4.75], [-37.5, -4.8], [-38.6, -5.6], [-40, -5]] as const)
+  .map(([lon, lat]) => [wx((lon + 42) * 100), wz((lat + 8) * 100)] as const);
+const SEA_N = 220;
+const SEA_S = 100 / SEA_N;
+const SEA = (() => {
+  const g = new Uint8Array(SEA_N * SEA_N).fill(1);
+  const fill = (ring: readonly (readonly [number, number])[]) => {
+    const z0 = Math.max(0, Math.floor((Math.min(...ring.map((p) => p[1])) + 50) / SEA_S));
+    const z1 = Math.min(SEA_N - 1, Math.ceil((Math.max(...ring.map((p) => p[1])) + 50) / SEA_S));
+    for (let j = z0; j <= z1; j++) {
+      const z = (j + 0.5) * SEA_S - 50;
+      const xs: number[] = [];
+      for (let i = 0; i < ring.length; i++) {
+        const [a, b] = [ring[i], ring[(i + 1) % ring.length]];
+        if (a[1] > z !== b[1] > z) xs.push(a[0] + ((z - a[1]) / (b[1] - a[1])) * (b[0] - a[0]));
+      }
+      xs.sort((p, q) => p - q);
+      for (let k = 0; k + 1 < xs.length; k += 2) for (let i = Math.max(0, Math.round((xs[k] + 50) / SEA_S)); i < Math.min(SEA_N, Math.round((xs[k + 1] + 50) / SEA_S)); i++) g[j * SEA_N + i] = 0;
+    }
+  };
+  fill(NEIGHBORS);
+  RINGS.forEach((l) => l.forEach(fill));
+  return g;
+})();
+export const isSea = (x: number, z: number) => {
+  const [i, j] = [Math.floor((x + 50) / SEA_S), Math.floor((z + 50) / SEA_S)];
+  return i >= 0 && j >= 0 && i < SEA_N && j < SEA_N && SEA[j * SEA_N + i] === 1;
+};
 export const REGION_COLOR: Record<string, string> = {
   'Metropolitana de Fortaleza': '#7f9a6c', Norte: '#86a065', Noroeste: '#97a063', Jaguaribe: '#a99a68', Sertões: '#b1925f', 'Centro-Sul': '#a98a59', Sul: '#7f9860',
 };
@@ -41,14 +77,14 @@ export const BONUS_LABEL: Record<BonusKey, string> = {
 export const bonusText = (b: Bonus) => (Object.entries(b) as [BonusKey, number][]).map(([k, v]) => `+${Math.round(v * 100)}% ${BONUS_LABEL[k]}`).join(', ');
 
 // ===== 15 unidades =====
-export type UnitId = 'soldado' | 'antitanque' | 'sniper' | 'medico' | 'hacker' | 'moto' | 'blindado' | 'tanque' | 'artilharia' | 'foguete' | 'antiaerea' | 'fpv' | 'recon' | 'heli' | 'caca';
+export type UnitId = 'soldado' | 'antitanque' | 'sniper' | 'medico' | 'hacker' | 'moto' | 'blindado' | 'tanque' | 'artilharia' | 'foguete' | 'antiaerea' | 'fpv' | 'recon' | 'heli' | 'caca' | 'general' | 'corveta' | 'submarino' | 'portadrones' | 'desembarque' | 'colosso';
 export type Class = 'inf' | 'vei' | 'ar';
 export interface UnitDef {
   name: string; icon: string; cls: Class; hp: number; dmg: [number, number, number]; every: number; range: number; min?: number; vision: number; speed: number;
-  money: number; fuel: number; time: number; from: WorksId; text: string; splash?: number; suicide?: boolean; heal?: number; jam?: boolean; shot: Shot; captures?: boolean;
+  money: number; fuel: number; time: number; from: WorksId; text: string; splash?: number; suicide?: boolean; heal?: number; jam?: boolean; shot: Shot; captures?: boolean; sea?: boolean;
 }
 /** dmg = contra infantaria, veículo e aéreo */
-export const UNITS: Record<UnitId, UnitDef> = {
+export const UNITS = {
   soldado: { name: 'Infantaria', icon: '🪖', cls: 'inf', hp: 100, dmg: [12, 5, 4], every: 0.8, range: 0.95, vision: 2.4, speed: 0.42, money: 60, fuel: 0, time: 4, from: 'quartel', text: 'Toma cidades. Barata.', shot: 'bala', captures: true },
   antitanque: { name: 'Antitanque', icon: '🎯', cls: 'inf', hp: 90, dmg: [10, 62, 0], every: 2.4, range: 1.5, vision: 2.4, speed: 0.4, money: 110, fuel: 0, time: 6, from: 'quartel', text: 'Míssil portátil contra blindados.', shot: 'missil', captures: true },
   sniper: { name: 'Sniper', icon: '🔭', cls: 'inf', hp: 70, dmg: [60, 6, 0], every: 2.6, range: 2.2, vision: 3.4, speed: 0.42, money: 130, fuel: 0, time: 7, from: 'quartel', text: 'Elimina infantaria de longe.', shot: 'bala', captures: true },
@@ -64,7 +100,15 @@ export const UNITS: Record<UnitId, UnitDef> = {
   recon: { name: 'Drone Espião', icon: '🛰️', cls: 'ar', hp: 60, dmg: [0, 0, 0], every: 1, range: 0.1, vision: 6, speed: 1.3, money: 120, fuel: 15, time: 6, from: 'drones', text: 'Enxerga muito longe.', shot: 'bala' },
   heli: { name: 'Helicóptero', icon: '🚁', cls: 'ar', hp: 360, dmg: [34, 60, 14], every: 1.1, range: 1.7, vision: 3.4, speed: 1.15, money: 620, fuel: 220, time: 18, from: 'aeroporto', text: 'Caça blindados por cima de tudo.', shot: 'missil' },
   caca: { name: 'Caça', icon: '✈️', cls: 'ar', hp: 300, dmg: [40, 60, 95], every: 1.5, range: 1.9, vision: 4, speed: 2.6, money: 900, fuel: 350, time: 24, from: 'aeroporto', text: 'O mais rápido. Domina o céu.', splash: 0.4, shot: 'missil' },
-};
+} as unknown as Record<UnitId, UnitDef>;
+Object.assign(UNITS, {
+  general: { name: 'General', icon: '🎖️', cls: 'inf', hp: 340, dmg: [34, 22, 8], every: 0.7, range: 1.3, vision: 3.6, speed: 0.5, money: 700, fuel: 60, time: 20, from: 'comando', text: 'Herói único: +20% de dano em volta.', shot: 'bala', captures: true },
+  corveta: { name: 'Corveta', icon: '🚢', cls: 'vei', hp: 620, dmg: [40, 60, 40], every: 1.5, range: 2.6, vision: 4, speed: 0.6, money: 650, fuel: 180, time: 18, from: 'estaleiro', text: 'Navio de guerra versátil.', shot: 'canhao', splash: 0.4, sea: true },
+  submarino: { name: 'Submarino', icon: '🌊', cls: 'vei', hp: 380, dmg: [50, 120, 0], every: 3, range: 2.2, vision: 2.6, speed: 0.5, money: 800, fuel: 240, time: 22, from: 'estaleiro', text: 'Invisível de longe.', shot: 'missil', sea: true },
+  portadrones: { name: 'Porta-drones', icon: '🛩️', cls: 'vei', hp: 900, dmg: [0, 0, 30], every: 1.2, range: 2.4, vision: 5, speed: 0.4, money: 1600, fuel: 500, time: 34, from: 'estaleiro', text: 'Lança drones FPV sem parar.', shot: 'missil', sea: true },
+  desembarque: { name: 'Lancha de desembarque', icon: '⚓', cls: 'vei', hp: 420, dmg: [12, 6, 4], every: 0.8, range: 1.1, vision: 3, speed: 0.75, money: 350, fuel: 90, time: 12, from: 'estaleiro', text: 'Leva até 8 de infantaria à praia.', shot: 'bala', sea: true },
+  colosso: { name: 'Colosso', icon: '🤖', cls: 'vei', hp: 4200, dmg: [90, 110, 60], every: 1.4, range: 2.2, vision: 4, speed: 0.22, money: 0, fuel: 0, time: 0, from: 'comando', text: 'Máquina de guerra gigante.', shot: 'canhao', splash: 0.7 },
+} satisfies Partial<Record<UnitId, UnitDef>>);
 export const UNIT_IDS = Object.keys(UNITS) as UnitId[];
 export type Shot = 'bala' | 'canhao' | 'missil';
 export const unitCap = (cities: number) => Math.min(60, 22 + cities * 3);
@@ -72,7 +116,7 @@ export const unitCap = (cities: number) => Math.min(60, 22 + cities * 3);
 // ===== 17 construções =====
 export type WorksId =
   | 'comando' | 'mercado' | 'shopping' | 'refinaria' | 'solar' | 'eolica' | 'banco' | 'quartel' | 'fabrica' | 'drones' | 'aeroporto' | 'hospital'
-  | 'torre' | 'antiaerea' | 'obuseiro' | 'radar' | 'gerador' | 'silo' | 'vigia' | 'domo';
+  | 'torre' | 'antiaerea' | 'obuseiro' | 'radar' | 'gerador' | 'silo' | 'vigia' | 'domo' | 'estaleiro' | 'trincheira' | 'abrigo';
 export interface WorksDef {
   name: string; icon: string; money: number; fuel: number; time: number; text: string; level: number; income?: number; fuelOut?: number;
   gun?: { dmg: [number, number, number]; every: number; range: number; splash?: number; shot: Shot };
@@ -98,6 +142,9 @@ export const WORKS: Record<WorksId, WorksDef> = {
   radar: { name: 'Radar', icon: '📡', money: 320, fuel: 30, time: 9, level: 2, text: 'Grande visão em volta.' },
   gerador: { name: 'Defesa Reforçada', icon: '🛡️', money: 480, fuel: 60, time: 12, level: 3, text: 'A cidade aguenta o dobro.' },
   silo: { name: 'Silo de Mísseis', icon: '🚀', money: 1500, fuel: 400, time: 26, level: 5, text: 'Lança armas nucleares.' },
+  estaleiro: { name: 'Estaleiro', icon: '⚓', money: 800, fuel: 150, time: 16, level: 1, text: 'Constrói navios. Só no litoral.' },
+  trincheira: { name: 'Trincheiras', icon: '🧱', money: 220, fuel: 0, time: 8, level: 1, text: 'Infantaria na cidade leva 40% menos dano.' },
+  abrigo: { name: 'Abrigo', icon: '🏠', money: 450, fuel: 40, time: 12, level: 1, text: 'Reduz o estrago nuclear pela metade.' },
   domo: { name: 'Domo Antimíssil', icon: '🔰', money: 900, fuel: 200, time: 20, level: 3, text: 'Derruba um míssil nuclear por minuto.' },
 };
 export const WORKS_IDS = (Object.keys(WORKS) as WorksId[]).filter((k) => k !== 'comando');
@@ -110,7 +157,7 @@ export const CAPTURE_RADIUS = 0.8;
 export const CAPTURE_S = 4;
 
 // ===== 8 apoios =====
-export type PowerId = 'barragem' | 'aereo' | 'fumaca' | 'emp' | 'paraquedas' | 'satelite' | 'reparo' | 'tatica' | 'balistico' | 'hidrogenio';
+export type PowerId = 'barragem' | 'aereo' | 'fumaca' | 'emp' | 'paraquedas' | 'satelite' | 'reparo' | 'minas' | 'barreira' | 'tatica' | 'balistico' | 'hidrogenio';
 /** Armas nucleares: nível do Programa Nuclear, segundos de voo, força e segundos de radiação */
 export const NUKES: Partial<Record<PowerId, { need: number; flight: number; dmg: number; rad: number; size: number }>> = {
   tatica: { need: 1, flight: 4, dmg: 520, rad: 20, size: 0.6 },
@@ -127,6 +174,8 @@ export const POWERS: Record<PowerId, { name: string; icon: string; money: number
   paraquedas: { name: 'Paraquedistas', icon: '🪂', money: 350, cool: 80, radius: 0.8, text: '5 soldados em qualquer lugar.', color: '#facc15' },
   satelite: { name: 'Satélite', icon: '🛰️', money: 120, cool: 50, radius: 8, text: 'Revela uma área enorme por 15s.', color: '#a78bfa' },
   reparo: { name: 'Reparo', icon: '🔧', money: 200, cool: 50, radius: 1.6, text: 'Recupera 45% da vida das suas tropas.', color: '#4ade80' },
+  minas: { name: 'Campo minado', icon: '💣', money: 180, cool: 30, radius: 1, text: 'Cinco minas escondidas.', color: '#f59e0b' },
+  barreira: { name: 'Barreira', icon: '🚧', money: 160, cool: 35, radius: 1.1, text: 'Inimigos passam bem devagar por 60s.', color: '#94a3b8' },
   tatica: { name: 'Ogiva Tática', icon: '☢️', money: 900, cool: 110, radius: 1.3, text: 'Nuclear pequena e rápida. Deixa radiação.', color: '#facc15' },
   balistico: { name: 'Bomba Atômica', icon: '🚀', money: 1800, cool: 170, radius: 2.1, text: 'Arrasa uma cidade inteira.', color: '#fb923c' },
   hidrogenio: { name: 'Bomba de Hidrogênio', icon: '🌋', money: 4000, cool: 300, radius: 3.6, text: 'Apaga uma região do mapa.', color: '#ef4444' },
@@ -185,18 +234,21 @@ export const EVENTS: { name: string; icon: string; text: string; seconds: number
 ];
 
 // ===== 5 modos e 12 regras =====
-export type ModeId = 'dominio' | 'total' | 'capital' | 'equipes' | 'coop';
+export type ModeId = 'dominio' | 'total' | 'capital' | 'equipes' | 'coop' | 'ondas';
 export const MODES: { id: ModeId; name: string; icon: string; text: string }[] = [
   { id: 'dominio', name: 'Mundo Aberto', icon: '🌎', text: 'Cresça, faça acordos ou conquiste. No fim, conta a população governada.' },
   { id: 'total', name: 'Guerra Total', icon: '💀', text: 'Vence o último de pé.' },
   { id: 'capital', name: 'Corrida a Fortaleza', icon: '🏙️', text: 'Segure Fortaleza por 3 minutos somados.' },
   { id: 'equipes', name: 'Equipes', icon: '🤝', text: 'Times alternados somam população.' },
+  { id: 'ondas', name: 'Sobrevivência', icon: '⚠️', text: 'Ondas cada vez maiores. Quanto você aguenta?' },
   { id: 'coop', name: 'Contra a Máquina', icon: '🤖', text: 'Humanos juntos contra os robôs.' },
 ];
 /** 0 = sem limite */
 export const MINUTES = [15, 25, 40, 60, 0];
 export const RULES: { id: string; name: string; icon: string; text: string }[] = [
   { id: 'guerra', name: 'Já começa em guerra', icon: '⚔️', text: 'Todos inimigos desde o início' },
+  { id: 'perigos', name: 'Perigos do mundo', icon: '⚠️', text: 'Bandidos, invasores, colossos e meteoros' },
+  { id: 'regiao', name: 'Só a região', icon: '🗺️', text: 'A partida acontece só na região de quem criou' },
   { id: 'avancado', name: 'Começar avançado', icon: '🏭', text: 'Todos começam na Era 3' },
   { id: 'rico', name: 'Muito dinheiro', icon: '💰', text: 'Começa com 5 vezes mais' },
   { id: 'turbo', name: 'Turbo', icon: '⏩', text: 'Treino e obras 2x mais rápidos' },
@@ -238,11 +290,11 @@ export const ERAS: { name: string; icon: string; money: number; fuel: number; ci
   { name: 'Potência', icon: '🛰️', money: 12000, fuel: 2500, cities: 8, text: 'Aviação, foguetes e antimíssil.' },
   { name: 'Era Atômica', icon: '☢️', money: 30000, fuel: 7000, cities: 14, text: 'Silos e armas nucleares.' },
 ];
-export const UNIT_ERA: Record<UnitId, number> = { soldado: 1, moto: 1, sniper: 2, medico: 2, antitanque: 2, blindado: 2, tanque: 3, artilharia: 3, antiaerea: 3, hacker: 3, fpv: 3, recon: 2, foguete: 4, heli: 4, caca: 4 };
+export const UNIT_ERA: Record<UnitId, number> = { soldado: 1, moto: 1, sniper: 2, medico: 2, antitanque: 2, blindado: 2, tanque: 3, artilharia: 3, antiaerea: 3, hacker: 3, fpv: 3, recon: 2, foguete: 4, heli: 4, caca: 4, general: 2, corveta: 3, submarino: 4, portadrones: 5, desembarque: 3, colosso: 99 };
 export const WORKS_ERA: Record<WorksId, number> = {
-  comando: 1, mercado: 1, refinaria: 1, quartel: 1, vigia: 1, torre: 1, solar: 2, banco: 2, hospital: 2, fabrica: 2, drones: 2, radar: 2, shopping: 3, eolica: 3, antiaerea: 3, obuseiro: 3, gerador: 3, aeroporto: 4, domo: 4, silo: 5,
+  comando: 1, mercado: 1, refinaria: 1, quartel: 1, vigia: 1, torre: 1, solar: 2, banco: 2, hospital: 2, fabrica: 2, drones: 2, radar: 2, shopping: 3, eolica: 3, antiaerea: 3, obuseiro: 3, gerador: 3, aeroporto: 4, domo: 4, silo: 5, estaleiro: 3, trincheira: 1, abrigo: 2,
 };
-export const POWER_ERA: Record<PowerId, number> = { satelite: 2, reparo: 2, fumaca: 2, barragem: 3, paraquedas: 3, emp: 3, aereo: 4, tatica: 5, balistico: 5, hidrogenio: 5 };
+export const POWER_ERA: Record<PowerId, number> = { satelite: 2, reparo: 2, fumaca: 2, minas: 2, barreira: 1, barragem: 3, paraquedas: 3, emp: 3, aereo: 4, tatica: 5, balistico: 5, hidrogenio: 5 };
 /** Melhorias de uma cidade: cresce, rende mais e ganha espaço */
 export const MAX_DEV = 3;
 export const devCost = (level: number, dev: number): [number, number] => [Math.round((180 + level * 60) * (dev + 1)), dev * 80];
@@ -253,7 +305,10 @@ export const annexTime = (level: number) => 12 + level * 4;
 export const ANNEX_REACH = 7;
 // ===== Diplomacia =====
 export const REL = { paz: 0, guerra: 1, comercio: 2, alianca: 3 } as const;
-export const REL_NAME = ['🕊️ Paz', '⚔️ Guerra', '📦 Comércio', '🤝 Aliança'];
+/** Proposta de não agressão (não muda a relação, só impede a guerra por um tempo) */
+export const PACT = 4;
+export const PACT_S = 300;
+export const REL_NAME = ['🕊️ Paz', '⚔️ Guerra', '📦 Comércio', '🤝 Aliança', '🕊️ Não agressão'];
 export const REL_COLOR = ['#94a3b8', '#ef4444', '#38bdf8', '#4ade80'];
 /** Segundos entre o ultimato e a guerra */
 export const ULTIMATUM_S = 30;
@@ -272,5 +327,10 @@ export const MEDALS: { name: string; icon: string; stat: Stat }[] = [
 ];
 export const PHRASES = ['Bora!', 'Trégua?', 'Vou te pegar', 'Ajuda aqui!', 'Boa!', 'Kkkkk', 'Recuar!', 'Avançar!', 'Traidor!', 'GG', 'Égua, macho!', 'Arretado! 🔥'];
 export const COLORS = ['#2f7bff', '#ff3b3b', '#22c55e', '#f5b301', '#b04bff', '#ff7a1a'];
-export const EMBLEMS = ['🦅', '🐆', '🦈', '🐍', '🦂', '🐂', '🐉', '🦁'];
+/** Paleta segura para quem não distingue vermelho e verde */
+export const SAFE_COLORS = ['#0072b2', '#d55e00', '#009e73', '#f0e442', '#cc79a7', '#56b4e9'];
+export const NPC_COLOR = '#6b7280';
+/** Os 8 primeiros são livres; os outros abrem com o nível da carreira */
+export const EMBLEMS = ['🦅', '🐆', '🦈', '🐍', '🦂', '🐂', '🐉', '🦁', '🐺', '🦉', '🐅', '🦏', '🦖', '🐙', '🦄', '👑'];
+export const emblemLevel = (i: number) => (i < 8 ? 1 : 2 + (i - 8) * 2);
 export const MAX_PLAYERS = 6;

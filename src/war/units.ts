@@ -204,6 +204,38 @@ function model(t: UnitId): THREE.BufferGeometry {
       k.on('helice', [0.02, 0.48, 0], () => { for (const a of [0, HALF]) k.box(2.4, 0.018, 0.1, '#1b1f22', [0.02, 0.48, 0], [0, a, 0]); });
       k.mine(() => k.box(0.12, 0.2, 0.52, '#ffffff', [-0.28, 0, 0]));
       break;
+    case 'general':
+      soldier(k, '#3f4a38', '#2b3326', '#6b2a24');
+      k.box(0.3, 0.5, 0.4, '#6b2a24', [-0.16, 0.5, 0], [0, 0, 0.12]).box(0.06, 0.05, 0.3, '#d6a93a', [0.02, 0.69, 0]).cyl(0.13, 0.03, '#6b2a24', [0.02, 0.86, 0], [0, 0, 0], 14).cyl(0.012, 1.1, '#8a8f94', [-0.22, 0.9, 0.16], [0, 0, 0], 5);
+      k.mine(() => k.box(0.02, 0.22, 0.34, '#ffffff', [-0.22, 1.32, 0.32]));
+      break;
+    case 'colosso':
+      for (const s of [-1, 1]) for (const x of [-0.5, 0.5]) k.box(0.2, 0.9, 0.2, DARK, [x, 0.45, 0.55 * s], [0, 0, x * 0.35]).box(0.4, 0.12, 0.3, STEEL, [x * 1.3, 0.06, 0.58 * s]);
+      k.wedge(1.7, 0.5, 1.1, 0.8, '#4a4238', [0, 1.05, 0]).box(1.3, 0.2, 1, '#2e2a25', [0, 0.78, 0]);
+      k.on('torre', [0, 1.3, 0], () => { k.wedge(0.9, 0.4, 0.8, 0.7, '#5a4f40', [0, 1.5, 0]).box(0.04, 0.1, 0.5, '#ff4a2e', [0.4, 1.52, 0]); });
+      k.on('cano', [0, 1.3, 0], () => { for (const z of [-0.22, 0.22]) k.cyl(0.07, 1.2, DARK, [0.9, 1.5, z], [0, 0, HALF], 12); });
+      for (const z of [-0.5, 0.5]) for (let i = 0; i < 4; i++) k.cyl(0.07, 0.5, '#7a2a20', [-0.4 + i * 0.16, 1.5, z], [0, 0, 0.6], 8);
+      break;
+    case 'corveta':
+    case 'portadrones':
+    case 'desembarque': {
+      const big = t === 'portadrones' ? 1.5 : t === 'desembarque' ? 0.8 : 1.1;
+      k.box(1.5 * big, 0.2, 0.42 * big, '#5c6873', [0, 0.1, 0]).wedge(0.5 * big, 0.2, 0.42 * big, 0.5, '#5c6873', [0.95 * big, 0.1, 0]).box(1.45 * big, 0.04, 0.4 * big, '#7c8791', [0, 0.22, 0]).box(1.5 * big, 0.05, 0.44 * big, '#8c2f26', [0, 0, 0]);
+      if (t === 'portadrones') {
+        k.box(1.8 * big, 0.05, 0.6 * big, '#3c4249', [0, 0.28, 0]).box(0.3, 0.34, 0.16, '#7c8791', [0.2, 0.46, 0.36]).cyl(0.02, 0.5, STEEL, [0.2, 0.8, 0.36], [0, 0, 0], 5);
+        for (let i = 0; i < 6; i++) k.box(0.16, 0.05, 0.16, DARK, [-0.9 + i * 0.3, 0.33, -0.12]);
+      } else if (t === 'corveta') {
+        k.box(0.6, 0.24, 0.3, '#8d98a2', [-0.1, 0.36, 0]).box(0.3, 0.18, 0.24, '#9ba6af', [-0.05, 0.56, 0]).box(0.02, 0.08, 0.22, GLASS, [0.11, 0.58, 0]).cyl(0.015, 0.5, STEEL, [-0.2, 0.85, 0], [0, 0, 0], 5);
+        k.on('torre', [0.55, 0.3, 0], () => { k.box(0.24, 0.14, 0.22, '#7c8791', [0.55, 0.32, 0]); });
+        k.on('cano', [0.55, 0.3, 0], () => { k.cyl(0.03, 0.5, DARK, [0.85, 0.34, 0], [0, 0, HALF], 8); });
+      } else k.box(0.8, 0.14, 0.04, '#4b5640', [0, 0.3, 0.17]).box(0.8, 0.14, 0.04, '#4b5640', [0, 0.3, -0.17]).box(0.2, 0.22, 0.26, '#4b5640', [-0.5, 0.34, 0]).box(0.04, 0.2, 0.3, '#4b5640', [0.72, 0.26, 0], [0, 0, 0.5]);
+      k.mine(() => k.box(0.4, 0.02, 0.2, '#ffffff', [-0.45 * big, 0.31, 0]));
+      break;
+    }
+    case 'submarino':
+      k.put(new THREE.CapsuleGeometry(0.2, 1.2, 8, 14), '#2c343b', [0, 0, 0], [0, 0, HALF]).box(0.36, 0.22, 0.12, '#2c343b', [0.1, 0.24, 0]).cyl(0.012, 0.3, STEEL, [0.14, 0.45, 0], [0, 0, 0], 5).box(0.12, 0.03, 0.6, '#2c343b', [-0.75, 0, 0]).box(0.12, 0.34, 0.03, '#2c343b', [-0.75, 0.08, 0]);
+      k.mine(() => k.box(0.2, 0.015, 0.1, '#ffffff', [0.08, 0.36, 0]));
+      break;
     case 'caca':
       k.put(new THREE.CapsuleGeometry(0.13, 1.1, 6, 12), '#6b7682', [0, 0, 0], [0, 0, HALF], [1, 1, 1.15]).put(new THREE.ConeGeometry(0.13, 0.6, 12), '#58626d', [0.96, 0, 0], [0, 0, -HALF]).ball(0.12, '#c08a2e', [0.42, 0.13, 0], [1.9, 0.85, 0.8]);
       {
@@ -221,7 +253,7 @@ function model(t: UnitId): THREE.BufferGeometry {
   return k.build();
 }
 /** Pequenos crescem um pouco para se lerem melhor de longe */
-const SIZE: Partial<Record<UnitId, number>> = { tanque: 1.15, artilharia: 1.1, foguete: 1.1, heli: 1.15, caca: 1.15, recon: 1.1, fpv: 1.3 };
+const SIZE: Partial<Record<UnitId, number>> = { tanque: 1.15, artilharia: 1.1, foguete: 1.1, heli: 1.15, caca: 1.15, recon: 1.1, fpv: 1.3, general: 1.15, colosso: 1.6, corveta: 1.5, submarino: 1.4, portadrones: 1.5, desembarque: 1.4 };
 export function unitGeometry(t: UnitId): THREE.BufferGeometry {
   let g = cache.get(t);
   if (!g) {

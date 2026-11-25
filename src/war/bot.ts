@@ -1,4 +1,5 @@
 import { CITY, ERAS, MAX_DEV, POWERS, REL, UNIT_ERA, WORKS_ERA, PowerId, UNITS, UnitId, WORKS, WorksId, devCost } from './data';
+import { pactOf } from './realm';
 import { CityState, World, annexBlock, armyCap, armySize, atWar, citiesOf, command, hasRule, hostile, needOf, relOf, slotsIn, worksPrice } from './sim';
 
 /** Robôs: constroem, treinam e atacam com o mesmo conjunto de ordens dos jogadores. `bot` 1 a 3 é a dificuldade */
@@ -44,10 +45,11 @@ function diplomacy(w: World, i: number, skill: number) {
   const force = (k: number) => w.units.reduce((s, u) => s + (u.o === k ? u.max : 0), 0) + 1;
   for (const o of w.offers.filter((x) => x.b === i)) {
     if (Math.random() < 0.5) continue;
-    const yes = o.k === REL.paz ? force(i) < force(o.a) * 1.6 || Math.random() < 0.25 : o.k === REL.comercio ? Math.random() < 0.8 : Math.random() < 0.45;
+    const good = w.players[o.a].l.rep / 50;
+    const yes = Math.random() < good * 0.9 && (o.k === REL.paz ? force(i) < force(o.a) * 1.6 || Math.random() < 0.25 : o.k === REL.comercio ? Math.random() < 0.8 : o.k === 4 ? Math.random() < 0.7 : Math.random() < 0.45);
     command(w, i, { c: 'answer', from: o.a, yes });
   }
-  const others = w.players.filter((p) => p.i !== i && p.alive && p.team !== w.players[i].team);
+  const others = w.players.filter((p) => p.i !== i && p.alive && !p.npc && p.team !== w.players[i].team);
   if (Math.random() < 0.01) {
     const o = pick(others);
     const r = o && relOf(w, i, o.i);
@@ -55,8 +57,8 @@ function diplomacy(w: World, i: number, skill: number) {
     else if (r === REL.guerra && force(i) < force(o.i) * 0.8) command(w, i, { c: 'dip', to: o.i, k: 'paz' });
   }
   const from = skill >= 3 ? 420 : 900;
-  if (skill < 2 || w.t < from || atWar(w, i) || Math.random() > (skill >= 3 ? 0.012 : 0.004)) return;
-  const prey = others.filter((o) => relOf(w, i, o.i) !== REL.alianca && force(o.i) < force(i) * 1.1).sort((a, b) => force(a.i) - force(b.i))[0];
+  if (skill < 2 || w.t < from || atWar(w, i) || Math.random() > (skill >= 3 ? 0.014 : 0.007)) return;
+  const prey = others.filter((o) => relOf(w, i, o.i) !== REL.alianca && !pactOf(w, i, o.i) && force(o.i) < force(i) * 1.1).sort((a, b) => force(a.i) - force(b.i))[0];
   if (prey) command(w, i, { c: 'dip', to: prey.i, k: 'guerra' });
 }
 

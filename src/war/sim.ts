@@ -1,25 +1,29 @@
 import {
-  ANNEX_REACH, Bonus, BonusKey, DEV_S, ERAS, MAX_DEV, POWER_ERA, REL, ULTIMATUM_S, UNIT_ERA, WORKS_ERA, annexCost, annexTime, devCost, CAPTURE_RADIUS, CAPTURE_S, CITIES, CITY, CITY_INDEX, COLORS, DOME_COOL, DOME_RADIUS, EVENTS, LANDMARKS, ModeId, NUKES, POWERS, QUESTS, STARS, STAR_BONUS, PowerId, REGION_BONUS, RESEARCH, Shot, Stat, UNITS, UNIT_IDS,
+  ANNEX_REACH, NPC_COLOR, PACT, PACT_S, isSea, Bonus, BonusKey, DEV_S, ERAS, MAX_DEV, POWER_ERA, REL, ULTIMATUM_S, UNIT_ERA, WORKS_ERA, annexCost, annexTime, devCost, CAPTURE_RADIUS, CAPTURE_S, CITIES, CITY, CITY_INDEX, COLORS, DOME_COOL, DOME_RADIUS, EVENTS, LANDMARKS, ModeId, NUKES, POWERS, QUESTS, STARS, STAR_BONUS, PowerId, REGION_BONUS, RESEARCH, Shot, Stat, UNITS, UNIT_IDS,
   UnitId, WORKS, WorksDef, WorksId, cityFuel, cityGun, cityHp, cityIncome, researchCost, slotsOf, unitCap,
 } from './data';
 
+import { Extra, Life, RealmCmd, inflation, labTime, newExtra, newLife, pactOf, realmBonus, realmIncome, rule, stepRealm, synergyOf, coastal } from './realm';
 import { Crate, Nation, NationCmd, extraCap, govern, moodBonus, nationBonus, newNation, stepNation, studyFactor, tradeRate, victoryOf, VICTORIES } from './nation';
 
 /** Simulação da guerra. Roda só no aparelho do criador da sala, em passos de 0,1 s. */
 export const STEP = 0.1;
 export interface Player {
   i: number; name: string; emblem: string; color: string; team: number; bot: number; online: boolean; start: number; alive: boolean;
-  money: number; fuel: number; res: Record<string, number>; cool: Partial<Record<PowerId, number>>; stats: Partial<Record<Stat, number>>; hold: number; quests: string[]; era: number; n: Nation;
+  money: number; fuel: number; res: Record<string, number>; cool: Partial<Record<PowerId, number>>; stats: Partial<Record<Stat, number>>; hold: number; quests: string[]; era: number; n: Nation; l: Life; npc?: boolean;
 }
-export interface Works { k: WorksId; left: number; cool: number }
-export interface CityState { id: number; x: number; z: number; owner: number; hp: number; max: number; cap: number; capBy: number; works: Works[]; q: { u: UnitId; left: number }[]; rx: number; rz: number; off: number; cool: number; hit: number; loop: UnitId | ''; dev: number; devLeft: number; deal: { by: number; left: number } | null; ruin: number; mood: number }
-export interface Unit { i: number; k: UnitId; o: number; x: number; z: number; hp: number; max: number; tx: number; tz: number; go: 0 | 1 | 2; cool: number; off: number; dir: number; hit: number; kills: number; star: number; aim: number; pat: [number, number, number, number] | null; scout: number }
+export interface Works { k: WorksId; left: number; cool: number; lv?: number; px?: number; pz?: number }
+export interface CityState { id: number; x: number; z: number; owner: number; hp: number; max: number; cap: number; capBy: number; works: Works[]; q: { u: UnitId; left: number }[]; rx: number; rz: number; off: number; cool: number; hit: number; loop: UnitId | ''; dev: number; devLeft: number; deal: { by: number; left: number } | null; ruin: number; mood: number; safe?: number }
+export interface Unit { i: number; k: UnitId; o: number; x: number; z: number; hp: number; max: number; tx: number; tz: number; go: 0 | 1 | 2; cool: number; off: number; dir: number; hit: number; kills: number; star: number; aim: number; pat: [number, number, number, number] | null; scout: number; q: [number, number][]; stance: number; kit: number; chief: number; aura: number; cover: number; slow: number; cargo: [UnitId, number, number, number][]; gone?: number; stuck: number }
 /** Efeito visual: tipo, origem, destino */
 export type Fx = [kind: string, x1: number, z1: number, x2: number, z2: number, air?: number];
 export interface Zone { k: PowerId; o: number; x: number; z: number; left: number; tick: number }
 /** Área contaminada */
 export interface Rad { x: number; z: number; r: number; left: number }
 export interface World {
+  x: Extra;
+  /** Objetivo de campanha ou desafio */
+  goal: { kind: 'cities' | 'era' | 'money' | 'wonders' | 'kill' | 'time' | 'peace'; n: number; text: string; level: number } | null;
   rads: Rad[];
   crates: Crate[];
   wonders: { id: string; o: number; city: number; left: number }[];
@@ -32,7 +36,7 @@ export interface World {
 }
 export interface Setup { name: string; emblem: string; start: number; bot: number }
 export type Cmd =
-  | { c: 'move'; u: number[]; x: number; z: number; hold?: boolean; hit?: boolean }
+  | { c: 'move'; u: number[]; x: number; z: number; hold?: boolean; hit?: boolean; f?: number; add?: boolean }
   | { c: 'stop'; u: number[] }
   | { c: 'build'; city: number; k: WorksId }
   | { c: 'sell'; city: number; n: number }
@@ -41,6 +45,7 @@ export type Cmd =
   | { c: 'rally'; city: number; x: number; z: number }
   | { c: 'power'; k: PowerId; x: number; z: number }
   | NationCmd
+  | RealmCmd
   | { c: 'dev'; city: number }
   | { c: 'annex'; city: number }
   | { c: 'era' }
@@ -65,23 +70,29 @@ export const cityAt = (w: World, id: number) => w.cities[CITY_INDEX[id]];
 export const citiesOf = (w: World, i: number) => w.cities.filter((c) => c.owner === i);
 export const popOf = (w: World, i: number) => citiesOf(w, i).reduce((s, c) => s + CITY[c.id].pop, 0);
 
-export function createWorld(list: Setup[], mode: ModeId, minutes: number, rules: string[]): World {
+export interface Custom { money: number; era: number; neutral: number; army: number }
+export function createWorld(list: Setup[], mode: ModeId, minutes: number, rules: string[], custom?: Custom | null, goal: World['goal'] = null): World {
   const humans = list.filter((p) => !p.bot).length;
   const w: World = {
-    rads: [], crates: [], wonders: [], rel: [], offers: [], ult: [], t: 0, left: minutes ? minutes * 60 : 1e7, mode, rules, units: [], zones: [], fx: [], log: [], seq: 0, event: null, nextEvent: 70, over: null,
-    players: list.map((p, i) => ({
-      i, name: p.name, emblem: p.emblem, color: COLORS[i % COLORS.length], bot: p.bot, online: true, start: p.start, alive: true, hold: 0, quests: [], era: rules.includes('avancado') ? 3 : 1, n: newNation(),
+    x: newExtra(), goal, rads: [], crates: [], wonders: [], rel: [], offers: [], ult: [], t: 0, left: minutes ? minutes * 60 : 1e7, mode, rules, units: [], zones: [], fx: [], log: [], seq: 0, event: null, nextEvent: 70, over: null,
+    players: [...list.map((p, i) => ({
+      i, name: p.name, emblem: p.emblem, color: COLORS[i % COLORS.length], bot: p.bot, online: true, start: p.start, alive: true, hold: 0, quests: [], era: custom?.era ?? (rules.includes('avancado') ? 3 : 1), n: newNation(), l: newLife(),
       team: mode === 'equipes' ? i % 2 : mode === 'coop' ? (p.bot ? 100 : 0) : i + 10,
-      money: rules.includes('rico') ? 6000 : 1200, fuel: rules.includes('rico') ? 2000 : 400, res: {}, cool: {}, stats: {},
-    })),
+      money: (custom?.money ?? 1) * (rules.includes('rico') ? 6000 : 1200), fuel: (custom?.money ?? 1) * (rules.includes('rico') ? 2000 : 400), res: {}, cool: {}, stats: {},
+    })), {
+      // Bandidos, ondas e invasores: fora do placar
+      i: list.length, name: 'Invasores', emblem: '⚠️', color: NPC_COLOR, bot: 0, online: true, start: -1, alive: false, hold: 0, quests: [], era: 5, n: newNation(), l: newLife(), npc: true, team: 999, money: 0, fuel: 0, res: {}, cool: {}, stats: {},
+    }],
     cities: CITIES.map((c) => {
-      const max = Math.round(cityHp(c.level) * (rules.includes('fraco') ? 0.5 : rules.includes('forte') ? 2 : 1));
+      const max = Math.round(cityHp(c.level) * (rules.includes('fraco') ? 0.5 : rules.includes('forte') ? 2 : 1) * (custom?.neutral ?? 1));
       return { id: c.id, x: c.x, z: c.z, owner: -1, hp: max, max, cap: 0, capBy: -1, works: [], q: [], rx: c.x, rz: c.z, off: 0, cool: 0, hit: 0, loop: '' as const, dev: 0, devLeft: 0, deal: null, ruin: 0, mood: 70 };
     }),
   };
-  w.rel = w.players.flatMap((a) => w.players.map((b) => (a.i === b.i ? REL.alianca : rules.includes('guerra') && a.team !== b.team ? REL.guerra : a.team === b.team ? REL.alianca : REL.paz)));
+  w.rel = w.players.flatMap((a) => w.players.map((b) => (a.i === b.i ? REL.alianca : a.npc || b.npc ? REL.guerra : rules.includes('guerra') && a.team !== b.team ? REL.guerra : a.team === b.team ? REL.alianca : REL.paz)));
   if (mode === 'coop' && humans === list.length) w.mode = 'dominio';
+  if (rules.includes('regiao')) w.x.region = CITY[w.players[0].start]?.region ?? '';
   for (const p of w.players) {
+    if (p.npc) continue;
     if (!cityAt(w, p.start) || (w.mode === 'capital' && p.start === FORTALEZA)) p.start = CITIES.find((c) => c.level === 4 && w.players.every((o) => o.start !== c.id))!.id;
     const c = cityAt(w, p.start);
     Object.assign(c, { owner: p.i, max: Math.max(c.max, 700) });
@@ -89,13 +100,14 @@ export function createWorld(list: Setup[], mode: ModeId, minutes: number, rules:
     c.works = ((rules.includes('guerra') ? ['comando', 'quartel', 'mercado', 'refinaria'] : ['comando', 'mercado']) as WorksId[]).map((k) => ({ k, left: 0, cool: 0 }));
     c.rz = c.z + 0.9;
     const army: UnitId[] = [...((rules.includes('guerra') ? ['soldado', 'soldado', 'soldado', 'soldado', 'moto', 'blindado'] : ['soldado', 'soldado', 'moto']) as UnitId[]), ...(rules.includes('exercito') ? (['tanque', 'tanque', 'soldado', 'soldado', 'antitanque', 'artilharia'] as UnitId[]) : [])];
+    for (let k = 0; k < (custom?.army ?? 0); k++) army.push('soldado');
     army.forEach((k, n) => spawn(w, k, p.i, c.x + Math.cos(n * 1.1) * 0.95, c.z + Math.sin(n * 1.1) * 0.95));
   }
   return w;
 }
 export function spawn(w: World, k: UnitId, o: number, x: number, z: number): Unit {
   const hp = Math.round(UNITS[k].hp * (1 + bonusOf(w, o).armor));
-  const u: Unit = { i: ++w.seq, k, o, x, z, hp, max: hp, tx: x, tz: z, go: 0, cool: rand(0, 0.5), off: 0, dir: 0, hit: 0, kills: 0, star: 0, aim: 0, pat: null, scout: 0 };
+  const u: Unit = { i: ++w.seq, k, o, x, z, hp, max: hp, tx: x, tz: z, go: 0, cool: rand(0, 0.5), off: 0, dir: 0, hit: 0, kills: 0, star: 0, aim: 0, pat: null, scout: 0, q: [], stance: 0, kit: 0, chief: 0, aura: 0, cover: 0, slow: 0, cargo: [], stuck: 0 };
   w.units.push(u);
   return u;
 }
@@ -121,6 +133,7 @@ export function bonusOf(w: World, i: number): Record<BonusKey, number> {
     for (const c of mine) add(LANDMARKS[c.id]?.bonus);
     for (const r in REGION_BONUS) if (w.cities.every((c) => CITY[c.id].region !== r || c.owner === i)) add(REGION_BONUS[r]);
     nationBonus(w, i, add);
+    realmBonus(w, i, add);
     if (w.event) add(EVENTS[w.event.i].bonus);
     if (hasRule(w, 'renda')) out.income += 0.6;
     if (hasRule(w, 'veloz')) out.speed += 0.5;
@@ -139,12 +152,12 @@ export const unitPrice = (w: World, i: number, k: UnitId): [number, number] => {
   const d = UNITS[k];
   if (mods.get(i)?.free) return [0, 0];
   const f = (1 - bonusOf(w, i).cost) * (hasRule(w, 'drones') && d.from === 'drones' ? 0.5 : 1);
-  return [Math.round(d.money * f), Math.round(d.fuel * f)];
+  return [Math.round(d.money * f * inflation(w, i)), Math.round(d.fuel * f)];
 };
 export const worksPrice = (w: World, i: number, k: WorksId): [number, number] => {
   if (mods.get(i)?.free) return [0, 0];
   const f = 1 - bonusOf(w, i).cost;
-  return [Math.round(WORKS[k].money * f), Math.round(WORKS[k].fuel * f)];
+  return [Math.round(WORKS[k].money * f * inflation(w, i)), Math.round(WORKS[k].fuel * f)];
 };
 export function incomeOf(w: World, i: number): [number, number] {
   const b = bonusOf(w, i);
@@ -159,13 +172,16 @@ export function incomeOf(w: World, i: number): [number, number] {
     f += cityFuel(lvl) * (1 + c.dev * 0.4);
     for (const k of c.works) {
       if (k.left > 0) continue;
-      m += (WORKS[k.k].income ?? 0) * happy;
-      f += WORKS[k.k].fuelOut ?? 0;
+      const up = 1 + ((k.lv ?? 1) - 1) * 0.5;
+      m += (WORKS[k.k].income ?? 0) * happy * up;
+      f += (WORKS[k.k].fuelOut ?? 0) * up;
     }
+    for (const y of synergyOf(c)) m += cityIncome(lvl) * y[3] * 4;
   }
   // Cada acordo de comércio ou aliança rende um pouco aos dois
   const trade = 1 + tradesOf(w, i) * tradeRate(w, i);
-  return [Math.max(0, m * (1 + b.income) * trade), Math.max(0, f * (1 + b.fuel) * trade)];
+  const life = realmIncome(w, i);
+  return [Math.max(0, m * (1 + b.income) * trade * life), Math.max(0, f * (1 + b.fuel) * trade)];
 }
 export const tradesOf = (w: World, i: number) => w.players.filter((p) => p.i !== i && p.alive && p.team !== w.players[i].team && relOf(w, i, p.i) >= REL.comercio).length;
 export const slotsIn = (w: World, c: CityState) => slotsOf(CITY[c.id].level) + c.dev + (w.players[c.owner]?.start === c.id ? 1 : 0);
@@ -204,10 +220,13 @@ export function command(w: World, i: number, cmd: Cmd): string {
       const aim = cmd.hit ? w.cities.find((c) => Math.hypot(c.x - cmd.x, c.z - cmd.z) < 0.5)?.id ?? 0 : 0;
       // Formação: lado a lado em volta do ponto
       list.forEach((u, n) => {
-        const ring = Math.ceil(Math.sqrt(n));
-        const a = n * 2.4;
-        const r = n ? 0.22 * ring + 0.05 : 0;
-        Object.assign(u, { tx: Math.max(-40, Math.min(40, cmd.x + Math.cos(a) * r)), tz: Math.max(-44, Math.min(44, cmd.z + Math.sin(a) * r)), go: cmd.hold ? 2 : 1, aim, pat: null, scout: 0 });
+        const [ox, oz] = formation(cmd.f ?? 0, n, list.length, Math.atan2(cmd.z - u.z, cmd.x - u.x));
+        const [gx, gz] = [Math.max(-46, Math.min(46, cmd.x + ox)), Math.max(-46, Math.min(46, cmd.z + oz))];
+        if (cmd.add && u.go) {
+          if (u.q.length < 8) u.q.push([gx, gz]);
+          return;
+        }
+        Object.assign(u, { q: [], stuck: 0, tx: gx, tz: gz, go: cmd.hold ? 2 : 1, aim, pat: null, scout: 0 });
       });
       return '';
     }
@@ -219,6 +238,7 @@ export function command(w: World, i: number, cmd: Cmd): string {
       const d = WORKS[cmd.k];
       if (!c || !d || cmd.k === 'comando') return 'Cidade inválida.';
       if (CITY[c.id].level < d.level) return `Precisa de cidade tamanho ${d.level}.`;
+      if (cmd.k === 'estaleiro' && !coastal(c.id)) return 'Estaleiro só no litoral.';
       if (p.era < WORKS_ERA[cmd.k] && !mods.get(i)?.free) return `Precisa da Era ${WORKS_ERA[cmd.k]}.`;
       if (c.works.length >= slotsIn(w, c)) return 'Cidade cheia. Evolua a cidade para ganhar espaço.';
       if (cmd.k === 'aeroporto' && hasRule(w, 'semar')) return 'Sem aviação nesta partida.';
@@ -246,7 +266,8 @@ export function command(w: World, i: number, cmd: Cmd): string {
       const d = UNITS[cmd.k];
       if (!c || !d) return 'Cidade inválida.';
       if (!c.works.some((k) => k.k === d.from && k.left <= 0)) return `Precisa de ${WORKS[d.from].name}.`;
-      if (p.era < UNIT_ERA[cmd.k] && !mods.get(i)?.free) return `Precisa da Era ${UNIT_ERA[cmd.k]}.`;
+      if (p.era < UNIT_ERA[cmd.k] && (!mods.get(i)?.free || cmd.k === 'colosso')) return `Precisa da Era ${UNIT_ERA[cmd.k]}.`;
+      if (cmd.k === 'general' && (w.units.some((u) => u.o === i && u.k === 'general') || w.cities.some((x) => x.owner === i && x.q.some((q) => q.u === 'general')))) return 'Você já tem um General.';
       const n = Math.max(1, Math.min(10, Math.floor(cmd.n ?? 1)));
       for (let x = 0; x < n; x++) {
         if (armySize(w, i) + w.cities.reduce((s, k) => s + (k.owner === i ? k.q.length : 0), 0) >= armyCap(w, i)) return x ? '' : 'Limite de tropas. Conquiste mais cidades.';
@@ -324,10 +345,10 @@ export function command(w: World, i: number, cmd: Cmd): string {
       const r = RESEARCH.find((x) => x.id === cmd.id);
       const lvl = p.res[cmd.id] ?? 0;
       if (!r || lvl >= 3) return 'Pesquisa completa.';
-      const no = pay([mods.get(i)?.free ? 0 : Math.round(researchCost(lvl) * studyFactor(w, i)), 0]);
+      if (p.l.lab) return 'O laboratório já está ocupado.';
+      const no = pay([mods.get(i)?.free ? 0 : Math.round(researchCost(lvl) * studyFactor(w, i) * (1 - p.l.sci.length * 0.1)), 0]);
       if (no) return no;
-      p.res[cmd.id] = lvl + 1;
-      stat(p, 'research');
+      p.l.lab = { id: cmd.id, left: mods.get(i)?.instant ? 1 : labTime(lvl) };
       return '';
     }
     case 'power': {
@@ -351,7 +372,8 @@ export function command(w: World, i: number, cmd: Cmd): string {
       return '';
     }
   }
-  return govern(w, i, cmd, pay) ?? 'Ordem desconhecida.';
+  const said = govern(w, i, cmd as NationCmd, pay);
+  return said ?? rule(w, i, cmd as RealmCmd, pay) ?? 'Ordem desconhecida.';
 }
 
 /** O que falta para usar um apoio; '' quando liberado */
@@ -359,6 +381,7 @@ export function needOf(w: World, i: number, k: PowerId): string {
   if (w.players[i].era < POWER_ERA[k] && !mods.get(i)?.free) return `Precisa da Era ${POWER_ERA[k]}.`;
   const n = NUKES[k];
   if (!n) return '';
+  if (w.x.ban > 0) return `A assembleia proibiu por ${Math.ceil(w.x.ban)}s.`;
   if (hasRule(w, 'semnuke')) return 'Armas nucleares proibidas nesta partida.';
   if (mods.get(i)?.free) return '';
   if ((w.players[i].res.nuclear ?? 0) < n.need) return `Pesquise Programa Nuclear nível ${n.need}.`;
@@ -368,12 +391,14 @@ const HARM: PowerId[] = ['barragem', 'aereo', 'emp', 'tatica', 'balistico', 'hid
 /** Por que não dá para trazer esta cidade por acordo; '' se dá */
 export function annexBlock(w: World, i: number, c: CityState): string {
   if (c.owner >= 0) return 'Essa cidade já tem governo.';
+  if (locked(w, c)) return 'Fora da região da partida.';
   if (c.deal) return c.deal.by === i ? 'Negociação em andamento.' : `${w.players[c.deal.by].name} já está negociando.`;
   if (c.hp < c.max * 0.9) return 'A cidade está sob ataque.';
   if (!citiesOf(w, i).some((o) => dist(o, c) < ANNEX_REACH)) return 'Longe demais das suas cidades.';
   if (w.cities.filter((o) => o.deal?.by === i).length >= w.players[i].era) return 'Muitas negociações ao mesmo tempo.';
   return '';
 }
+export const locked = (w: World, c: CityState) => !!w.x.region && CITY[c.id].region !== w.x.region;
 function diplomacy(w: World, a: number, b: number, k: 'guerra' | 'paz' | 'comercio' | 'alianca' | 'romper'): string {
   const [p, q] = [w.players[a], w.players[b]];
   if (!q || !q.alive || sameTeam(w, a, b)) return 'Jogador inválido.';
@@ -381,13 +406,17 @@ function diplomacy(w: World, a: number, b: number, k: 'guerra' | 'paz' | 'comerc
   if (k === 'romper') {
     if (now < REL.comercio) return 'Não há acordo.';
     setRel(w, a, b, REL.paz);
+    p.l.rep = Math.max(0, p.l.rep - 15);
     say(w, `${p.name} rompeu o acordo com ${q.name}`, 'alert');
     return '';
   }
   if (k === 'guerra') {
     if (now === REL.guerra) return 'Vocês já estão em guerra.';
     if (now === REL.alianca) return 'Rompa a aliança antes.';
+    const pact = pactOf(w, a, b);
+    if (pact) return `Pacto de não agressão por mais ${Math.ceil(pact.left)}s.`;
     if (w.ult.some((u) => (u.a === a && u.b === b) || (u.a === b && u.b === a))) return 'Já há um ultimato.';
+    p.l.rep = Math.max(0, p.l.rep - (now === REL.comercio ? 12 : 8));
     w.ult.push({ a, b, left: ULTIMATUM_S });
     say(w, `⚔️ ${p.name} deu um ultimato a ${q.name}: guerra em ${ULTIMATUM_S}s`, 'alert');
     return '';
@@ -407,6 +436,11 @@ function diplomacy(w: World, a: number, b: number, k: 'guerra' | 'paz' | 'comerc
   return '';
 }
 function seal(w: World, a: number, b: number, k: number) {
+  for (const i of [a, b]) w.players[i].l.rep = Math.min(100, w.players[i].l.rep + 4);
+  if (k === PACT) {
+    w.x.pacts.push({ a, b, left: PACT_S });
+    return say(w, `🕊️ ${w.players[a].name} e ${w.players[b].name}: não agressão por 5 minutos`, 'event');
+  }
   setRel(w, a, b, k);
   w.ult = w.ult.filter((u) => !((u.a === a && u.b === b) || (u.a === b && u.b === a)));
   say(w, `${['🕊️', '', '📦', '🤝'][k]} ${w.players[a].name} e ${w.players[b].name}: ${['paz', '', 'acordo de comércio', 'aliança'][k]}`, 'event');
@@ -424,7 +458,7 @@ function stepDiplomacy(w: World) {
 }
 const silosOf = (w: World, i: number) => citiesOf(w, i).filter((c) => c.works.some((k) => k.k === 'silo' && k.left <= 0));
 
-const POWER_SECONDS: Record<PowerId, number> = { barragem: 4.5, aereo: 3.2, fumaca: 9, emp: 0.6, paraquedas: 2, satelite: 15, reparo: 1, tatica: 0, balistico: 0, hidrogenio: 0 };
+const POWER_SECONDS: Record<PowerId, number> = { barragem: 4.5, aereo: 3.2, fumaca: 9, emp: 0.6, paraquedas: 2, satelite: 15, reparo: 1, minas: 1, barreira: 1, tatica: 0, balistico: 0, hidrogenio: 0 };
 function firePower(w: World, i: number, k: PowerId, x: number, z: number) {
   const r = POWERS[k].radius;
   const nuke = NUKES[k];
@@ -437,7 +471,11 @@ function firePower(w: World, i: number, k: PowerId, x: number, z: number) {
     for (const c of w.cities) if (!allied(w, c.owner, i) && Math.hypot(c.x - x, c.z - z) < r) c.off = 6;
   } else if (k === 'reparo') {
     for (const u of w.units) if (allied(w, u.o, i) && Math.hypot(u.x - x, u.z - z) < r) u.hp = Math.min(u.max, u.hp + u.max * 0.45);
-  } else if (nuke) {
+  } else if (k === 'minas') {
+    for (let n = 0; n < 5; n++) w.x.mines.push({ o: i, x: x + Math.cos(n * 1.26) * 0.6, z: z + Math.sin(n * 1.26) * 0.6 });
+    if (w.x.mines.length > 80) w.x.mines.splice(0, w.x.mines.length - 80);
+  } else if (k === 'barreira') w.x.walls.push({ o: i, x, z, left: 60 });
+  else if (nuke) {
     stat(w.players[i], 'nukes');
     say(w, `${POWERS[k].icon} ${w.players[i].name} lançou: ${POWERS[k].name}!`, 'alert');
   }
@@ -446,6 +484,7 @@ function firePower(w: World, i: number, k: PowerId, x: number, z: number) {
 // ===== Dano =====
 function hurtUnit(w: World, u: Unit, n: number, by: number, killer?: Unit) {
   if (u.hp <= 0 || mods.get(u.o)?.god) return;
+  n *= 1 - u.cover;
   u.hp -= n;
   u.hit = 1.2;
   stat(w.players[by], 'damage', n);
@@ -460,6 +499,7 @@ function hurtUnit(w: World, u: Unit, n: number, by: number, killer?: Unit) {
     w.fx.push(['estrela', killer.x, killer.z, killer.x, killer.z]);
   }
   const p = w.players[by];
+  if (p && w.players[u.o].npc) p.money += u.k === 'colosso' ? 2500 : 45;
   stat(p, 'kills');
   if (UNITS[u.k].cls === 'ar') stat(p, 'air');
   if (u.k === 'tanque') stat(p, 'tanks');
@@ -523,10 +563,11 @@ export function step(w: World) {
   if (Math.round(w.t / STEP) % 10 === 0) {
     stepQuests(w);
     stepNation(w);
+    stepRealm(w);
   }
   for (const u of w.units) stepUnit(w, u, near, smoked);
   for (const c of w.cities) stepCity(w, c, near, smoked);
-  w.units = w.units.filter((u) => u.hp > 0);
+  w.units = w.units.filter((u) => u.hp > 0 || (!u.gone && hurtEnd(w, u)));
   stepEvents(w);
   checkEnd(w);
 }
@@ -555,11 +596,11 @@ function stepUnit(w: World, u: Unit, near: Near, smoked: (x: number, z: number) 
   let foe: Unit | null = null;
   let town: CityState | null = null;
   let best = 0;
-  const armed = d.dmg[0] + d.dmg[1] + d.dmg[2] > 0;
+  const armed = u.stance !== 2 && w.x.truce <= 0 && d.dmg[0] + d.dmg[1] + d.dmg[2] > 0;
   const look = d.suicide ? 1.6 : range;
   if (armed) {
     near(u.x, u.z, look, (o, k) => {
-      if (!hostile(w, o.o, u.o) || (d.min && k < d.min) || smoked(o.x, o.z)) return;
+      if (!hostile(w, o.o, u.o) || (d.min && k < d.min) || smoked(o.x, o.z) || (o.k === 'submarino' && k > 1)) return;
       const cls = UNITS[o.k].cls;
       const dmg = d.dmg[cls === 'inf' ? 0 : cls === 'vei' ? 1 : 2];
       if (dmg <= 0) return;
@@ -571,7 +612,7 @@ function stepUnit(w: World, u: Unit, near: Near, smoked: (x: number, z: number) 
     });
     if (!foe) {
       for (const c of w.cities) {
-        if (!hostile(w, c.owner, u.o) || c.hp <= 0) continue;
+        if (!hostile(w, c.owner, u.o) || c.hp <= 0 || locked(w, c)) continue;
         const k = dist(u, c);
         if (k <= look + 0.35 && !(d.min && k < d.min) && (!town || k < dist(u, town))) town = c;
       }
@@ -598,7 +639,9 @@ function stepUnit(w: World, u: Unit, near: Near, smoked: (x: number, z: number) 
     }
     if (u.cool <= 0) {
       u.cool = d.every * rand(0.9, 1.1);
-      const mult = (1 + b.dmg) * (1 + u.star * STAR_BONUS);
+      // Flanco: acertar por trás dói mais
+      const back = foe ? Math.cos(Math.atan2(target.z - u.z, target.x - u.x) - (foe as Unit).dir) > 0.5 ? 1.25 : 1 : 1;
+      const mult = (1 + b.dmg) * (1 + u.star * STAR_BONUS) * (1 + u.aura) * (u.kit === 2 ? 1.15 : 1) * back;
       const air = foe && UNITS[(foe as Unit).k].cls === 'ar' ? 1 : 0;
       w.fx.push([d.shot, u.x, u.z, target.x + rand(-0.1, 0.1), target.z + rand(-0.1, 0.1), (d.cls === 'ar' ? 2 : 0) + air]);
       if (foe) {
@@ -615,6 +658,12 @@ function stepUnit(w: World, u: Unit, near: Near, smoked: (x: number, z: number) 
     const k = Math.hypot(u.tx - u.x, u.tz - u.z);
     if (k < 0.12) {
       u.go = 0;
+      u.stuck = 0;
+      const next = u.q.shift();
+      if (next) {
+        Object.assign(u, { tx: next[0], tz: next[1], go: 1 });
+        return;
+      }
       // Patrulha vai e volta; batedor escolhe outro canto do mapa
       if (u.pat) {
         const [a, b, e, f] = u.pat;
@@ -626,7 +675,7 @@ function stepUnit(w: World, u: Unit, near: Near, smoked: (x: number, z: number) 
       return;
     }
     u.dir = Math.atan2(u.tz - u.z, u.tx - u.x);
-    advance(u, u.tx, u.tz, d.speed * Math.max(0.3, 1 + b.speed));
+    advance(u, u.tx, u.tz, d.speed * Math.max(0.3, 1 + b.speed) * (1 - u.slow));
   }
   // Afasta quem está grudado
   near(u.x, u.z, 0.2, (o, k) => {
@@ -640,16 +689,25 @@ function stepUnit(w: World, u: Unit, near: Near, smoked: (x: number, z: number) 
 function advance(u: Unit, x: number, z: number, speed: number) {
   const a = Math.atan2(z - u.z, x - u.x);
   const s = Math.min(speed * STEP, Math.hypot(x - u.x, z - u.z));
-  u.x += Math.cos(a) * s;
-  u.z += Math.sin(a) * s;
-  u.dir = a;
+  // Navio só anda no mar; tropa de terra só em terra. Contorna o litoral quando dá
+  const d = UNITS[u.k];
+  const ok = (t: number) => d.cls === 'ar' || isSea(u.x + Math.cos(t) * 0.2, u.z + Math.sin(t) * 0.2) === !!d.sea;
+  const trapped = d.cls !== 'ar' && isSea(u.x, u.z) !== !!d.sea;
+  const t = trapped ? a : [0, 0.5, -0.5, 1, -1, 1.5, -1.5].map((k) => a + k).find(ok);
+  if (t === undefined || (u.stuck += t === a ? -u.stuck : 1) > 160) {
+    Object.assign(u, { go: 0, q: [], tx: u.x, tz: u.z, stuck: 0 });
+    return;
+  }
+  u.x += Math.cos(t) * s;
+  u.z += Math.sin(t) * s;
+  u.dir = t;
 }
 
 function shootFrom(w: World, c: CityState, gun: NonNullable<WorksDef['gun']>, near: Near, smoked: (x: number, z: number) => boolean): boolean {
   let foe: Unit | null = null;
   let best = 1e9;
   // Cidade neutra só reage a quem a ataca
-  if (c.owner < 0 && !c.hit) return false;
+  if ((c.owner < 0 && !c.hit) || w.x.truce > 0) return false;
   near(c.x, c.z, gun.range, (o, k) => {
     if (!hostile(w, o.o, c.owner) || smoked(o.x, o.z)) return;
     const cls = UNITS[o.k].cls;
@@ -678,7 +736,7 @@ function stepCity(w: World, c: CityState, near: Near, smoked: (x: number, z: num
     for (const k of c.works) {
       const gun = WORKS[k.k].gun;
       if (!gun || k.left > 0) continue;
-      if (k.cool <= 0 && shootFrom(w, c, gun, near, smoked)) k.cool = gun.every;
+      if (k.cool <= 0 && shootFrom(w, c, gun, near, smoked)) k.cool = gun.every / (1 + ((k.lv ?? 1) - 1) * 0.35);
     }
   }
   if (!c.hit) c.ruin = Math.max(0, c.ruin - 0.006 * STEP * (c.owner >= 0 ? 2 : 1));
@@ -712,9 +770,12 @@ function stepCity(w: World, c: CityState, near: Near, smoked: (x: number, z: num
       q.left -= STEP * (1 + Math.max(-0.5, b.train));
       if (q.left <= 0) {
         c.q.shift();
-        const a = rand(0, 6.28);
-        const u = spawn(w, q.u, c.owner, c.x + Math.cos(a) * 0.75, c.z + Math.sin(a) * 0.75);
-        if (Math.hypot(c.rx - c.x, c.rz - c.z) > 1.2) Object.assign(u, { tx: c.rx + rand(-0.4, 0.4), tz: c.rz + rand(-0.4, 0.4), go: 1 });
+        const sea = !!UNITS[q.u].sea;
+        const base = rand(0, 6.28);
+        const spots = [...Array(36).keys()].map((n) => [c.x + Math.cos(base + n * 0.52) * (0.75 + (n > 12 ? 0.6 : 0) + (n > 24 ? 0.8 : 0)), c.z + Math.sin(base + n * 0.52) * (0.75 + (n > 12 ? 0.6 : 0) + (n > 24 ? 0.8 : 0))]);
+        const spot = spots.find(([x, z]) => isSea(x, z) === sea) ?? spots[0];
+        const u = spawn(w, q.u, c.owner, spot[0], spot[1]);
+        if (!sea && Math.hypot(c.rx - c.x, c.rz - c.z) > 1.2) Object.assign(u, { tx: c.rx + rand(-0.4, 0.4), tz: c.rz + rand(-0.4, 0.4), go: 1 });
       }
     }
     if (c.works.some((k) => k.k === 'hospital' && k.left <= 0)) near(c.x, c.z, 1.6, (u) => { if (allied(w, u.o, c.owner)) u.hp = Math.min(u.max, u.hp + u.max * 0.04 * (1 + b.heal) * STEP); });
@@ -727,7 +788,7 @@ function stepCity(w: World, c: CityState, near: Near, smoked: (x: number, z: num
   let taker = -1;
   let contested = false;
   near(c.x, c.z, CAPTURE_RADIUS, (u) => {
-    if (!UNITS[u.k].captures) return;
+    if (!UNITS[u.k].captures || w.players[u.o].npc || locked(w, c)) return;
     if (c.owner >= 0 && !hostile(w, u.o, c.owner)) contested ||= allied(w, u.o, c.owner);
     else if (taker < 0) taker = u.o;
     else if (hostile(w, taker, u.o)) contested = true;
@@ -803,9 +864,16 @@ function detonate(w: World, z: Zone) {
     if (Math.hypot(c.x - z.x, c.z - z.z) > r * 0.6 || (c.owner >= 0 && mods.get(c.owner)?.god)) continue;
     c.works = c.works.filter((k) => k.k === 'comando' || Math.random() > 0.6);
     c.q = [];
-    c.ruin = 1;
+    c.ruin = c.works.some((k) => k.k === 'abrigo' && k.left <= 0) || c.safe ? 0.5 : 1;
   }
   w.rads.push({ x: z.x, z: z.z, r: r * 0.9, left: n.rad });
+  // Bombas demais trazem o inverno nuclear
+  w.x.nuked += n.size;
+  if (w.x.nuked >= 4) {
+    w.x.nuked = 0;
+    w.x.winter = 150;
+    say(w, '☢️ Inverno nuclear: céu escuro e colheita perdida', 'alert');
+  }
 }
 /** Radiação fere quem fica dentro */
 function stepRads(w: World, near: Near) {
@@ -851,6 +919,35 @@ export function scoreOf(w: World, i: number): number {
   return w.players.filter((p) => (team ? p.team === w.players[i].team : p.i === i)).reduce((s, p) => s + popOf(w, p.i), 0);
 }
 const FORTALEZA = 2304400;
+function finish(w: World, rank: number[], title: string) {
+  w.over = { rank, title };
+}
+/** 1 cumprido, -1 perdido, 0 em andamento. O objetivo é sempre do primeiro jogador */
+export function goalValue(w: World): number {
+  const g = w.goal!;
+  const p = w.players[0];
+  return g.kind === 'cities' ? citiesOf(w, 0).length : g.kind === 'era' ? p.era : g.kind === 'money' ? p.money : g.kind === 'wonders' ? w.wonders.filter((x) => x.o === 0 && x.left <= 0).length : g.kind === 'kill' ? p.stats.kills ?? 0 : g.kind === 'peace' ? p.l.peace : w.t;
+}
+function goalState(w: World): number {
+  if (!w.players[0].alive || w.left <= 0) return -1;
+  return goalValue(w) >= w.goal!.n ? 1 : 0;
+}
+/** Baixa por mina ou meteoro, que não passa pelo dano comum */
+function hurtEnd(w: World, u: Unit): boolean {
+  if (u.hp > -1e6 && u.hit > 0 && !u.gone) {
+    u.gone = 1;
+    stat(w.players[u.o], 'lost');
+  }
+  return false;
+}
+const formation = (f: number, n: number, total: number, dir: number): [number, number] => {
+  const turn = (x: number, z: number): [number, number] => [x * Math.cos(dir) - z * Math.sin(dir), x * Math.sin(dir) + z * Math.cos(dir)];
+  if (f === 1) return turn(-Math.floor(n / 14) * 0.28, ((n % 14) - (Math.min(14, total) - 1) / 2) * 0.26);
+  if (f === 2) return turn(-n * 0.2 + total * 0.1, (n % 2) * 0.24 - 0.12);
+  if (f === 3) return [Math.cos((n / total) * 6.283) * (0.25 + total * 0.035), Math.sin((n / total) * 6.283) * (0.25 + total * 0.035)];
+  const r = n ? 0.22 * Math.ceil(Math.sqrt(n)) + 0.05 : 0;
+  return [Math.cos(n * 2.4) * r, Math.sin(n * 2.4) * r];
+};
 function checkEnd(w: World) {
   const king = cityAt(w, FORTALEZA).owner;
   if (w.mode === 'capital' && king >= 0) w.players[king].hold += STEP;
@@ -868,8 +965,17 @@ function checkEnd(w: World) {
       break;
     }
   }
-  if (w.left > 0 && teams.size > 1 && !held && hero < 0) return;
-  const rank = [...w.players].sort((a, b) => Number(b.alive) - Number(a.alive) || scoreOf(w, b.i) - scoreOf(w, a.i) || popOf(w, b.i) - popOf(w, a.i)).map((p) => p.i);
+  if (w.goal && Math.round(w.t / STEP) % 10 === 0) {
+    const state = goalState(w);
+    if (state) return finish(w, state > 0 ? [0, ...alive.filter((p) => p.i !== 0).map((p) => p.i)] : [...alive.filter((p) => p.i !== 0).map((p) => p.i), 0], state > 0 ? 'Missão cumprida!' : 'Missão fracassada');
+  }
+  if (w.mode === 'ondas') {
+    const humans = alive.filter((p) => !p.bot);
+    if (humans.length && w.left > 0) return;
+    return finish(w, w.players.filter((p) => !p.npc).map((p) => p.i), `Sobreviveu a ${w.x.wave} ondas`);
+  }
+  if (w.left > 0 && (teams.size > 1 || w.goal) && !held && hero < 0) return;
+  const rank = w.players.filter((p) => !p.npc).sort((a, b) => Number(b.alive) - Number(a.alive) || scoreOf(w, b.i) - scoreOf(w, a.i) || popOf(w, b.i) - popOf(w, a.i)).map((p) => p.i);
   if (hero >= 0) rank.unshift(...rank.splice(rank.indexOf(hero), 1));
   const first = w.players[rank[0]];
   w.over = {
@@ -883,13 +989,14 @@ function checkEnd(w: World) {
 export function eyes(w: World, i: number): [number, number, number][] {
   const out: [number, number, number][] = [];
   const v = 1 + Math.max(-0.6, bonusOf(w, i).vision);
-  for (const u of w.units) if (allied(w, u.o, i)) out.push([u.x, u.z, UNITS[u.k].vision * v]);
+  for (const u of w.units) if (allied(w, u.o, i)) out.push([u.x, u.z, UNITS[u.k].vision * v * (u.kit === 3 ? 1.4 : 1)]);
   for (const c of w.cities) {
     if (c.owner < 0 || !allied(w, c.owner, i)) continue;
     const extra = c.works.some((k) => k.k === 'radar' && k.left <= 0) ? 5 : c.works.some((k) => k.k === 'vigia' && k.left <= 0) ? 1.5 : 0;
     out.push([c.x, c.z, (2.6 + extra) * v]);
   }
   // Cidades vigiadas por espiões
+  for (const o of w.players[i].l.mole) for (const c of w.cities) if (c.owner === o) out.push([c.x, c.z, 2.6]);
   for (const s of w.players[i].n.see) for (const c of w.cities) if (c.owner === s.o) out.push([c.x, c.z, 2.6]);
   for (const z of w.zones) if (z.k === 'satelite' && allied(w, z.o, i)) out.push([z.x, z.z, POWERS.satelite.radius]);
   return out;
@@ -899,10 +1006,10 @@ export function eyes(w: World, i: number): [number, number, number][] {
 const SMALL = { bala: 1, canhao: 1, missil: 1, baixa: 1 };
 const r2 = (n: number) => Math.round(n * 100) / 100;
 export type Pack = { t: number; l: number; u: number[]; fx: Fx[]; z: Zone[]; r: Rad[]; full?: Full };
-export interface Full { crates: Crate[]; wonders: World['wonders']; rel: number[]; offers: World['offers']; ult: World['ult']; cities: unknown[]; players: Player[]; log: World['log']; event: World['event']; over: World['over'] }
+export interface Full { x: Extra; goal: World['goal']; crates: Crate[]; wonders: World['wonders']; rel: number[]; offers: World['offers']; ult: World['ult']; cities: unknown[]; players: Player[]; log: World['log']; event: World['event']; over: World['over'] }
 export function pack(w: World, full: boolean): Pack {
   const u: number[] = [];
-  for (const x of w.units) u.push(x.i, UNIT_IDS.indexOf(x.k), x.o, Math.round(x.x * 100), Math.round(x.z * 100), Math.max(1, Math.round((x.hp / x.max) * 100)), Math.round(x.dir * 50), x.go, (x.off > 0 ? 1 : 0) + x.star * 2);
+  for (const x of w.units) u.push(x.i, UNIT_IDS.indexOf(x.k), x.o, Math.round(x.x * 100), Math.round(x.z * 100), Math.max(1, Math.round((x.hp / x.max) * 100)), Math.round(x.dir * 50), x.go, (x.off > 0 ? 1 : 0) + x.star * 2 + x.chief * 8 + x.stance * 16 + x.kit * 64 + x.cargo.length * 256);
   return {
     t: r2(w.t), l: Math.round(w.left), u, z: w.zones.map((z) => ({ ...z, x: r2(z.x), z: r2(z.z), left: r2(z.left), tick: r2(z.tick) })),
     r: w.rads.map((a) => ({ x: r2(a.x), z: r2(a.z), r: r2(a.r), left: Math.ceil(a.left) })),
@@ -910,8 +1017,9 @@ export function pack(w: World, full: boolean): Pack {
     fx: [...w.fx.filter((f) => f[0] in SMALL).slice(-70), ...w.fx.filter((f) => !(f[0] in SMALL)).slice(-120)].map((f) => [f[0], r2(f[1]), r2(f[2]), r2(f[3]), r2(f[4]), f[5] ?? 0] as Fx),
     ...(full ? {
       full: {
-        cities: w.cities.map((c) => [c.owner, Math.round((c.hp / c.max) * 100), c.max, r2(c.cap), c.capBy, c.works.map((k) => [k.k, Math.ceil(k.left), Math.ceil(k.cool)]), c.q.map((q) => [q.u, Math.ceil(q.left)]), r2(c.rx), r2(c.rz), c.off > 0 ? 1 : 0, c.hit > 0 ? 1 : 0, c.loop, c.dev, Math.ceil(c.devLeft), c.deal ? [c.deal.by, Math.ceil(c.deal.left)] : 0, r2(c.ruin), Math.round(c.mood)]),
+        cities: w.cities.map((c) => [c.owner, Math.round((c.hp / c.max) * 100), c.max, r2(c.cap), c.capBy, c.works.map((k) => [k.k, Math.ceil(k.left), Math.ceil(k.cool), k.lv ?? 1, r2(k.px ?? 0), r2(k.pz ?? 0)]), c.q.map((q) => [q.u, Math.ceil(q.left)]), r2(c.rx), r2(c.rz), c.off > 0 ? 1 : 0, c.hit > 0 ? 1 : 0, c.loop, c.dev, Math.ceil(c.devLeft), c.deal ? [c.deal.by, Math.ceil(c.deal.left)] : 0, r2(c.ruin), Math.round(c.mood)]),
         crates: w.crates.map((c) => ({ ...c, x: r2(c.x), z: r2(c.z) })), wonders: w.wonders,
+        x: { ...w.x, convoys: w.x.convoys.map((c) => ({ ...c, x: r2(c.x), z: r2(c.z) })), stk: w.x.stk.map((v) => Math.round(v)), ruins: w.x.ruins.map((r) => ({ ...r, x: r2(r.x), z: r2(r.z) })), mines: w.x.mines.map((m) => ({ o: m.o, x: r2(m.x), z: r2(m.z) })) }, goal: w.goal,
         rel: w.rel, offers: w.offers, ult: w.ult,
         players: w.players.map((p) => ({ ...p, money: Math.floor(p.money), fuel: Math.floor(p.fuel) })), log: w.log, event: w.event, over: w.over,
       },
@@ -930,8 +1038,8 @@ export function unpack(w: World, p: Pack) {
     const [i, k, o, x, z, hp, dir, go, off] = p.u.slice(n, n + 9);
     const kind = UNIT_IDS[k];
     if (!kind || !w.players[o]) continue;
-    const u = old.get(i) ?? ({ i, k: kind, o, tx: 0, tz: 0, cool: 0, hit: 0, max: 100, pat: null, scout: 0 } as unknown as Unit);
-    Object.assign(u, { k: kind, o, x: x / 100, z: z / 100, hp, max: 100, dir: dir / 50, go: go as 0, off: off & 1, star: off >> 1 });
+    const u = old.get(i) ?? ({ i, k: kind, o, tx: 0, tz: 0, cool: 0, hit: 0, max: 100, pat: null, scout: 0, q: [], cover: 0 } as unknown as Unit);
+    Object.assign(u, { k: kind, o, x: x / 100, z: z / 100, hp, max: 100, dir: dir / 50, go: go as 0, off: off & 1, star: (off >> 1) & 3, chief: (off >> 3) & 1, stance: (off >> 4) & 3, kit: (off >> 6) & 3, cargo: Array.from({ length: off >> 8 }, () => ['soldado', 1, 1, 0] as [UnitId, number, number, number]) });
     units.push(u);
   }
   w.units = units;
@@ -942,15 +1050,17 @@ export function unpack(w: World, p: Pack) {
   w.event = f.event;
   w.over = f.over;
   w.rel = f.rel;
+  w.x = f.x;
+  w.goal = f.goal;
   w.crates = f.crates;
   w.wonders = f.wonders;
   w.offers = f.offers;
   w.ult = f.ult;
-  (f.cities as [number, number, number, number, number, [WorksId, number, number][], [UnitId, number][], number, number, number, number, UnitId | '', number, number, 0 | [number, number], number, number][]).forEach((c, n) => {
+  (f.cities as [number, number, number, number, number, [WorksId, number, number, number, number, number][], [UnitId, number][], number, number, number, number, UnitId | '', number, number, 0 | [number, number], number, number][]).forEach((c, n) => {
     const s = w.cities[n];
     if (!s) return;
     Object.assign(s, {
-      owner: c[0], hp: (c[1] / 100) * c[2], max: c[2], cap: c[3], capBy: c[4], works: c[5].filter((k) => WORKS[k[0]]).map((k) => ({ k: k[0], left: k[1], cool: k[2] })),
+      owner: c[0], hp: (c[1] / 100) * c[2], max: c[2], cap: c[3], capBy: c[4], works: c[5].filter((k) => WORKS[k[0]]).map((k) => ({ k: k[0], left: k[1], cool: k[2], lv: k[3], px: k[4], pz: k[5] })),
       q: c[6].filter((q) => UNITS[q[0]]).map((q) => ({ u: q[0], left: q[1] })), rx: c[7], rz: c[8], off: c[9], hit: c[10], loop: c[11], dev: c[12], devLeft: c[13], deal: c[14] ? { by: c[14][0], left: c[14][1] } : null, ruin: c[15], mood: c[16],
     });
   });

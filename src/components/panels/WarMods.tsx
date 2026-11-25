@@ -56,7 +56,7 @@ const WarMods: React.FC = () => {
   const p = myPlayer();
   const own = citiesOf(w, W.me);
   const home = own[0] ?? myHome();
-  const foes = w.players.filter((x) => x.team !== p.team);
+  const foes = w.players.filter((x) => x.team !== p.team && !x.npc);
   const foe = foes.find((x) => x.i === rival) ?? foes[0];
   const isFoe = (o: number) => o >= 0 && w.players[o].team !== p.team;
   /** Lança de graça, sem esperar */
@@ -151,6 +151,12 @@ const WarMods: React.FC = () => {
           <Grid>
             <Btn onClick={act(() => { w.left += 600; })}>⏱️ +10 minutos</Btn>
             <Btn onClick={act(() => { w.left = 0.1; })}>🏁 Encerrar agora</Btn>
+          </Grid>
+          <Grid>
+            <Btn onClick={act(() => { w.x.nextBoss = 1; if (!w.rules.includes('perigos')) w.rules = [...w.rules, 'perigos']; })}>🤖 Chamar chefe ou invasão</Btn>
+            <Btn onClick={act(() => { w.x.merchant = { x: home.x + 1, z: home.z + 1, city: home.id, left: 240 }; })}>📦 Trazer o mercador</Btn>
+            <Btn onClick={act(() => { p.l.elect = 1; })}>👑 Eleição agora</Btn>
+            <Btn onClick={act(() => { w.x.nextVote = 1; })}>⚖️ Assembleia agora</Btn>
           </Grid>
           <p className="mod-title">Disparar evento</p>
           <Grid>{EVENTS.filter((e) => e.seconds).map((e) => <Btn key={e.name} onClick={act(() => { w.event = { i: EVENTS.indexOf(e), left: e.seconds }; })}>{e.icon} {e.name}</Btn>)}</Grid>

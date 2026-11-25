@@ -256,6 +256,7 @@ input[type='range']::-webkit-slider-thumb { width: 26px; height: 26px; }
 .war-dilemma { position: absolute; left: 50%; bottom: 0.5rem; transform: translateX(-50%); width: min(26rem, calc(100% - 0.8rem)); z-index: 14; display: grid; gap: 0.55rem; padding: 0.9rem; border-radius: 1.2rem; background: linear-gradient(180deg, rgba(34, 27, 14, 0.96), rgba(12, 14, 20, 0.97)); border: 1px solid rgba(245, 196, 81, 0.5); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55); }
 .war-dilemma button { padding: 0.65rem; border-radius: 0.9rem; background: rgba(255, 255, 255, 0.09); border: 1px solid var(--line); text-align: center; }
 .war-dilemma small { display: block; margin-top: 0.15rem; font-size: 10.5px; color: #f5d78f; }
+.war-tutor { bottom: auto; top: 34%; border-color: rgba(56, 189, 248, 0.6); background: linear-gradient(180deg, rgba(10, 32, 48, 0.96), rgba(8, 14, 22, 0.97)); }
 .war-mini { position: absolute; right: 0.35rem; top: 5rem; width: 5.6rem; border-radius: 1.1rem; border: 1px solid var(--line); background: var(--glass); backdrop-filter: blur(10px); z-index: 9; touch-action: none; padding: 0.2rem; }
 .war-offer { border-color: #38bdf8 !important; display: grid; gap: 0.4rem; }
 .war-offer button { flex: 1; padding: 0.45rem; border-radius: 0.7rem; background: #0284c7; font-weight: 700; }
@@ -283,5 +284,5 @@ input[type='range']::-webkit-slider-thumb { width: 26px; height: 26px; }
   .war-tool:nth-child(2) { border-top: 0; }
   .war-tool:nth-child(even) { border-left: 1px solid var(--line); }
   .war-log { top: 4.9rem; width: 44%; }
-  .war-bar { width: 24rem; padding: 0.4rem; }
+  .war-bar { left: auto; right: 0.35rem; transform: none; width: 17rem; padding: 0.4rem; gap: 0.3rem; }
 }

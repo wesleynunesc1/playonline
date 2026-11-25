@@ -1,13 +1,7 @@
-import { CITIES, City, wx, wz } from './data';
+import { CITIES, City, NEIGHBORS, RINGS } from './data';
 
 /** Relevo do Ceará: serras, vales, açudes e rios. A altura é calculada uma vez em uma grade. */
 export const PHONE = Math.min(window.innerWidth, window.innerHeight) < 700;
-const ringPoints = (enc: number[]) => {
-  const out: [number, number][] = [[enc[0], enc[1]]];
-  for (let i = 2; i < enc.length; i += 2) out.push([out[out.length - 1][0] + enc[i], out[out.length - 1][1] + enc[i + 1]]);
-  return out;
-};
-export const RINGS = new Map(CITIES.map((c) => [c.id, c.rings.map((r) => ringPoints(r).map(([x, y]) => [wx(x), wz(y)] as const))]));
 export const BOUNDS = (() => {
   let [x0, x1, z0, z1] = [1e9, -1e9, 1e9, -1e9];
   RINGS.forEach((l) => l.forEach((r) => r.forEach(([x, z]) => {
@@ -101,8 +95,6 @@ export const RIVERS = RIVER_NAMES.map(([names, mouth]) => {
 });
 
 // ===== Terra e mar =====
-const NEIGHBORS = ([[-41.3, -2.95], [-43, -2.6], [-50, -2.2], [-60, -2], [-60, -25], [-25, -25], [-34.8, -8.2], [-34.85, -7], [-35.3, -5.1], [-36.2, -5.1], [-37.2, -4.75], [-37.5, -4.8], [-38.6, -5.6], [-40, -5]] as const)
-  .map(([lon, lat]) => [wx((lon + 42) * 100), wz((lat + 8) * 100)] as const);
 /** Desenha o contorno da terra em um quadro que cobre `box` */
 export function silhouette(size: number, box: { x0: number; z0: number; w: number; h: number }, opt: { blur?: number; around?: boolean; fill?: string } = {}) {
   const c = document.createElement('canvas');

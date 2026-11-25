@@ -9,13 +9,14 @@ const server = await createServer({ server: { middlewareMode: true, hmr: false, 
 const D = await server.ssrLoadModule('/src/war/data.ts');
 const S = await server.ssrLoadModule('/src/war/sim.ts');
 const N = await server.ssrLoadModule('/src/war/nation.ts');
+const R = await server.ssrLoadModule('/src/war/realm.ts');
 const B = await server.ssrLoadModule('/src/war/bot.ts');
 
 // Dados oficiais e catálogo
 assert.equal(D.CITIES.length, 184);
 assert.equal(D.CITIES.reduce((s, c) => s + c.pop, 0), 8794957);
 for (const u of D.UNIT_IDS) assert.ok(D.WORKS[D.UNITS[u].from], u);
-const total = D.UNIT_IDS.length + D.WORKS_IDS.length + D.POWER_IDS.length + D.RESEARCH.length * 3 + Object.keys(D.LANDMARKS).length + Object.keys(D.REGION_BONUS).length + D.EVENTS.length + D.MODES.length + D.RULES.length + D.MEDALS.length + D.PHRASES.length + D.QUESTS.length + D.ERAS.length + N.DOCTRINES.length + N.POLICIES.length + N.WONDERS.length + Object.keys(N.SPIES).length + N.DILEMMAS.length + N.DISASTERS.length + N.CRATES.length + N.VICTORIES.length;
+const total = D.UNIT_IDS.length + D.WORKS_IDS.length + D.POWER_IDS.length + D.RESEARCH.length * 3 + Object.keys(D.LANDMARKS).length + Object.keys(D.REGION_BONUS).length + D.EVENTS.length + D.MODES.length + D.RULES.length + D.MEDALS.length + D.PHRASES.length + D.QUESTS.length + D.ERAS.length + N.DOCTRINES.length + N.POLICIES.length + N.WONDERS.length + Object.keys(N.SPIES).length + N.DILEMMAS.length + N.DISASTERS.length + N.CRATES.length + N.VICTORIES.length + R.MINISTERS.length + R.LAWS.length + R.SPECS.length * 2 + R.SECRETS.length + R.STOCKS.length + R.SYNERGY.length + R.MOTIONS.length + R.STORIES.flat().length + R.GOALS.length + R.OFFERS.length + R.KITS.length + R.FORMATIONS.length + R.STANCES.length;
 assert.ok(total >= 150, `${total} ideias`);
 console.log(`✔ 184 cidades, ${D.ROADS.length} estradas, ${total} itens de conteúdo`);
 
@@ -28,7 +29,7 @@ w.players.forEach((q) => { q.era = 5; });
 w.nextEvent = 1e9; // sem eventos aleatórios no teste de regras
 const p = w.players[0];
 const home = S.cityAt(w, p.start);
-assert.ok(home.owner === 0 && S.armySize(w, 0) === 6);
+assert.ok(home.owner === 0 && S.armySize(w, 0) === 6 && w.players[2].npc);
 p.money = 2e5;
 p.fuel = 1e6;
 assert.equal(S.command(w, 0, { c: 'build', city: home.id, k: 'fabrica' }), '');
@@ -148,7 +149,7 @@ assert.ok(JSON.stringify(pk).length < 60000, `${JSON.stringify(pk).length} bytes
     S.step(calm);
     if (i % 15 === 0) for (const q of calm.players) B.think(calm, q.i);
   }
-  assert.ok(calm.players.every((q) => q.alive && !S.atWar(calm, q.i)));
+  assert.ok(calm.players.every((q) => q.npc || (q.alive && !S.atWar(calm, q.i))));
   console.log(`  🕊️ 25 min em paz: eras ${calm.players.map((q) => q.era)}, cidades ${calm.players.map((q) => S.citiesOf(calm, q.i).length)}, evoluções ${calm.cities.reduce((x, c) => x + c.dev, 0)}`);
   // Robôs normais: ao menos os 10 primeiros minutos são de paz
   const mid = S.createWorld(setup(6, 6), 'dominio', 40, []);
@@ -157,7 +158,7 @@ assert.ok(JSON.stringify(pk).length < 60000, `${JSON.stringify(pk).length} bytes
     mid.fx = [];
     S.step(mid);
     if (i % 15 === 0) for (const q of mid.players) B.think(mid, q.i);
-    if (!first && mid.players.some((q) => S.atWar(mid, q.i))) first = mid.t;
+    if (!first && mid.players.some((q) => !q.npc && S.atWar(mid, q.i))) first = mid.t;
   }
   assert.ok(!first || first > 900);
   console.log(`  ⚖️ 40 min equilibrado: primeira guerra aos ${Math.round(first / 60)} min, eras ${mid.players.map((q) => q.era)}, cidades ${mid.players.map((q) => S.citiesOf(mid, q.i).length)}`);
@@ -215,27 +216,79 @@ assert.ok(JSON.stringify(pk).length < 60000, `${JSON.stringify(pk).length} bytes
   a.n.dil = null;
   for (const bad of [{ c: 'pol', id: 'x' }, { c: 'wonder', id: 'x', city: 1 }, { c: 'spy', to: 99, k: 'mapa' }, { c: 'spy', to: 1, k: 'zz' }, { c: 'tax', v: 7 }, { c: 'patrol', u: 5, x: 1, z: 1 }, { c: 'choose', n: 0 }, { c: 'merc', city: 3, k: 'zz' }]) assert.notEqual(S.command(g, 0, bad), '');
   for (const r of D.RESEARCH) a.res[r.id] = 3;
+  a.money = 1000;
   run(g, 3);
   assert.match(g.over.title, /Ciência/);
+}
+// Vida avançada: cada ordem nova, mar, transporte, perigos e objetivo
+{
+  assert.ok(D.isSea(21, -25) && !D.isSea(0, 0));
+  const g = S.createWorld(setup(3), 'dominio', 40, []);
+  g.nextEvent = 1e9;
+  const a = g.players[0];
+  const h = S.cityAt(g, a.start);
+  Object.assign(a, { money: 2e5, fuel: 2e5, era: 5 });
+  const ok = (c, i = 0) => assert.equal(S.command(g, i, c), '', JSON.stringify(c));
+  const no = (c, i = 0) => assert.notEqual(S.command(g, i, c), '', JSON.stringify(c));
+  ok({ c: 'min', id: 'ana' }); ok({ c: 'min', id: 'beto' }); no({ c: 'min', id: 'clara' }); no({ c: 'min', id: 'ana' }, 1);
+  ok({ c: 'law', id: 'ficha' }); ok({ c: 'law', id: 'porto' }); no({ c: 'law', id: 'verde' });
+  ok({ c: 'spec', id: 'tropa', n: 0 }); no({ c: 'spec', id: 'tropa', n: 1 });
+  ok({ c: 'secret', id: 'nano' }); no({ c: 'secret', id: 'clima' });
+  ok({ c: 'fest', city: h.id }); no({ c: 'fest', city: h.id });
+  ok({ c: 'stock', n: 0, buy: true }); ok({ c: 'stock', n: 0, buy: false }); no({ c: 'stock', n: 0, buy: false }); no({ c: 'stock', n: 9, buy: true });
+  ok({ c: 'embargo', to: 1 }); ok({ c: 'embargo', to: 1 }); ok({ c: 'gift', to: 1 });
+  ok({ c: 'pact', to: 1 }); ok({ c: 'answer', from: 0, yes: true }, 1); assert.match(S.command(g, 0, { c: 'dip', to: 1, k: 'guerra' }), /Pacto/);
+  ok({ c: 'scientist' }); no({ c: 'help' }); no({ c: 'joint', id: 'ia' });
+  ok({ c: 'dip', to: 2, k: 'comercio' }); ok({ c: 'answer', from: 0, yes: true }, 2); ok({ c: 'dip', to: 2, k: 'alianca' }); ok({ c: 'answer', from: 0, yes: true }, 2);
+  ok({ c: 'joint', id: 'ia' }); assert.equal(g.players[2].res.ia, 1); ok({ c: 'help' });
+  ok({ c: 'research', id: 'motor' }); no({ c: 'research', id: 'verde' }); run(g, 12); assert.equal(a.res.motor, 1);
+  ok({ c: 'build', city: h.id, k: 'estaleiro' }); no({ c: 'build', city: S.cityAt(g, g.players[1].start).id, k: 'estaleiro' }, 1); run(g, 18);
+  const inland = S.cityAt(g, g.players[1].start); Object.assign(g.players[1], { money: 9e4, fuel: 9e4, era: 5 }); assert.match(S.command(g, 1, { c: 'build', city: inland.id, k: 'estaleiro' }), /litoral/);
+  ok({ c: 'train', city: h.id, k: 'desembarque' }); ok({ c: 'train', city: h.id, k: 'general' }); no({ c: 'train', city: h.id, k: 'general' }); no({ c: 'train', city: h.id, k: 'colosso' }); run(g, 36);
+  const ship = g.units.find((u) => u.k === 'desembarque'); assert.ok(ship && D.isSea(ship.x, ship.z), 'navio no mar');
+  ok({ c: 'move', u: [ship.i], x: h.x, z: h.z + 6 }); run(g, 20); assert.ok(D.isSea(ship.x, ship.z), 'navio não sobe na terra');
+  const foot = g.units.find((u) => u.o === 0 && u.k === 'soldado'); Object.assign(foot, { x: ship.x, z: ship.z }); ok({ c: 'load', u: ship.i }); run(g, 0.2); assert.ok(ship.cargo.length >= 1 && !g.units.includes(foot));
+  const land = g.units.find((u) => u.o === 0 && u.k === 'general'); ok({ c: 'move', u: [land.i], x: h.x + 2, z: h.z - 9 }); run(g, 40); assert.ok(!D.isSea(land.x, land.z), 'tropa não anda no mar');
+  h.works.push({ k: 'mercado', left: 0, cool: 0 }, { k: 'banco', left: 0, cool: 0 });
+  assert.ok(R.synergyOf(h).length >= 1);
+  const n = h.works.findIndex((k) => k.k === 'banco'); ok({ c: 'upgrade', city: h.id, n }); run(g, 9); ok({ c: 'place', city: h.id, n, x: h.x + 0.6, z: h.z + 0.5 }); no({ c: 'place', city: h.id, n, x: 99, z: 0 });
+  const s1 = S.spawn(g, 'soldado', 0, h.x, h.z + 1); ok({ c: 'kit', u: [s1.i], n: 0 }); no({ c: 'kit', u: [s1.i], n: 1 }); s1.star = 2; ok({ c: 'officer', u: s1.i }); ok({ c: 'stance', u: [s1.i], s: 2 });
+  ok({ c: 'move', u: [s1.i], x: h.x, z: h.z + 2 }); ok({ c: 'move', u: [s1.i], x: h.x + 1, z: h.z + 2, add: true }); assert.equal(s1.q.length, 1); run(g, 12); assert.ok(Math.abs(s1.x - h.x - 1) < 0.5, 'fila de ordens');
+  for (const f of [0, 1, 2, 3]) ok({ c: 'move', u: g.units.filter((u) => u.o === 0).map((u) => u.i), x: h.x, z: h.z + 2, f });
+  ok({ c: 'power', k: 'minas', x: h.x, z: h.z + 3 }); ok({ c: 'power', k: 'barreira', x: h.x, z: h.z + 3 }); ok({ c: 'evac', city: h.id });
+  g.x.merchant = { x: h.x, z: h.z, city: h.id, left: 100 }; for (let k = 0; k < R.OFFERS.length; k++) ok({ c: 'deal', n: k });
+  for (const st of R.STORIES) for (const ch of st) for (const c of [0, 1]) { a.l.chapter = ch; ok({ c: 'story', n: c }); }
+  for (const m of R.MOTIONS) { g.over = null; g.x.vote = { id: m.id, left: 2, yes: [0, 1, 2], no: [] }; ok({ c: 'vote', yes: true }); a.money = 2e5; run(g, 3.2); }
+  assert.match(g.over.title, /Presidente/); g.over = null;
+  g.x.treasure = { city: h.id, done: false }; g.t = Math.max(g.t, 130); run(g, 1.2); assert.ok(g.x.treasure.done && R.clues(g).length >= 1);
+  a.l.elect = 1; run(g, 2); assert.ok(a.l.elect > 300);
+  g.x.nuked = 3.5; a.res.nuclear = 3; h.works.push({ k: 'silo', left: 0, cool: 0 }); g.x.ban = 0; g.x.truce = 0; ok({ c: 'power', k: 'balistico', x: -30, z: 20 }); run(g, 8); assert.ok(g.x.winter > 0, 'inverno nuclear');
+  // Perigos, ondas, região e objetivo
+  const d = S.createWorld(setup(2), 'dominio', 40, ['perigos', 'regiao']); d.x.nextBoss = 2; d.x.nextRaid = 2; run(d, 4); assert.ok(d.units.some((u) => d.players[u.o].npc));
+  const out = d.cities.find((c) => D.CITY[c.id].region !== d.x.region && c.owner < 0); assert.match(S.command(d, 0, { c: 'annex', city: out.id }), /região/);
+  const q = S.createWorld(setup(2), 'dominio', 40, [], { money: 3, era: 2, neutral: 0.5, army: 5 }, { kind: 'era', n: 3, text: 'x', level: 0 }); assert.ok(q.players[0].era === 2 && S.armySize(q, 0) === 8); q.players[0].era = 3; run(q, 2); assert.match(q.over.title, /cumprida/);
+  const big = JSON.stringify(S.pack(g, true)).length; assert.ok(big < 58000, `${big} bytes`);
+  const cp = S.createWorld(setup(3), 'dominio', 40, []); S.unpack(cp, JSON.parse(JSON.stringify(S.pack(g, true)))); assert.ok(cp.x.treasure.done && cp.units.some((u) => u.chief));
+  for (const bad of [{ c: 'min', id: 'x' }, { c: 'kit', u: 3, n: 0 }, { c: 'officer', u: 9999 }, { c: 'load', u: 'x' }, { c: 'place', city: 1, n: 0, x: 0, z: 0 }, { c: 'deal', n: 99 }, { c: 'spec', id: 'x', n: 0 }, { c: 'gift', to: 77 }, { c: 'upgrade', city: h.id, n: 99 }, { c: 'stance', u: [], s: 9 }]) no(bad);
 }
 console.log('✔ Regras, conquista, apoios e rede');
 
 // Partidas completas só de robôs, em todos os modos
 for (const mode of D.MODES) {
-  w = S.createWorld(setup(6, mode.id === 'coop' ? 3 : 6).map((x) => ({ ...x, bot: x.bot || (mode.id === 'coop' ? 0 : 2) })), mode.id, 20, mode.id === 'total' ? ['guerra', 'caos', 'renda'] : ['guerra']);
+  w = S.createWorld(setup(mode.id === 'ondas' ? 2 : 6, mode.id === 'coop' ? 3 : mode.id === 'ondas' ? 0 : 6).map((x) => ({ ...x, bot: x.bot || (mode.id === 'coop' || mode.id === 'ondas' ? 0 : 2) })), mode.id, 20, mode.id === 'total' ? ['guerra', 'caos', 'renda'] : ['guerra']);
   const t0 = performance.now();
   let steps = 0;
   let max = 0;
-  while (!w.over && steps < 12100) {
+  while (!w.over && steps < (mode.id === 'ondas' ? 9000 : 12100)) {
     w.fx = [];
     S.step(w);
-    if (++steps % 15 === 0) for (const q of w.players) { if (q.bot || mode.id === 'coop') { const b = q.bot; q.bot = b || 2; B.think(w, q.i); q.bot = b; } }
+    if (++steps % 15 === 0) for (const q of w.players) { if (q.npc) continue; if (q.bot || mode.id === 'coop' || mode.id === 'ondas') { const b = q.bot; q.bot = b || 2; B.think(w, q.i); q.bot = b; } }
     max = Math.max(max, w.units.length);
     for (const u of w.units) assert.ok(Number.isFinite(u.x) && Number.isFinite(u.hp));
     for (const q of w.players) assert.ok(q.money >= -1 && Number.isFinite(q.money));
   }
-  assert.ok(w.over, mode.id);
-  console.log(`  ${mode.icon} ${mode.name}: ${Math.round(w.t / 60)} min, ${w.over.title} [${w.players.map((q) => S.citiesOf(w, q.i).length).join('/')}] neutras ${w.cities.filter((c) => c.owner < 0).length}, até ${max} unidades, ${((performance.now() - t0) / steps).toFixed(2)} ms/passo, baixas ${w.players.reduce((s, q) => s + (q.stats.lost ?? 0), 0)}`);
+  assert.ok(w.over || mode.id === 'ondas', mode.id);
+  console.log(`  ${mode.icon} ${mode.name}: ${Math.round(w.t / 60)} min, ${w.over?.title ?? `onda ${w.x.wave}`} [${w.players.map((q) => S.citiesOf(w, q.i).length).join('/')}] neutras ${w.cities.filter((c) => c.owner < 0).length}, até ${max} unidades, ${((performance.now() - t0) / steps).toFixed(2)} ms/passo, baixas ${w.players.reduce((s, q) => s + (q.stats.lost ?? 0), 0)}`);
 }
 console.log('✔ Partidas completas');
 

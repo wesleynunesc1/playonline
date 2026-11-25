@@ -1,4 +1,5 @@
 import { Bonus, CITIES, CITY, PowerId, RESEARCH, UNITS, UNIT_ERA, UnitId } from './data';
+import { realmMood } from './realm';
 import { CityState, World, allied, armyCap, armySize, citiesOf, cityAt, hostile, mods, say, spawn, stat, unitPrice } from './sim';
 
 /** Vida da nação: doutrina, políticas, impostos, humor do povo, maravilhas, espiões, mercado, dilemas, caixas e desastres. */
@@ -45,13 +46,15 @@ export const WONDERS: { id: string; name: string; icon: string; text: string; bo
   { id: 'torre', name: 'Torre do Sol', icon: '☀️', text: 'A mais alta do país', bonus: { income: 0.15, fuel: 0.15 }, mood: 10, era: 5, money: 20000, fuel: 5000, time: 120 },
 ];
 // ===== 6 missões de espionagem =====
-export type SpyId = 'mapa' | 'tech' | 'sabotar' | 'revolta' | 'roubar' | 'virus';
+export type SpyId = 'mapa' | 'tech' | 'sabotar' | 'revolta' | 'roubar' | 'virus' | 'infiltrar' | 'boato';
 export const SPIES: Record<SpyId, { name: string; icon: string; text: string; money: number; chance: number }> = {
   mapa: { name: 'Vigiar', icon: '👁️', text: 'Vê as cidades dele por 60s', money: 150, chance: 0.9 },
   roubar: { name: 'Desviar verba', icon: '💼', text: 'Rouba 15% do dinheiro', money: 300, chance: 0.55 },
   tech: { name: 'Copiar pesquisa', icon: '🔬', text: 'Ganha um nível que ele tem', money: 600, chance: 0.5 },
   sabotar: { name: 'Sabotar', icon: '💥', text: 'Desliga uma cidade por 30s', money: 400, chance: 0.6 },
   revolta: { name: 'Incitar revolta', icon: '📣', text: 'Irrita o povo de uma cidade', money: 400, chance: 0.6 },
+  infiltrar: { name: 'Infiltrar agente', icon: '🕵️', text: 'Vê as cidades dele para sempre', money: 900, chance: 0.4 },
+  boato: { name: 'Notícia falsa', icon: '📣', text: 'Irrita todas as cidades dele', money: 350, chance: 0.55 },
   virus: { name: 'Ataque cibernético', icon: '💻', text: 'Apoios dele param por 60s', money: 700, chance: 0.5 },
 };
 export const SPY_COOL = 45;
@@ -109,6 +112,7 @@ export function moodTarget(w: World, c: CityState): number {
   for (const p of POLICIES) if (n.pol.includes(p.id)) m += p.mood ?? 0;
   for (const x of WONDERS) if (has(w, c.owner, x.id)) m += x.mood ?? 0;
   if (n.doc === 'humanista') m += 10;
+  m += realmMood(w, c.owner);
   if (c.works.some((k) => k.k === 'hospital' && k.left <= 0)) m += 6;
   if (w.players.some((p) => p.alive && hostile(w, p.i, c.owner))) m -= 10;
   if (w.rads.some((a) => Math.hypot(a.x - c.x, a.z - c.z) < a.r)) m -= 40;
@@ -139,7 +143,7 @@ export function wonderBlock(w: World, i: number, id: string, c: CityState | null
   if (d.coast && !coastal(c)) return 'Precisa ser no litoral.';
   return '';
 }
-export function govern(w: World, i: number, cmd: NationCmd, pay: Pay): string {
+export function govern(w: World, i: number, cmd: NationCmd, pay: Pay): string | undefined {
   const p = w.players[i];
   const n = p.n;
   const own = (id: number) => w.cities.find((c) => c.id === id && c.owner === i) ?? null;
@@ -185,12 +189,14 @@ export function govern(w: World, i: number, cmd: NationCmd, pay: Pay): string {
       if (cost) return cost;
       n.spy = SPY_COOL;
       const guard = (q.n.pol.includes('censura') ? 0.25 : 0) + (citiesOf(w, q.i).some((c) => c.works.some((k) => k.k === 'radar')) ? 0.08 : 0);
-      if (Math.random() > d.chance - guard) {
+      if (Math.random() > d.chance - guard + (p.l.mole.includes(q.i) ? 0.2 : 0)) {
         say(w, `👁️ Um espião de ${p.name} foi pego por ${q.name}`, 'alert');
         return '';
       }
       const target = pick(citiesOf(w, q.i));
       if (cmd.k === 'mapa') n.see.push({ o: q.i, left: 60 });
+      else if (cmd.k === 'infiltrar') p.l.mole = [...new Set([...p.l.mole, q.i])];
+      else if (cmd.k === 'boato') for (const c of citiesOf(w, q.i)) c.mood = Math.max(0, c.mood - 10);
       else if (cmd.k === 'roubar') {
         const v = Math.round(q.money * 0.15);
         q.money -= v;
@@ -249,6 +255,7 @@ export function govern(w: World, i: number, cmd: NationCmd, pay: Pay): string {
       const c = own(cmd.city);
       if (!c || !UNITS[cmd.k]) return 'Cidade inválida.';
       if (p.era < UNIT_ERA[cmd.k]) return `Precisa da Era ${UNIT_ERA[cmd.k]}.`;
+      if (UNITS[cmd.k].sea || cmd.k === 'general' || cmd.k === 'colosso') return 'Não há mercenário desse tipo.';
       if (armySize(w, i) >= armyCap(w, i)) return 'Limite de tropas.';
       const no = pay(mercPrice(w, i, cmd.k));
       if (no) return no;
@@ -376,14 +383,14 @@ function stepCrates(w: World) {
     w.crates.push({ x: c.x + Math.cos(a) * 1.5, z: c.z + Math.sin(a) * 1.5, k: Math.floor(Math.random() * CRATES.length), left: 150 });
   }
   for (const x of w.crates) {
-    const u = w.units.find((k) => k.hp > 0 && Math.hypot(k.x - x.x, k.z - x.z) < 0.55);
+    const u = w.units.find((k) => k.hp > 0 && !w.players[k.o].npc && Math.hypot(k.x - x.x, k.z - x.z) < 0.55);
     if (!u || x.left <= 0) continue;
     x.left = 0;
     const p = w.players[u.o];
     const k = CRATES[x.k];
     if (k === 'money') p.money += 350 + p.era * 120;
     else if (k === 'fuel') p.fuel += 150 + p.era * 60;
-    else if (k === 'troop') spawn(w, pick((Object.keys(UNIT_ERA) as UnitId[]).filter((t) => UNIT_ERA[t] <= p.era)), u.o, x.x, x.z);
+    else if (k === 'troop') spawn(w, pick((Object.keys(UNIT_ERA) as UnitId[]).filter((t) => UNIT_ERA[t] <= p.era && !UNITS[t].sea && t !== 'general')), u.o, x.x, x.z);
     else if (k === 'star') {
       u.star = Math.min(3, u.star + 1);
       u.hp = u.max;
@@ -404,7 +411,7 @@ export function odds(w: World, i: number, ids: number[], c: CityState): number {
 // ===== Vitórias alternativas do mundo aberto =====
 export const VICTORIES = [
   { id: 'povo', name: 'Supremacia', icon: '👑', text: 'Governe 60% da população' },
-  { id: 'ouro', name: 'Economia', icon: '💰', text: 'Junte 250 mil de dinheiro' },
+  { id: 'ouro', name: 'Economia', icon: '💰', text: 'Junte 600 mil de dinheiro' },
   { id: 'saber', name: 'Ciência', icon: '🔬', text: 'Complete todas as pesquisas' },
   { id: 'obra', name: 'Cultura', icon: '🏆', text: 'Tenha 5 maravilhas' },
 ];
@@ -412,6 +419,6 @@ export function victoryOf(w: World, i: number): [number, number][] {
   const p = w.players[i];
   const total = CITIES.reduce((s, c) => s + c.pop, 0) * 0.6;
   return [
-    [citiesOf(w, i).reduce((s, c) => s + CITY[c.id].pop, 0), total], [p.money, 250_000], [RESEARCH.reduce((s, r) => s + (p.res[r.id] ?? 0), 0), RESEARCH.length * 3], [w.wonders.filter((x) => x.o === i && x.left <= 0).length, 5],
+    [citiesOf(w, i).reduce((s, c) => s + CITY[c.id].pop, 0), total], [p.money, 600_000], [RESEARCH.reduce((s, r) => s + (p.res[r.id] ?? 0), 0), RESEARCH.length * 3], [w.wonders.filter((x) => x.o === i && x.left <= 0).length, 5],
   ];
 }

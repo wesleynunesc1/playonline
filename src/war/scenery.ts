@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { CITIES, CITY, City, ROADS } from './data';
+import { CITIES, CITY, City, RINGS, ROADS } from './data';
 import { mat } from './models';
-import { BOUNDS, COAST_CANVAS, EXT, HEIGHT, LAKES, NX, NZ, PHONE, RINGS, RIVERS, STEP_M, Y, cityNamed, isWater, lakeEdge, noise, silhouette, spread } from './terrain';
+import { BOUNDS, COAST_CANVAS, EXT, HEIGHT, LAKES, NX, NZ, PHONE, RIVERS, STEP_M, Y, cityNamed, isWater, lakeEdge, noise, silhouette, spread } from './terrain';
 
 /** Cenário: chão, água, céu, estradas, cidades que crescem ou viram ruína, plantas, pontos famosos e clima. */
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -12,7 +12,7 @@ float vn(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.-2.*f); return mix(mix(h2
 float fbm(vec2 p){ float a=.5,s=0.; for(int i=0;i<${PHONE ? 3 : 4};i++){ s+=a*vn(p); p=p*2.03+7.1; a*=.5; } return s; }`;
 /** Uniformes usados por todo o cenário */
 export const U = {
-  time: { value: 0 }, night: { value: 0 }, wet: { value: 0 }, fogMap: { value: null as THREE.Texture | null }, fogOn: { value: 0 }, land: { value: null as THREE.Texture | null },
+  time: { value: 0 }, season: { value: 0 }, snow: { value: 0 }, night: { value: 0 }, wet: { value: 0 }, fogMap: { value: null as THREE.Texture | null }, fogOn: { value: 0 }, land: { value: null as THREE.Texture | null },
   box: { value: new THREE.Vector4(BOUNDS.x0, BOUNDS.z0, BOUNDS.w, BOUNDS.h) },
 };
 /** Escurece o que está fora da visão e entrega a posição no mundo ao sombreador */
@@ -25,7 +25,7 @@ function world(m: THREE.MeshStandardMaterial, color = '', extra: (s: { vertexSha
       wp=instanceMatrix*wp;
       #endif
       vW=(modelMatrix*wp).xyz; vNw=normal;`);
-    s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying vec3 vW; varying vec3 vNw; uniform float time,night,wet,fogOn; uniform sampler2D fogMap,land; uniform vec4 box;${NOISE}`)
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying vec3 vW; varying vec3 vNw; uniform float time,night,wet,fogOn,season,snow; uniform sampler2D fogMap,land; uniform vec4 box;${NOISE}`)
       .replace('#include <color_fragment>', `#include <color_fragment>\n${color}
         { vec2 fu=(vW.xz-box.xy)/box.zw; float fo=fogOn*texture2D(fogMap,fu).a*step(0.,fu.x)*step(fu.x,1.)*step(0.,fu.y)*step(fu.y,1.);
           float lu=dot(diffuseColor.rgb,vec3(.3,.59,.11)); diffuseColor.rgb=mix(diffuseColor.rgb,mix(vec3(lu),diffuseColor.rgb,.45)*vec3(.6,.64,.7),fo*.7); }`);
@@ -39,6 +39,7 @@ const GROUND = `
   float big=fbm(p*.3), mid=fbm(p*1.9), fine=fbm(p*9.), grit=vn(p*70.), grit2=vn(p*190.);
   vec3 dry=mix(vec3(.46,.35,.2),vec3(.62,.5,.3),mid), scrub=mix(vec3(.3,.31,.14),vec3(.43,.42,.2),fine), lush=mix(vec3(.1,.23,.07),vec3(.2,.36,.11),fine);
   float green=smoothstep(.28,.55,big+(mid-.5)*.35);
+  green=clamp(green+season*.28,0.,1.); scrub=mix(scrub,scrub*vec3(.82,1.12,.75),max(season,0.)); dry=mix(dry,dry*vec3(1.1,.98,.85),max(-season,0.));
   vec3 col=mix(dry,scrub,green);
   col=mix(col,lush,smoothstep(.62,1.15,alt+(mid-.5)*.35));
   col=mix(col,lush*1.1,smoothstep(.55,.7,big)*.5);
@@ -61,6 +62,7 @@ const GROUND = `
   float own2=smoothstep(.2,.6,inside);
   col*=1.-.22*smoothstep(.5,.72,fbm(p*.075+vec2(time*.012,time*.007)))*(1.-night);
   col=mix(col,col*vec3(.62,.64,.68),wet);
+  col=mix(col,vec3(.62,.63,.65)*(.8+.3*fine),snow*smoothstep(.35,.6,mid+.12));
   diffuseColor.rgb=pow(col,vec3(1.35));`;
 const WATER = (shore: string) => `
   vec2 p=vW.xz; float near=${shore}; float w=fbm(p*1.6+vec2(time*.14,-time*.1)); float w2=vn(p*14.+time*.9);
@@ -198,6 +200,10 @@ export class Scenery {
   private grass!: THREE.InstancedMesh;
   private grassAt = '';
   private turbines: THREE.Object3D[] = [];
+  private rails: THREE.CatmullRomCurve3[] = [];
+  private train!: THREE.InstancedMesh;
+  private birds!: THREE.InstancedMesh;
+  private people!: THREE.InstancedMesh;
   private kites: THREE.Object3D[] = [];
   private rain!: THREE.LineSegments<THREE.BufferGeometry, THREE.ShaderMaterial>;
   private dome!: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
@@ -215,6 +221,7 @@ export class Scenery {
     this.nature();
     this.landmarks();
     this.makeCars();
+    this.makeLife();
     this.weather();
     void this.ground;
   }
@@ -734,6 +741,98 @@ export class Scenery {
       this.cars.setColorAt(i, new THREE.Color(['#e5e7eb', '#3b4450', '#b91c1c', '#1d4ed8', '#9ca3af', '#f59e0b'][i % 6]));
     }
   }
+  /** Trem, pássaros e gente na praça */
+  private makeLife() {
+    const line = (names: string[]) => {
+      const pts = names.map(cityNamed).map((c, i, l) => {
+        const n = l[Math.min(l.length - 1, i + 1)];
+        const p = l[Math.max(0, i - 1)];
+        const a = Math.atan2(n.z - p.z, n.x - p.x) - Math.PI / 2;
+        const off = spread(c) * 1.2 + 0.15;
+        return new THREE.Vector3(c.x + Math.cos(a) * off, 0, c.z + Math.sin(a) * off);
+      });
+      return new THREE.CatmullRomCurve3(pts);
+    };
+    this.rails = [line(['Caucaia', 'Itapipoca', 'Sobral', 'Crateús']), line(['Pacatuba', 'Baturité', 'Quixadá', 'Quixeramobim', 'Senador Pompeu', 'Iguatu', 'Lavras da Mangabeira', 'Missão Velha'])];
+    const c = document.createElement('canvas');
+    c.width = 32;
+    c.height = 32;
+    const x = c.getContext('2d')!;
+    x.fillStyle = '#6a5f50';
+    x.fillRect(0, 0, 32, 32);
+    x.fillStyle = '#3b2f24';
+    x.fillRect(2, 6, 28, 8);
+    x.fillStyle = '#b9bec2';
+    x.fillRect(7, 0, 3, 32);
+    x.fillRect(22, 0, 3, 32);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = 8;
+    const lines = this.rails.map((r) => r.getSpacedPoints(Math.ceil(r.getLength() / 0.1)).map((v) => ({ x: v.x, z: v.z })));
+    const bed = this.add(new THREE.Mesh(ribbons(lines, 0.032, 0.036, 14), world(new THREE.MeshStandardMaterial({ map: t, roughness: 0.9, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -12 }))));
+    bed.receiveShadow = true;
+    bed.renderOrder = 2;
+    const car = mergeGeometries([plain(new THREE.BoxGeometry(0.15, 0.05, 0.04).translate(0, 0.035, 0), '#ffffff'), plain(new THREE.BoxGeometry(0.13, 0.014, 0.042).translate(0, 0.042, 0), '#2b3a48'), plain(new THREE.BoxGeometry(0.15, 0.012, 0.042).translate(0, 0.014, 0), '#b3452e')])!;
+    this.train = this.add(new THREE.InstancedMesh(car, world(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.3 })), 14));
+    const wing = new THREE.BufferGeometry();
+    wing.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, -0.02, 0.012, 0.035, 0.012, 0, 0.004, 0, 0, 0, 0.012, 0, -0.004, -0.02, 0.012, -0.035], 3));
+    wing.computeVertexNormals();
+    this.birds = this.add(new THREE.InstancedMesh(wing, new THREE.MeshBasicMaterial({ color: '#23282e', side: THREE.DoubleSide }), PHONE ? 36 : 72));
+    this.people = this.add(new THREE.InstancedMesh(mergeGeometries([plain(new THREE.CylinderGeometry(0.0025, 0.0032, 0.011, 6).translate(0, 0.0055, 0), '#ffffff'), plain(new THREE.SphereGeometry(0.0022, 6, 5).translate(0, 0.0132, 0), '#b98a68')])!, world(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 })), PHONE ? 70 : 160));
+    for (let i = 0; i < this.people.instanceMatrix.count; i++) this.people.setColorAt(i, new THREE.Color(['#c0392b', '#2980b9', '#f1c40f', '#27ae60', '#ecf0f1', '#8e44ad'][i % 6]));
+    for (const o of [this.train, this.birds, this.people]) o.frustumCulled = false;
+    this.train.castShadow = true;
+  }
+  private moveLife(at: THREE.Vector3, dist: number, light: number) {
+    const t = U.time.value;
+    const m = new THREE.Matrix4();
+    this.train.visible = dist < 34;
+    if (this.train.visible) {
+      this.rails.forEach((r, n) => {
+        const len = r.getLength();
+        for (let k = 0; k < 7; k++) {
+          // Vai e volta na linha
+          const d = (((t * 0.55 - k * 0.165 + n * 9) / len) % 2 + 2) % 2;
+          const u = d > 1 ? 2 - d : d;
+          const p = r.getPointAt(Math.min(0.9999, u));
+          const g = r.getTangentAt(Math.min(0.9999, u));
+          this.train.setMatrixAt(n * 7 + k, m.makeRotationY(-Math.atan2(g.z, g.x)).setPosition(p.x, Y(p.x, p.z) + 0.04, p.z));
+        }
+      });
+      this.train.instanceMatrix.needsUpdate = true;
+    }
+    this.birds.visible = dist < 22 && light > 0.3;
+    if (this.birds.visible) {
+      for (let i = 0; i < this.birds.instanceMatrix.count; i++) {
+        const flock = Math.floor(i / 9);
+        const k = i % 9;
+        const a = t * 0.12 + flock * 1.7;
+        const [cx, cz] = [at.x + Math.cos(a) * (3 + flock * 1.1), at.z + Math.sin(a * 0.9) * (2.4 + flock)];
+        const dir = a + Math.PI / 2;
+        const side = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.09;
+        const back = Math.ceil(k / 2) * 0.09;
+        m.makeRotationY(-dir).scale(new THREE.Vector3(1.6, 1.6 + Math.sin(t * 9 + i) * 1.6, 1.6)).setPosition(cx - Math.cos(dir) * back - Math.sin(dir) * side, at.y + 1.3 + flock * 0.12, cz - Math.sin(dir) * back + Math.cos(dir) * side);
+        this.birds.setMatrixAt(i, m);
+      }
+      this.birds.instanceMatrix.needsUpdate = true;
+    }
+    this.people.visible = dist < 7;
+    if (this.people.visible) {
+      const c = CITIES.reduce((b, x) => (Math.hypot(x.x - at.x, x.z - at.z) < Math.hypot(b.x - at.x, b.z - at.z) ? x : b));
+      const turn = angleOf(c);
+      const y = Y(c.x, c.z) + 0.016;
+      for (let i = 0; i < this.people.instanceMatrix.count; i++) {
+        const plaza = i % 3 === 0;
+        const w = t * (0.02 + (i % 5) * 0.004) + i * 3.7;
+        // Na praça andam em círculos; nas calçadas, em linha
+        const lx = plaza ? Math.cos(w * 2) * (0.03 + (i % 7) * 0.008) : Math.round(((i % 9) - 4)) * 0.17 + 0.0425 + 0.021;
+        const lz = plaza ? Math.sin(w * 2) * (0.03 + (i % 7) * 0.008) : ((w * 0.5 + i) % 1.2) - 0.6;
+        this.people.setMatrixAt(i, m.makeTranslation(c.x + lx * Math.cos(turn) - lz * Math.sin(turn), y + Math.abs(Math.sin(t * 9 + i)) * 0.001, c.z + lx * Math.sin(turn) + lz * Math.cos(turn)));
+      }
+      this.people.instanceMatrix.needsUpdate = true;
+    }
+  }
   private weather() {
     const n = PHONE ? 700 : 1600;
     const pos = new Float32Array(n * 6);
@@ -754,9 +853,12 @@ export class Scenery {
     this.rain.visible = false;
     this.rain.renderOrder = 5;
   }
-  update(dt: number, at: THREE.Vector3, dist: number, sky: Sky, sun: THREE.Vector3) {
+  update(dt: number, at: THREE.Vector3, dist: number, sky: Sky, sun: THREE.Vector3, season = 0, snow = 0) {
     U.time.value += dt;
     U.night.value = 1 - sky.light;
+    U.season.value = season;
+    U.snow.value += (snow - U.snow.value) * Math.min(1, dt * 0.2);
+    this.moveLife(at, dist, sky.light);
     U.wet.value += ((sky.rain > 0 ? 1 : 0) - U.wet.value) * Math.min(1, dt * 0.4);
     const d = this.dome.material.uniforms;
     d.sun.value.copy(sun);
