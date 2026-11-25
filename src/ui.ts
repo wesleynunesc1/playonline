@@ -4,7 +4,7 @@ import { sound } from './utils/audio';
 import { music, speak } from './utils/music';
 
 /** Estado só de interface (telas, painel aberto, país selecionado, avisos). */
-export type Screen = 'home' | 'country_select' | 'game' | 'snake' | 'lan';
+export type Screen = 'home' | 'country_select' | 'game' | 'snake' | 'lan' | 'ceara';
 export type Panel = 'imperio' | 'exercito' | 'generais' | 'diplomacia' | 'ciencia' | 'missoes' | 'mundo' | 'menu' | null;
 
 interface App {

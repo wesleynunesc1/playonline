@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BookOpen, ChevronRight, Gamepad2, Globe2, Map, Maximize, RefreshCw, RotateCcw, Volume2, VolumeX, Wifi } from 'lucide-react';
+import { BookOpen, Castle, ChevronRight, Gamepad2, Globe2, Map, Maximize, RefreshCw, RotateCcw, Volume2, VolumeX, Wifi } from 'lucide-react';
 import { useApp } from '../../ui';
 import { COUNTRIES } from '../../data/countries';
 import { CAMPAIGN, SCENARIOS, Scenario } from '../../data/content';
@@ -81,6 +81,7 @@ export const HomeScreen: React.FC = () => {
           <div className="mt-5 space-y-2">
             {saved && <Item i={0} hot icon={<RotateCcw size={20} />} title="CONTINUAR" text={`${COUNTRIES[saved.capital].name} • ${lands} países • ${formatDuration(saved.time)}`} onClick={() => { if (continueGame()) setScreen('game'); }} />}
             <Item i={1} hot={!saved} icon={<Globe2 size={20} />} title="PARTIDA LIVRE" text="172 países, 6 impérios rivais" onClick={() => choose('livre')} />
+            <Item i={2} icon={<Castle size={20} />} title="GUERRA NO CEARÁ 3D" text="Online: construa e ataque as 184 cidades" onClick={() => setScreen('ceara')} />
             <Item i={2} icon={<Wifi size={20} />} title="JOGAR NO WI-FI" text="2 a 6 jogadores na mesma rede" onClick={() => setScreen('lan')} />
             <div className="grid grid-cols-1 xs:grid-cols-2 gap-2">
               <Item i={3} icon={<BookOpen size={20} />} title="CAMPANHA" text={`${M.campaign}/${CAMPAIGN.length} capítulos`} onClick={() => setList('campanha')} />
@@ -90,7 +91,7 @@ export const HomeScreen: React.FC = () => {
           </div>
         </main>
         <footer className="text-[11px] text-slate-400">
-          Líderes fictícios • imagens: NASA Blue Marble
+          Líderes fictícios • imagens: NASA • Ceará: IBGE
           <button onClick={() => setLogin(true)} aria-label="Administrador" className="p-3 -my-3 opacity-50">🔒</button>
         </footer>
       </div>

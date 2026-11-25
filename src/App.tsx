@@ -9,6 +9,7 @@ import { SelectCountryScreen } from './components/screens/SelectCountryScreen';
 
 const GameScreen = lazy(() => import('./components/screens/GameScreen').then((m) => ({ default: m.GameScreen })));
 const LanScreen = lazy(() => import('./components/screens/LanScreen').then((m) => ({ default: m.LanScreen })));
+const CearaScreen = lazy(() => import('./components/screens/CearaScreen').then((m) => ({ default: m.CearaScreen })));
 const SnakeScreen = lazy(() => import('./components/screens/SnakeScreen').then((m) => ({ default: m.SnakeScreen })));
 
 export const App: React.FC = () => {
@@ -22,6 +23,7 @@ export const App: React.FC = () => {
         {screen === 'game' && <GameScreen />}
         {screen === 'snake' && <SnakeScreen />}
         {screen === 'lan' && <LanScreen />}
+        {screen === 'ceara' && <CearaScreen />}
       </Suspense>
       <AdminMenu />
       <UpdateBanner />
