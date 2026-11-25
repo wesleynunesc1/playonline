@@ -2,9 +2,9 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from '
 import { geoGraticule10, geoNaturalEarth1, geoPath } from 'd3-geo';
 import { useApp } from '../../ui';
 import { COUNTRIES, COUNTRY_IDS, NUMERIC_TO_COUNTRY } from '../../data/countries';
-import { Game, PLAYER, ZOMBIES, game, rivalDef, useGame } from '../../engine/state';
-import { L } from '../../lan/match';
-import { reach } from '../../engine/calc';
+import { Game, PLAYER, STRIKE_MS, ZOMBIES, game, hooks, isHuman, rivalDef, useGame } from '../../engine/state';
+import { L, colorOf, playerOf } from '../../lan/match';
+import { myHotspots, reach, warFronts } from '../../engine/calc';
 import { MapFx } from '../../fx/mapFx';
 import { useWorldGeo } from '../../services/worldGeo';
 import { ZoomIn, ZoomOut, LocateFixed, Loader2 } from 'lucide-react';
@@ -15,6 +15,7 @@ const MIN_K = 1;
 const MAX_K = 14;
 const DRAG_THRESHOLD_PX = 6;
 const MARKER_PX = 22;
+const ALERT_ICON = { terra: '🪖', mar: '🚢', ar: '✈️', bomba: '💣', nuclear: '☢️', inimigo: '🚀', sabotagem: '💥', ciber: '💻', carta: '⚡', meteoro: '☄️' };
 const DETAIL_PX_PER_UNIT = 4;
 
 type CountryId = string;
@@ -104,7 +105,7 @@ export const InteractiveMap: React.FC = () => {
   const g = game();
   const selected = useApp((s) => s.selected);
   const selectCountry = useApp((s) => s.select);
-  const { strike, threat, capital } = g;
+  const { threat, capital } = g;
   const lastTap = useRef({ at: 0, x: 0, y: 0 });
   const playerCountryId = capital;
   // Um passo de jogo = um recálculo; arrastar o mapa não passa por aqui
@@ -282,6 +283,7 @@ export const InteractiveMap: React.FC = () => {
 
   // ---------- Efeitos de combate ----------
   const fxCanvas = useRef<HTMLCanvasElement>(null);
+  const flash = useRef<HTMLDivElement>(null);
   const shaker = useRef<HTMLDivElement>(null);
   const fx = useRef<MapFx | null>(null);
   useEffect(() => {
@@ -292,6 +294,7 @@ export const InteractiveMap: React.FC = () => {
       const px = 14 * power;
       el.animate(Array.from({ length: 12 }, (_, i) => ({ transform: `translate(${(Math.random() - 0.5) * px * (1 - i / 12)}px, ${(Math.random() - 0.5) * px * (1 - i / 12)}px)` })), { duration: 350 + 900 * power });
     };
+    engine.onFlash = () => flash.current?.animate([{ opacity: 1 }, { opacity: 0.9, offset: 0.2 }, { opacity: 0 }], { duration: 1500 });
     fx.current = engine;
     return () => engine.destroy();
   }, []);
@@ -301,21 +304,45 @@ export const InteractiveMap: React.FC = () => {
     fx.current.place = (x, y) => [offX + (view.x + x * view.k) * unitPx, offY + (view.y + y * view.k) * unitPx];
     fx.current.zoom = unitPx * view.k;
   }
+  // Toda ação de ataque chega por aqui: sua, dos rivais e dos outros jogadores
+  const [alerts, setAlerts] = useState<{ key: number; text: string; to: CountryId; color: string }[]>([]);
+  const shown = useRef<Record<string, number>>({});
   useEffect(() => {
-    if (strike && anchors) fx.current?.attack(strike.kind, anchors[strike.from], anchors[strike.to]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [strike?.key]);
-  // Países que mudaram de mão longe do jogador também mostram combate
+    if (!anchors) return;
+    let seq = 0;
+    hooks.fx = (kind, from, to, by) => {
+      if (!anchors[from] || !anchors[to]) return;
+      const human = isHuman(by);
+      const rival = game().rivals[by];
+      const color = human ? colorOf(by) : rival ? rivalDef(by).color : '#2563eb';
+      const name = human ? playerOf(by)?.name ?? '' : rival ? rivalDef(by).icon : '';
+      fx.current?.attack(kind, anchors[from], anchors[to], name, color);
+      shown.current[to] = Date.now() + STRIKE_MS[kind] + 1500;
+      // Aviso tocável quando envolve jogadores
+      const victim = game().countries[to].owner;
+      if (by === PLAYER || (!human && victim !== PLAYER && !isHuman(victim))) return;
+      const key = ++seq;
+      setAlerts((l) => [...l, { key, text: `${ALERT_ICON[kind]} ${name || 'Ataque'} → ${COUNTRIES[to].name}`, to, color }].slice(-3));
+      setTimeout(() => setAlerts((l) => l.filter((a) => a.key !== key)), 6000);
+    };
+    return () => { hooks.fx = () => {}; };
+  }, [anchors]);
+  useEffect(() => {
+    if (!anchors) return;
+    const ids = new Set([...myHotspots(), ...warFronts(), ...(g.mode === 'lan' ? L.players.flatMap((p) => p.hot ?? []) : [])]);
+    fx.current?.setHot([...ids].map((id) => anchors[id]));
+  }, [anchors, g, tickVersion]);
+  // Trocas de dono sem ataque visível (revolta, cerco, golpe)
   const owners = useRef<Record<string, string>>({});
   useEffect(() => {
     if (!anchors) return;
     for (const id of COUNTRY_IDS) {
       const now = g.countries[id].owner;
       const before = owners.current[id];
-      if (before !== undefined && before !== now && strike?.to !== id && now !== PLAYER) fx.current?.skirmish(anchors[id]);
+      if (before !== undefined && before !== now && now !== PLAYER && Date.now() > (shown.current[id] ?? 0)) fx.current?.skirmish(anchors[id]);
       owners.current[id] = now;
     }
-  }, [anchors, g, tickVersion, strike]);
+  }, [anchors, g, tickVersion]);
 
   const daylight = 0.5 + 0.5 * Math.cos((g.time / 240) * Math.PI * 2);
   const center = (): Point => [W / 2, H / 2];
@@ -416,7 +443,12 @@ export const InteractiveMap: React.FC = () => {
       <canvas ref={fxCanvas} className="absolute inset-0 w-full h-full pointer-events-none" />
       <div className="cloud-layer" />
       <div className="map-vignette" />
-      {strike?.kind === 'nuclear' && <div key={strike.key} className="nuke-flash" />}
+      <div ref={flash} className="nuke-flash" />
+      <div className="absolute right-2 top-28 z-20 flex flex-col items-end gap-1.5">
+        {alerts.map((a) => (
+          <button key={a.key} onClick={() => focusOn(a.to)} className="speech glass-panel rounded-full px-3 py-1.5 text-xs font-bold max-w-[60vw] truncate" style={{ borderColor: a.color }}>{a.text}</button>
+        ))}
+      </div>
 
       {!geo && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-400 text-xs font-mono">

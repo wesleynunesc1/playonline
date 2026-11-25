@@ -17,7 +17,7 @@ import { NukeCinematic } from '../panels/NukeCinematic';
 import { HelpButton } from '../panels/HelpModal';
 import { Panels } from '../panels/Panels';
 import { Dialogs, dialogOpen } from '../panels/Dialogs';
-import { LanEnd, LanSide, LanTop } from '../panels/LanHud';
+import { LanEnd, LanSide, LiveBattles, LanTop } from '../panels/LanHud';
 import { L, lanTick } from '../../lan/match';
 import { useWakeLock } from '../../hooks/useDevice';
 import { Button } from '../common/Button';
@@ -92,6 +92,7 @@ export const GameScreen: React.FC = () => {
       <Hud />
       <main className="flex-1 min-h-0 relative overflow-hidden">
         <InteractiveMap />
+        {lan && <LiveBattles />}
         <div className="absolute top-2 inset-x-2 z-20 mx-auto max-w-lg space-y-2 pointer-events-none">
           {lan ? <LanTop /> : <p className="glass-panel rounded-xl px-3 py-1.5 text-xs text-center text-amber-200">🎯 {nextGoal()}</p>}
           <Threat />

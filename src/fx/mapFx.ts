@@ -3,9 +3,11 @@ import { sound } from '../utils/audio';
 import { Particles } from './particles';
 
 type Pt = [number, number];
-interface Attack { kind: StrikeKind; from: Pt; to: Pt; start: number; done: boolean; seeds: number[] }
+interface Attack { kind: StrikeKind; from: Pt; to: Pt; start: number; done: boolean; seeds: number[]; label: string; color: string }
 interface Wave { at: Pt; start: number; size: number; color: string }
 
+const MAX_ATTACKS = 16;
+const MAX_BURNS = 8;
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
@@ -14,6 +16,10 @@ export class MapFx {
   private particles = new Particles();
   private attacks: Attack[] = [];
   private waves: Wave[] = [];
+  private burns: { at: Pt; until: number }[] = [];
+  private hot: Pt[] = [];
+  private nextHot = 0;
+  private heard: Partial<Record<StrikeKind, number>> = {};
   private raf = 0;
   private last = 0;
   /** Converte unidades do mapa em pixels da tela */
@@ -21,6 +27,7 @@ export class MapFx {
   /** Pixels por unidade do mapa */
   zoom = 1;
   onShake: (power: number) => void = () => {};
+  onFlash: () => void = () => {};
 
   constructor(private canvas: HTMLCanvasElement) {}
 
@@ -34,13 +41,25 @@ export class MapFx {
     this.raf = requestAnimationFrame(this.frame);
   }
 
-  attack(kind: StrikeKind, from: Pt, to: Pt) {
-    this.attacks.push({ kind, from, to, start: performance.now(), done: false, seeds: Array.from({ length: 8 }, () => Math.random()) });
+  /** Combates contínuos: batalhas, cercos e frentes de guerra */
+  setHot(list: Pt[]) {
+    this.hot = list.slice(0, 10);
+    if (list.length) this.wake();
+  }
+
+  attack(kind: StrikeKind, from: Pt, to: Pt, label = '', color = '#fff') {
+    if (this.attacks.length >= MAX_ATTACKS) this.attacks.shift();
+    const now = performance.now();
+    this.attacks.push({ kind, from, to, start: now, done: false, label, color, seeds: Array.from({ length: 8 }, () => Math.random()) });
+    this.wake();
+    // Muitos ataques juntos não viram barulho
+    if (now - (this.heard[kind] ?? -9999) < 700) return;
+    this.heard[kind] = now;
     if (kind === 'ar' || kind === 'bomba') sound.playJet();
     else if (kind === 'nuclear') sound.playSiren();
-    else if (kind === 'terra') sound.playGuns();
+    else if (kind === 'terra' || kind === 'sabotagem') sound.playGuns();
+    else if (kind === 'ciber') sound.playSabotage();
     else sound.playLaunch();
-    this.wake();
   }
   /** Combate distante entre outros países */
   skirmish(at: Pt) {
@@ -72,15 +91,65 @@ export class MapFx {
     ctx.clearRect(0, 0, w, h);
     for (const a of this.attacks) this.drawAttack(ctx, a, now);
     this.attacks = this.attacks.filter((a) => now - a.start < STRIKE_MS[a.kind] + 200);
+    this.ambient(now);
     this.particles.step(dt);
     this.drawWaves(ctx, now);
     this.particles.draw(ctx, this.place);
-    if (this.attacks.length || this.waves.length || this.particles.list.length) this.raf = requestAnimationFrame(this.frame);
+    this.drawLabels(ctx, now);
+    if (this.attacks.length || this.waves.length || this.hot.length || this.burns.length || this.particles.list.length) this.raf = requestAnimationFrame(this.frame);
     else {
       this.raf = 0;
       ctx.clearRect(0, 0, w, h);
     }
   };
+
+  /** Incêndios depois do ataque e tiroteio nas frentes */
+  private ambient(now: number) {
+    const s = this.unit();
+    this.burns = this.burns.filter((b) => b.until > now);
+    for (const b of this.burns) {
+      const at = { ax: b.at[0], ay: b.at[1] };
+      if (Math.random() < 0.16) this.particles.add({ kind: 'smoke', ...at, x: rnd(-s, s) * 0.5, y: rnd(-s, s) * 0.3, vx: rnd(4, 12), vy: rnd(-22, -12), drag: 0.3, life: rnd(1.6, 3), size: s * 0.35, grow: s * 0.6, shade: 0 });
+      if (Math.random() < 0.22) this.particles.add({ kind: 'fire', ...at, x: rnd(-s, s) * 0.6, y: rnd(-s, s) * 0.4, vy: rnd(-12, -4), life: rnd(0.25, 0.5), size: s * rnd(0.2, 0.4), grow: -s * 0.3, shade: 1 });
+    }
+    if (!this.hot.length || now < this.nextHot) return;
+    this.nextHot = now + rnd(90, 260) / Math.min(3, this.hot.length);
+    const p = this.hot[Math.floor(Math.random() * this.hot.length)];
+    const at = { ax: p[0], ay: p[1] };
+    const x = rnd(-s, s) * 1.8;
+    const y = rnd(-s, s) * 1.2;
+    if (Math.random() < 0.4) this.particles.explode(x, y, s * rnd(0.25, 0.5), at);
+    else {
+      this.particles.add({ kind: 'glow', ...at, x, y, life: 0.12, size: s * 0.6, spin: 0 });
+      for (let i = 0; i < 4; i++) this.particles.add({ kind: 'spark', ...at, x, y, vx: rnd(-1, 1) * 170, vy: rnd(-1, 1) * 90, drag: 0.3, life: rnd(0.2, 0.4), size: 1.3 });
+    }
+  }
+  private burn(at: Pt, seconds: number) {
+    this.burns = [{ at, until: performance.now() + seconds * 1000 }, ...this.burns].slice(0, MAX_BURNS);
+  }
+  /** Nome de quem ataca acompanha as tropas */
+  private drawLabels(ctx: CanvasRenderingContext2D, now: number) {
+    ctx.font = '700 11px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    for (const a of this.attacks) {
+      const t = (now - a.start) / (STRIKE_MS[a.kind] * STRIKE_IMPACT);
+      if (!a.label || t < 0 || t > 1) continue;
+      const [fx, fy] = this.place(...a.from);
+      const [tx, ty] = this.place(...a.to);
+      const p = Math.min(0.8, t);
+      const x = lerp(fx, tx, p);
+      const y = lerp(fy, ty, p) - this.unit() * 2.4;
+      const w = ctx.measureText(a.label).width + 14;
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = a.color;
+      ctx.beginPath();
+      ctx.roundRect(x - w / 2, y - 11, w, 17, 8);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#fff';
+      ctx.fillText(a.label, x, y + 1.5);
+    }
+  }
 
   private drawWaves(ctx: CanvasRenderingContext2D, now: number) {
     this.waves = this.waves.filter((w) => now - w.start < 1400);
@@ -111,7 +180,16 @@ export class MapFx {
         }, i * gap);
       }
     };
+    if (a.kind === 'ciber') return;
+    if (a.kind === 'carta') {
+      this.particles.explode(0, 0, s * 0.8, at);
+      this.onShake(0.25);
+      sound.playImpact();
+      return;
+    }
+    this.burn(a.to, a.kind === 'nuclear' ? 60 : 25);
     if (a.kind === 'nuclear') {
+      this.onFlash();
       this.particles.explode(0, 0, s * 4.5, at);
       boom(10, s * 4, s * 2.2, 60);
       this.waves.push({ at: a.to, start: performance.now(), size: s * 34, color: '255,236,200' });
@@ -131,7 +209,9 @@ export class MapFx {
           this.wake();
         }, i * 70);
       }
-    } else boom(a.kind === 'inimigo' ? 5 : 6, s * 1.8, s * 1.05, 90);
+    } else if (a.kind === 'sabotagem') boom(3, s, s * 0.7, 160);
+    else if (a.kind === 'meteoro') boom(8, s * 1.5, s * 1.5, 50);
+    else boom(a.kind === 'inimigo' ? 5 : 6, s * 1.8, s * 1.05, 90);
     this.waves.push({ at: a.to, start: performance.now(), size: s * 9, color: '255,220,170' });
     sound.playImpact();
     this.onShake(0.5);
@@ -144,6 +224,11 @@ export class MapFx {
       if (a.kind === 'ar' || a.kind === 'bomba') this.flyBy(ctx, a, 1 + (now - a.start - STRIKE_MS[a.kind] * STRIKE_IMPACT) / 1200);
       return;
     }
+    if (a.kind === 'sabotagem') return;
+    if (a.kind === 'ciber') return this.cyber(ctx, a, t);
+    if (a.kind === 'carta') return this.lightning(ctx, a, t);
+    if (a.kind === 'meteoro') return this.meteor(ctx, a, t);
+    if (t > 0.5 && (a.kind === 'ar' || a.kind === 'bomba' || a.kind === 'inimigo')) this.antiAir(a);
     if (a.kind === 'terra' || a.kind === 'mar') this.convoy(ctx, a, t);
     else if (a.kind === 'ar' || a.kind === 'bomba') this.flyBy(ctx, a, t);
     else this.missiles(ctx, a, t);
@@ -193,6 +278,66 @@ export class MapFx {
   private unplace(x: number, y: number, a: Attack) {
     const [bx, by] = this.place(...a.to);
     return { ax: a.to[0], ay: a.to[1], x: x - bx, y: y - by };
+  }
+
+  /** Defesa antiaérea do alvo: traçantes e estouros no céu */
+  private antiAir(a: Attack) {
+    const s = this.unit();
+    const at = { ax: a.to[0], ay: a.to[1] };
+    if (Math.random() < 0.5) this.particles.add({ kind: 'spark', ...at, x: rnd(-s, s) * 0.8, y: rnd(-s, s) * 0.4, vx: rnd(-90, 90), vy: rnd(-260, -150), drag: 0.6, life: rnd(0.35, 0.6), size: 1.6 });
+    if (Math.random() < 0.09) this.particles.add({ kind: 'smoke', ...at, x: rnd(-s, s) * 3, y: rnd(-5, -1) * s, life: 0.9, size: s * 0.2, grow: s * 0.5, shade: 0 });
+  }
+  /** Invasão digital: pulsos e interferência */
+  private cyber(ctx: CanvasRenderingContext2D, a: Attack, t: number) {
+    const [x, y] = this.place(...a.to);
+    const s = this.unit() * 3;
+    ctx.strokeStyle = `rgba(34,211,238,${0.9 - t * 0.6})`;
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 3; i++) {
+      const r = s * ((t * 2 + i / 3) % 1);
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, 6.283);
+      ctx.stroke();
+    }
+    for (let i = 0; i < 14; i++) {
+      ctx.fillStyle = Math.random() < 0.5 ? 'rgba(34,211,238,.8)' : 'rgba(217,70,239,.8)';
+      ctx.fillRect(x + rnd(-s, s), y + rnd(-s, s) * 0.8, rnd(3, 22), 1.6);
+    }
+  }
+  private lightning(ctx: CanvasRenderingContext2D, a: Attack, t: number) {
+    if (t < 0.35) return;
+    const [x, y] = this.place(...a.to);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const [w, c] of [[7, 'rgba(120,150,255,.35)'], [2, 'rgba(240,245,255,.95)']] as const) {
+      ctx.strokeStyle = c;
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      let px = x + (a.seeds[0] - 0.5) * 160;
+      let py = Math.min(0, y - 260);
+      ctx.moveTo(px, py);
+      for (let i = 1; i <= 8; i++) {
+        px = lerp(px, x, i / 8) + (i < 8 ? rnd(-14, 14) : 0);
+        py = lerp(Math.min(0, y - 260), y, i / 8);
+        ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  private meteor(ctx: CanvasRenderingContext2D, a: Attack, t: number) {
+    const [tx, ty] = this.place(...a.to);
+    const e = t * t;
+    const x = tx + (1 - e) * 420;
+    const y = ty - (1 - e) * 480;
+    const s = this.unit();
+    for (let i = 0; i < 3; i++) this.particles.add({ kind: i ? 'fire' : 'smoke', ...this.unplace(x + rnd(-s, s) * 0.3, y + rnd(-s, s) * 0.3, a), vx: 30, vy: -34, drag: 1, life: rnd(0.4, 1.1), size: s * 0.7, grow: s * 0.4, shade: i });
+    const g = ctx.createRadialGradient(x, y, 0, x, y, s * 1.2);
+    g.addColorStop(0, '#fff7e0');
+    g.addColorStop(0.4, '#ff9d3c');
+    g.addColorStop(1, 'rgba(255,80,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x - s * 1.2, y - s * 1.2, s * 2.4, s * 2.4);
   }
 
   /** Esquadrilha com rastro, sombra e queda de bombas ou paraquedas */

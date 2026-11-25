@@ -3,7 +3,7 @@ import { BRANCHES, Building, ERAS, MAX_BUILDING, REGIMES, RES_INFO, SPACE, TECH_
 import { GEOPOLITICAL_EVENTS } from '../data/events';
 import { armyPower, budget, buildCost, countryIncome, defensePower, mods, reach, spyChance, upgradeCost } from './calc';
 import { addXp, track } from './meta';
-import { bump, clamp, fail, game, hooks, isHuman, isMine, net, news, ok, owned, pick, rivalDef, save } from './state';
+import { bump, clamp, fail, game, hooks, isHuman, isMine, net, news, ok, owned, pick, rivalDef, save, showFx } from './state';
 import { conquer, provoke, remember } from './war';
 
 /** Economia, ciência, diplomacia e espionagem. */
@@ -334,6 +334,8 @@ export function spyOp(op: SpyOp, id: string) {
     fail('Agentes capturados. A operação fracassou.');
     return done('spy');
   }
+  if (op === 'sabotar' || op === 'golpe') showFx('sabotagem', g.capital, id);
+  else if (op === 'ciber') showFx('ciber', g.capital, r.capital);
   if (op === 'infiltrar') r.spy = true;
   else if (op === 'roubar') g.science += 25 + g.era * 40;
   else if (op === 'sabotar') c.sab = 90;

@@ -6,8 +6,8 @@ import { TAX_INFO, armyPower, budget, defensePower, mods, production, reach, sci
 import { addXp, completeScenario, track } from './meta';
 import { randomCrisis } from './realm';
 import { cheatTick } from './cheats';
-import { Game, M, PLAYER, Rival, ZOMBIES, bump, cheat, clamp, fail, game, hooks, isHuman, loadSave, net, news, ok, owned, pick, rand, rivalDef, save, scenarioOf, setGame } from './state';
-import { changeMorale, conquer, loseCountry, lostCountry, remember, resolveThreat } from './war';
+import { Game, M, PLAYER, Rival, STRIKE_IMPACT, STRIKE_MS, ZOMBIES, bump, cheat, clamp, fail, game, hooks, isHuman, loadSave, net, news, ok, owned, pick, rand, rivalDef, save, scar, scenarioOf, setGame, showFx } from './state';
+import { changeMorale, conquer, loseCountry, lostCountry, remember, resolveThreat, timing } from './war';
 
 /** Passagem do tempo: economia, rivais, eventos e vitória. */
 
@@ -18,7 +18,8 @@ export function tick(seconds: number, blocked = false) {
   const g = game();
   if (!g || g.over) return;
   const lan = g.mode === 'lan';
-  if (!lan && (g.paused || g.battle || blocked)) return;
+  // O mundo não para durante a batalha: só em decisões e na pausa
+  if (!lan && (g.paused || blocked)) return;
   const dt = seconds * g.speed * (lan ? 1 : cheat.speed);
   g.time += dt;
   cheatTick();
@@ -31,7 +32,7 @@ export function tick(seconds: number, blocked = false) {
   coalition(g);
   if (g.threat) {
     g.threat.left -= dt;
-    if (g.threat.left <= 0 && !g.strike) resolveThreat();
+    if (g.threat.left <= 0) resolveThreat();
   }
   achievements(g);
   if (!lan) victory(g);
@@ -102,7 +103,7 @@ function timers(g: Game, dt: number) {
   }
   if (due('joke', rand(35, 60))) news(pick(JOKES), 'fun');
   const solo = g.mode !== 'lan';
-  if (solo && due('event', rand(90, 140)) && !g.strike) {
+  if (solo && due('event', rand(90, 140)) && !g.battle) {
     g.crisis = randomCrisis();
     hooks.sound('alert');
   }
@@ -258,12 +259,26 @@ function rivalTick(g: Game, r: Rival, dt: number) {
   const target = candidates.reduce((best, id) => (strength(id) < strength(best) ? id : best));
   const need = strength(target);
   if (r.power * 0.6 < need) return;
+  // A ofensiva aparece no mapa e só se decide quando chega ao alvo
   const c = g.countries[target];
   const before = c.owner;
   r.power -= need * 0.3;
+  const from = mine.reduce((best, id) => (distance(id, target) < distance(best, target) ? id : best));
+  const way = reach(target, r.id) ?? 'mar';
+  showFx(way, from, target, r.id);
+  setTimeout(() => {
+    if (game() !== g || !r.alive || c.owner !== before || c.vassal) return;
+    takeFor(g, r, target);
+    bump();
+  }, STRIKE_MS[way] * STRIKE_IMPACT * timing.strike);
+}
+function takeFor(g: Game, r: Rival, target: string) {
+  const c = g.countries[target];
+  const before = c.owner;
+  scar(target);
   Object.assign(c, { owner: r.id, def: Math.round(COUNTRIES[target].defense * 0.6), route: false, siege: false, spy: false });
   if (g.rivals[before]) lostCountry(before, target);
-  news(`${def.title} conquista ${COUNTRIES[target].name}.`, 'war');
+  news(`${rivalDef(r.id).title} conquista ${COUNTRIES[target].name}.`, 'war');
 }
 
 function nemesisReturn(g: Game, r: Rival) {

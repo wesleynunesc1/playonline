@@ -2,7 +2,7 @@ import { COUNTRIES, distance } from '../data/countries';
 import { GENERALS, POWERS, Power, UNITS, UNIT_INFO, Unit } from '../data/content';
 import { SHIP_CAPACITY, armyPower, attackPower, defensePower, generalStats, landTroops, mods, reach, recruitCost, revealed, winChance } from './calc';
 import { addGeneralXp, addXp, freeGenerals, track, weekKey } from './meta';
-import { Army, Battle, M, PLAYER, STRIKE_IMPACT, STRIKE_MS, StrikeKind, Tactic, ZOMBIES, bump, cheat, clamp, emptyArmy, fail, game, hooks, isHuman, isMine, net, news, ok, owned, ownerName, pick, rand, rivalDef, save, scar } from './state';
+import { Army, Battle, M, PLAYER, STRIKE_IMPACT, STRIKE_MS, Tactic, ZOMBIES, bump, cheat, clamp, emptyArmy, fail, game, hooks, isHuman, isMine, net, news, ok, owned, ownerName, pick, rand, rivalDef, save, scar, showFx } from './state';
 
 /** Batalhas, poderes, cercos e defesa. */
 
@@ -45,16 +45,20 @@ export function changeMorale(n: number) {
 }
 
 // ===== Diplomacia que impede ataques =====
+const busy = (id: string) => {
+  const g = game();
+  return g.flights.some((f) => f.to === id) || g.queue.some((b) => b.target === id) || (g.battle?.target === id && !g.battle.done && !g.battle.boss);
+};
 export function attackBlock(target: string): string {
   const g = game();
   const c = g.countries[target];
   const r = g.rivals[c.owner];
   if (c.owner === PLAYER) return 'O país já é seu.';
   if (c.vassal) return 'Este país é seu vassalo.';
-  if (cheat.free) return g.strike || g.battle ? 'Há um ataque em andamento.' : '';
+  if (busy(target)) return 'Suas tropas já estão atacando este país.';
+  if (cheat.free) return '';
   if (r?.ally) return 'É seu aliado. Rompa a aliança na Diplomacia para atacar.';
   if (r && r.truce > 0) return `Trégua em vigor: ${Math.ceil(r.truce)}s.`;
-  if (g.strike || g.battle) return 'Há um ataque em andamento.';
   return '';
 }
 
@@ -99,7 +103,6 @@ function createBattle(target: string, army: Army, general: string, a: number, d:
   return b;
 }
 
-let launched: Army | null = null;
 export function startAttack(target: string, army: Army, general: string) {
   const g = game();
   const block = attackBlock(target);
@@ -111,30 +114,28 @@ export function startAttack(target: string, army: Army, general: string) {
   if (way === 'mar' && landTroops(army) > army.navy * SHIP_CAPACITY) return fail(`Cada navio leva ${SHIP_CAPACITY} tropas. Envie mais navios.`);
   if (M.generals[general]?.captor) general = '';
   for (const u of UNITS) g.army[u] -= army[u];
-  launched = { ...army };
   if (way === 'ar') g.para = false;
   const owner = g.countries[target].owner;
   if (g.rivals[owner]) provoke(owner, 25, `Você atacou ${COUNTRIES[target].name}.`);
   const battle = createBattle(target, { ...army }, general, attackPower(army, target, general), defensePower(target));
   const from = owned().reduce((best, id) => (distance(id, target) < distance(best, target) ? id : best), g.capital);
-  launch(from, target, way);
+  const key = ++g.seq;
+  g.flights = [...g.flights, { to: target, army: { ...army }, key }];
+  showFx(way, from, target);
   if (isHuman(owner)) net.incoming(owner, target);
   bump();
   setTimeout(() => {
-    if (game() !== g || !g.strike) return;
-    g.strike = null;
-    g.battle = battle;
+    if (game() !== g || !g.flights.some((x) => x.key === key)) return;
+    g.flights = g.flights.filter((x) => x.key !== key);
+    if (g.battle) g.queue = [...g.queue, battle];
+    else g.battle = battle;
+    net.battle();
     bump();
   }, STRIKE_MS[way] * timing.strike);
   return true;
 }
 /** Multiplicador da duração dos lançamentos; os testes zeram */
 export const timing = { strike: 1 };
-function launch(from: string, to: string, kind: StrikeKind) {
-  const g = game();
-  g.strike = { from, to, kind, key: ++g.seq };
-}
-
 export function battleRound(tactic: Tactic) {
   const g = game();
   const b = g.battle;
@@ -152,10 +153,12 @@ export function battleRound(tactic: Tactic) {
   if (b.d <= 0 && (b.a > 0 || dealt >= taken)) endBattle('won');
   else if (b.a <= 0) endBattle('lost');
   else rollStance(b);
+  net.battle();
   bump();
 }
 export function retreat() {
   endBattle('fled');
+  net.battle();
   bump();
 }
 /** Tática que vence o palpite dos batedores */
@@ -167,11 +170,13 @@ export function autoBattle() {
 /** Escudo do outro jogador: as tropas voltam para casa */
 export function cancelAttack(target: string) {
   const g = game();
-  const army = g.battle?.target === target && !g.battle.done ? g.battle.army : g.strike?.to === target ? launched : null;
+  const open = g.battle?.target === target && !g.battle.done && !g.battle.boss ? g.battle : null;
+  const army = open?.army ?? g.queue.find((b) => b.target === target)?.army ?? g.flights.find((x) => x.to === target)?.army;
   if (!army) return false;
   for (const u of UNITS) g.army[u] += army[u];
-  g.battle = null;
-  g.strike = null;
+  g.queue = g.queue.filter((b) => b.target !== target);
+  g.flights = g.flights.filter((x) => x.to !== target);
+  if (open) closeBattle();
   return true;
 }
 
@@ -218,7 +223,14 @@ function endBattle(done: 'won' | 'lost' | 'fled') {
   save();
 }
 export function closeBattle() {
-  game().battle = null;
+  const g = game();
+  g.battle = g.queue.shift() ?? null;
+  // O país pode ter sido tomado por outro caminho enquanto a batalha esperava
+  if (g.battle && isMine(g.battle.target)) {
+    for (const u of UNITS) g.army[u] += g.battle.army[u];
+    return closeBattle();
+  }
+  net.battle();
   bump();
 }
 
@@ -291,10 +303,9 @@ export function resolveThreat() {
   const who = t.by === 'alien' ? 'Frota alienígena' : t.by === 'onda' ? `Onda ${g.wave}` : ownerName(t.by);
   const name = COUNTRIES[t.target].name;
   const from = g.rivals[t.by]?.capital ?? owned('')[0] ?? t.target;
-  launch(from, t.target, 'inimigo');
+  showFx('inimigo', from, t.target, t.by);
   setTimeout(() => {
     if (game() !== g) return;
-    g.strike = null;
     if (g.shield) {
       g.shield = false;
       news(`Escudo antimíssil anulou o ataque a ${name}!`, 'war');
@@ -356,7 +367,6 @@ export function usePower(p: Power, target = '') {
   if (POWERS[p].needsTarget && (!target || isMine(target) || attackBlock(target))) return fail(attackBlock(target) || 'Escolha um país inimigo no mapa.');
   const c = g.countries[target];
   if (p === 'bombardeio') {
-    c.def = Math.max(5, Math.round(c.def * 0.7));
     if (g.rivals[c.owner]) provoke(c.owner, 15, `Bombardeou ${COUNTRIES[target].name}.`);
   } else if (p === 'escudo') g.shield = true;
   else if (p === 'paraquedas') g.para = true;
@@ -365,29 +375,16 @@ export function usePower(p: Power, target = '') {
     if (g.era < 3) return fail('Exige a Era Moderna.');
     if (g.res.uranium < 20) return fail('Exige 20 urânio.');
     g.res.uranium -= 20;
-    c.def = Math.max(3, Math.round(c.def * 0.1));
-    c.level = Math.max(1, c.level - 1);
     g.infamy = Math.min(100, g.infamy + 40);
-    if (g.rivals[c.owner]) g.rivals[c.owner].power *= 0.6;
     for (const id in g.rivals) {
       g.rivals[id].rel = clamp(g.rivals[id].rel - 40, -100, 100);
-      g.rivals[id].ally = false;
+      g.rivals[id].ally = net.locked(id);
       remember(id, 'Usou a arma nuclear.');
     }
-    news(`Arma nuclear devasta ${COUNTRIES[target].name}. O mundo se volta contra você.`, 'war');
+    news(`Arma nuclear lançada contra ${COUNTRIES[target].name}. O mundo se volta contra você.`, 'war');
   }
   if (POWERS[p].needsTarget) {
-    const nuke = p === 'nuclear';
-    const kind = nuke ? 'nuclear' : 'bomba';
-    launch(g.capital, target, kind);
-    if (nuke) net.nuke(target);
-    if (nuke) setTimeout(() => game() === g && hooks.nuke(target), STRIKE_MS.nuclear * STRIKE_IMPACT * timing.strike + 350 * timing.strike);
-    setTimeout(() => {
-      if (game() !== g) return;
-      g.strike = null;
-      scar(target, nuke);
-      bump();
-    }, STRIKE_MS[kind] * timing.strike);
+    bomb(p === 'nuclear' ? 'nuclear' : 'bomba', target, p === 'nuclear' ? 0.1 : 0.7);
   } else hooks.sound('tech');
   g.powers[p] = POWERS[p].cooldown * (1 - Math.min(0.5, mods().power));
   track('powers');
@@ -395,24 +392,28 @@ export function usePower(p: Power, target = '') {
   return true;
 }
 
-/** Ataque forçado pelo mod menu, sem custo nem recarga */
-export function forceStrike(kind: 'bomba' | 'nuclear', target: string) {
+/** Lança a bomba; o estrago acontece no impacto */
+function bomb(kind: 'bomba' | 'nuclear', target: string, keep: number) {
   const g = game();
-  if (g.strike || g.battle) return fail('Há um ataque em andamento.');
   const c = g.countries[target];
   const nuke = kind === 'nuclear';
-  launch(g.capital === target ? owned().find((x) => x !== target) ?? 'GL' : g.capital, target, kind);
-  if (nuke) {
-    net.nuke(target);
-    setTimeout(() => game() === g && hooks.nuke(target), STRIKE_MS.nuclear * STRIKE_IMPACT * timing.strike + 350 * timing.strike);
-  }
+  const from = g.capital === target ? owned().find((x) => x !== target) ?? 'GL' : g.capital;
+  showFx(kind, from, target);
+  if (nuke) setTimeout(() => game() === g && hooks.nuke(target), (STRIKE_MS.nuclear * STRIKE_IMPACT + 350) * timing.strike);
   setTimeout(() => {
     if (game() !== g) return;
-    g.strike = null;
-    c.def = Math.max(3, c.def * (nuke ? 0.1 : 0.6));
+    c.def = Math.max(3, Math.round(c.def * keep));
+    if (nuke) {
+      c.level = Math.max(1, c.level - 1);
+      if (g.rivals[c.owner] && !isHuman(c.owner)) g.rivals[c.owner].power *= 0.6;
+    }
     scar(target, nuke);
     bump();
-  }, STRIKE_MS[kind] * timing.strike);
+  }, STRIKE_MS[kind] * STRIKE_IMPACT * timing.strike);
+}
+/** Ataque forçado pelo mod menu, sem custo nem recarga */
+export function forceStrike(kind: 'bomba' | 'nuclear', target: string) {
+  bomb(kind, target, kind === 'nuclear' ? 0.1 : 0.6);
   bump();
   return true;
 }
@@ -429,6 +430,7 @@ export function toggleSiege(id: string) {
     if (g.rivals[c.owner]) provoke(c.owner, 20, `Cercou ${COUNTRIES[id].name}.`);
   }
   c.siege = !c.siege;
+  if (c.siege) showFx('terra', owned().find((x) => COUNTRIES[x].neighbors.includes(id)) ?? g.capital, id);
   hooks.sound('recruit');
   bump();
   return true;
@@ -440,7 +442,7 @@ export const bossPower = () => Math.round(250 + M.xp * 0.3 + (game() ? owned().l
 export function fightBoss(general: string) {
   const g = game();
   if (M.bossWeek === weekKey()) return fail('Chefão derrotado. Um novo chega na segunda-feira.');
-  if (g.battle || g.strike) return fail('Há um ataque em andamento.');
+  if (g.battle || g.flights.length) return fail('Há um ataque em andamento.');
   if (armyPower(g.army) < 20) return fail('Exército pequeno demais.');
   const army = { ...g.army };
   g.army = emptyArmy();

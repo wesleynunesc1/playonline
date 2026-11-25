@@ -43,6 +43,9 @@ const lobby = (mode, rules = []) => {
     A.X.hostReceive(`dev-${seat}`, { t: 'hello', name: seat === 'h1' ? 'Bia' : 'Duda', emblem: '🐺' });
     assert.equal(g.X.L.me, seat);
   }
+  // Libera os países sorteados antes de escolher os do teste
+  B.X.setMine({ country: 'FI' });
+  D.X.setMine({ country: 'NO' });
   B.X.setMine({ country: 'BR' });
   assert.notEqual(A.X.playerOf('h1').country, 'BR', 'país repetido é recusado');
   B.X.setMine({ country: 'AR' });
@@ -107,6 +110,33 @@ assert.equal(canon(A, 'ES'), 'h2');
 A.X.hostReceive('dev-h1', { t: 'to', to: 'h0', m: { t: 'gift', what: 'money', n: -1e9 } });
 for (const bad of [null, {}, { t: 5 }, { t: 'up' }, { t: 'say' }, { t: 'to', to: 'h9' }]) A.X.hostReceive('dev-h1', bad);
 assert.ok(Number.isFinite(A.E.game().money) && A.E.game().money >= 0);
+
+// Tudo que um faz aparece para todos, e vários ataques correm juntos
+const seen = { h0: [], h1: [], h2: [] };
+[A, B, D].forEach((d, i) => { d.E.hooks.fx = (k, f, t, by) => seen[`h${i}`].push([k, t, by]); });
+{
+  D.E.game().army.navy = 200;
+  D.E.game().army.inf = 3000;
+  const free = Object.keys(D.E.game().countries).filter((id) => D.E.game().countries[id].owner === '' && D.C.reach(id) && !D.W.attackBlock(id)).slice(0, 3);
+  assert.ok(free.length >= 2);
+  for (const id of free) assert.ok(D.W.startAttack(id, { inf: 400, tank: 0, air: 0, navy: 30 }, ''), id);
+  const n = seen.h2.length;
+  assert.ok(n >= 2 && D.E.game().queue.length === n - 1, 'batalhas em fila');
+  assert.ok(seen.h0.length === n && seen.h1.length === n, 'todos veem');
+  assert.ok(seen.h0.every((x) => x[2] === 'h2') && seen.h2.every((x) => x[2] === 'P'));
+  assert.equal(A.X.L.live.h2.target, D.E.game().battle.target, 'batalha ao vivo no criador');
+  assert.equal(B.X.L.live.h2.target, D.E.game().battle.target, 'batalha ao vivo no outro convidado');
+  step(1);
+  assert.ok(A.X.playerOf('h2').hot.length === n && B.X.playerOf('h2').hot.length === n, 'frentes');
+  D.W.autoBattle();
+  assert.ok(A.X.L.live.h2.done);
+  for (let i = 0; i < n; i++) { D.W.autoBattle(); D.W.closeBattle(); }
+  assert.equal(D.E.game().battle, null);
+  for (const kind of ['bomba', 'nuclear']) B.W.forceStrike(kind, 'MX');
+  for (const h of ['h0', 'h1', 'h2']) assert.ok(['bomba', 'nuclear'].every((k) => seen[h].some((x) => x[0] === k && x[1] === 'MX')), h);
+  A.X.hostReceive('dev-h1', { t: 'fx', k: 'xx', f: 'BR', to: 'AR' });
+  A.X.hostReceive('dev-h1', { t: 'bt', target: 'ZZZ' });
+}
 
 // Diplomacia entre jogadores
 D.X.propose('h1', 'ally');

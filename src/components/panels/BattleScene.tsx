@@ -21,7 +21,8 @@ const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 interface Fighter { kind: Unit; side: 1 | -1; x: number; depth: number; phase: number; fire: number; dead: number }
 
 /** Campo de batalha: tropas, tiros, explosões, clima e destroços. */
-export const BattleScene: React.FC<{ battle: Battle; terrain: Terrain; boss: boolean }> = ({ battle, terrain, boss }) => {
+export type SceneBattle = Pick<Battle, 'a' | 'a0' | 'd' | 'd0' | 'round' | 'done' | 'last' | 'army'>;
+export const BattleScene: React.FC<{ battle: SceneBattle; terrain: Terrain; boss?: boolean; mute?: boolean }> = ({ battle, terrain, boss = false, mute = false }) => {
   const ref = useRef<HTMLCanvasElement>(null);
   const live = useRef({ a: 1, d: 1, round: 1, done: '' as Battle['done'], tactic: '' as Tactic | '' });
   live.current = { a: battle.a / battle.a0, d: battle.d / battle.d0, round: battle.round, done: battle.done, tactic: battle.last ?? '' };
@@ -62,7 +63,7 @@ export const BattleScene: React.FC<{ battle: Battle; terrain: Terrain; boss: boo
         round = st.done ? -1 : st.round;
         surge = 1;
         shake = 1;
-        sound.playGuns();
+        if (!mute) sound.playGuns();
         for (let i = 0; i < (st.tactic === 'flanquear' ? 9 : 6); i++) setTimeout(() => fx.explode(rnd(W * 0.45, W * 0.92), rnd(H * 0.55, H * 0.88), rnd(14, 26)), i * 110);
         for (let i = 0; i < 4; i++) setTimeout(() => fx.explode(rnd(W * 0.08, W * 0.5), rnd(H * 0.58, H * 0.9), rnd(10, 20)), 80 + i * 140);
       }
@@ -136,14 +137,14 @@ export const BattleScene: React.FC<{ battle: Battle; terrain: Terrain; boss: boo
       roar -= dt;
       if (!st.done && roar <= 0) {
         roar = rnd(1.5, 3);
-        sound.playGuns(0.35);
+        if (!mute) sound.playGuns(0.35);
       }
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
     // A cena é montada uma vez por batalha; o estado vivo chega por `live`
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [terrain, boss]);
+  }, [terrain, boss, mute]);
 
   return <canvas ref={ref} className="battlefield block w-full" aria-label="Campo de batalha" />;
 };

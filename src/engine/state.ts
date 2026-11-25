@@ -9,9 +9,9 @@ import { Building, CAMPAIGN, ModKey, Power, RIVALS, RESOURCES, RivalDef, RES_INF
 export const PLAYER = 'P';
 export const ZOMBIES = 'Z';
 export type Army = Record<Unit, number>;
-export type StrikeKind = 'terra' | 'mar' | 'ar' | 'bomba' | 'nuclear' | 'inimigo';
+export type StrikeKind = 'terra' | 'mar' | 'ar' | 'bomba' | 'nuclear' | 'inimigo' | 'sabotagem' | 'ciber' | 'carta' | 'meteoro';
 /** Duração de cada animação de ataque e o momento do impacto dentro dela */
-export const STRIKE_MS: Record<StrikeKind, number> = { terra: 2500, mar: 2700, ar: 2400, bomba: 2600, nuclear: 3800, inimigo: 2500 };
+export const STRIKE_MS: Record<StrikeKind, number> = { terra: 2500, mar: 2700, ar: 2400, bomba: 2600, nuclear: 3800, inimigo: 2500, sabotagem: 1300, ciber: 1800, carta: 900, meteoro: 1900 };
 export const STRIKE_IMPACT = 0.82;
 export type Tactic = 'avancar' | 'flanquear' | 'atrair';
 
@@ -45,7 +45,9 @@ export interface Game {
   wonders: Record<string, string>; powers: Record<Power, number>; shield: boolean; para: boolean; satellite: number; sanction: number;
   countries: Record<string, CountryState>; rivals: Record<string, Rival>; coalition: boolean; space: number;
   threat: { by: string; target: string; left: number; power: number } | null;
-  strike: { from: string; to: string; kind: StrikeKind; key: number } | null;
+  /** Tropas a caminho e batalhas esperando comando: vários ataques ao mesmo tempo */
+  flights: { to: string; army: Army; key: number }[];
+  queue: Battle[];
   battle: Battle | null; news: News[]; crisis: string; vote: { rival: string; text: string; kind: 'sancao' | 'paz' | 'contra' } | null;
   timers: Record<'market' | 'event' | 'vote' | 'joke' | 'special' | 'revolt' | 'raid', number>;
   wave: number; defeated: number; achievements: string[]; victories: string[]; over: { won: boolean; title: string; text: string } | null;
@@ -102,7 +104,12 @@ export const useGame = () => useSyncExternalStore((l) => { listeners.add(l); ret
 // ===== Salvamento =====
 export function save() {
   write(META_KEY, M);
-  if (G && !G.over && G.mode !== 'lan') write(SAVE_KEY, { ...G, savedAt: Date.now(), strike: null, battle: null });
+  if (!G || G.over || G.mode === 'lan') return;
+  // Tropas em campo voltam para casa no arquivo salvo
+  const army = { ...G.army };
+  const out = [...G.flights.map((x) => x.army), ...G.queue.map((b) => b.army), ...(G.battle && !G.battle.done ? [G.battle.army] : [])];
+  for (const a of out) for (const u in army) army[u as Unit] += a[u as Unit];
+  write(SAVE_KEY, { ...G, army, savedAt: Date.now(), flights: [], queue: [], battle: null });
 }
 export function clearSave() {
   try { localStorage.removeItem(SAVE_KEY); } catch { /* armazenamento indisponível */ }
@@ -112,6 +119,8 @@ export function loadSave(): Game | null {
   if (!g || g.version !== VERSION || !COUNTRIES[g.capital]) return null;
   g.buffs ??= [];
   g.scars ??= [];
+  g.flights = [];
+  g.queue = [];
   return g;
 }
 
@@ -138,8 +147,14 @@ export const net = {
   cyber: (_owner: string) => {},
   war: (_owner: string, _betrayal: boolean) => {},
   lost: () => {},
-  nuke: (_target: string) => {},
+  fx: (_kind: StrikeKind, _from: string, _to: string, _by: string) => {},
+  battle: () => {},
 };
+/** Mostra a ação no mapa daqui e, no Wi-Fi, no de todos */
+export function showFx(kind: StrikeKind, from: string, to: string, by = PLAYER, everyone = true) {
+  hooks.fx(kind, from, to, by);
+  if (everyone && net.active) net.fx(kind, from, to, by);
+}
 export function scar(id: string, nuke = false) {
   const g = game();
   g.scars = [{ id, nuke, at: g.time }, ...g.scars.filter((s) => s.id !== id || (s.nuke && !nuke))].slice(0, 30);
@@ -160,6 +175,8 @@ export const hooks = {
   onNews: (_text: string, _kind: News['kind']) => {},
   toast: (_text: string, _type: 'success' | 'danger' | 'info') => {},
   nuke: (_target: string) => {},
+  /** Animação no mapa: tipo, origem, alvo e autor */
+  fx: (_kind: StrikeKind, _from: string, _to: string, _by: string) => {},
   sound: (_name: 'buy' | 'recruit' | 'win' | 'lose' | 'alert' | 'launch' | 'impact' | 'tech' | 'spy') => {},
 };
 export const ok = (text: string) => {
@@ -218,7 +235,7 @@ export function newGame(countryId: string, mode = 'livre', lan?: { humans: strin
     prices: Object.fromEntries(RESOURCES.map((r) => [r, RES_INFO[r].price])) as Record<Res, number>,
     army: { inf: sc?.troops ?? 90, tank: 8, air: 6, navy: 5 }, morale: 1, vet: 0, era: 0, techs: {}, regime: 'republica', tax: 1, debt: 0,
     infamy: 0, bonusIncome: 0, wonders: {}, powers: { bombardeio: 0, escudo: 0, paraquedas: 0, satelite: 0, nuclear: 0 }, shield: false,
-    para: false, satellite: 0, sanction: 0, countries, rivals, coalition: false, space: 0, threat: null, strike: null, battle: null, news: [],
+    para: false, satellite: 0, sanction: 0, countries, rivals, coalition: false, space: 0, threat: null, flights: [], queue: [], battle: null, news: [],
     crisis: '', vote: null, timers: { market: 12, event: 60, vote: 200, joke: 25, special: 45, revolt: 30, raid: 80 },
     wave: 0, defeated: 0, achievements: [], victories: [], over: null,
     stats: { conquests: 0, battles: 0, defended: 0, recruited: 0, upgrades: 0, techs: 0, spies: 0, trades: 0, gifts: 0, earned: 0, powers: 0, sieges: 0 },

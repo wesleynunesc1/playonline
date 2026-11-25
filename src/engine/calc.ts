@@ -165,6 +165,24 @@ export function defensePower(id: string, m = mods()): number {
 /** Chance aproximada de vitória para uma relação de forças */
 export const winChance = (a: number, d: number) => (a <= 0 ? 0 : clamp(1 / (1 + (d / a) ** 5), 0.01, 0.99));
 
+/** Fronteiras em combate agora: batalhas, cercos e guerras entre rivais */
+export function myHotspots(): string[] {
+  const g = game();
+  const out = g.queue.map((b) => b.target);
+  if (g.battle && !g.battle.done && !g.battle.boss) out.push(g.battle.target);
+  for (const id in g.countries) if (g.countries[id].siege && g.countries[id].owner !== PLAYER) out.push(id);
+  return out;
+}
+export function warFronts(): string[] {
+  const g = game();
+  const out: string[] = [];
+  for (const r of Object.values(g.rivals)) {
+    if (!r.alive || !r.war) continue;
+    out.push(...owned(r.war).filter((id) => COUNTRIES[id].neighbors.some((n) => g.countries[n].owner === r.id)).slice(0, 2));
+  }
+  return out;
+}
+
 // ===== Alcance =====
 export const navalRange = (m = mods()) => 18 * (1 + m.navy);
 export type Reach = 'terra' | 'mar' | 'ar' | null;

@@ -21,6 +21,7 @@ export const BattleModal: React.FC = () => {
     if (b?.done === 'won') confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
   }, [b?.done]);
   if (!b) return null;
+  const g = game();
   const base = COUNTRIES[b.target];
   const name = b.boss ? BOSS.name : base.name;
   const general = GENERALS.find((x) => x.id === b.general);
@@ -43,7 +44,7 @@ export const BattleModal: React.FC = () => {
       {b.done ? (
         <>
           <ul className="text-sm text-center text-slate-200 space-y-1">{b.summary.map((s) => <li key={s}>{s}</li>)}</ul>
-          <Button size="lg" fullWidth onClick={closeBattle}>Continuar</Button>
+          <Button size="lg" fullWidth onClick={closeBattle}>{g.queue.length ? `Próxima batalha (${g.queue.length})` : 'Continuar'}</Button>
         </>
       ) : (
         <>

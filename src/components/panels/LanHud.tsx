@@ -3,10 +3,13 @@ import confetti from 'canvas-confetti';
 import { useApp } from '../../ui';
 import { COUNTRIES } from '../../data/countries';
 import { CARDS, CHALLENGES, EMOJIS, MEDALS, PHRASES } from '../../lan/content';
-import { L, Proposal, answer, colorOf, modeOf, playCard, playerOf, propose, quit, rematch, sendGift, setBounty, shout } from '../../lan/match';
-import { Rival, bump, game, setGame, useGame } from '../../engine/state';
+import { L, Live, Proposal, answer, colorOf, modeOf, playCard, playerOf, propose, quit, rematch, sendGift, setBounty, shout } from '../../lan/match';
+import { Army, Rival, Tactic, bump, game, setGame, useGame } from '../../engine/state';
 import { betray, declareWar } from '../../engine/realm';
 import { formatMoney } from '../../utils/formatters';
+import { UNITS } from '../../data/content';
+import { BattleScene } from './BattleScene';
+import { Bar } from '../common/Kit';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 
@@ -138,6 +141,36 @@ export const HumanActions: React.FC<{ r: Rival }> = ({ r }) => (
     <Button size="sm" variant="danger" onClick={() => (r.ally ? betray(r.id) : declareWar(r.id))}>{r.ally ? '🗡️ Trair' : '⚔️ Guerra'}</Button>
   </div>
 );
+
+/** Batalhas dos outros, ao vivo. Toque para ampliar */
+export const LiveBattles: React.FC = () => {
+  useGame();
+  const [big, setBig] = useState('');
+  const list = L.phase === 'play' ? Object.entries(L.live).slice(0, 2) : [];
+  if (!list.length) return null;
+  const scene = (b: Live) => ({ a: b.a, a0: 1, d: b.d, d0: 1, round: b.round, done: b.done as '', last: b.last as Tactic, army: Object.fromEntries(UNITS.map((u) => [u, b.kinds.includes(u) ? 1 : 0])) as Army });
+  const zoomed = L.live[big];
+  return (
+    <>
+      <div className="absolute right-14 bottom-2 z-20 flex flex-col gap-2 items-end">
+        {list.map(([id, b]) => (
+          <button key={id + b.target} onClick={() => setBig(id)} aria-label={`Ver batalha de ${nameOf(id)}`} className="live-pip" style={{ borderColor: colorOf(id) }}>
+            <BattleScene battle={scene(b)} terrain={COUNTRIES[b.target].terrain} mute />
+            <p className="truncate">{b.done ? (b.done === 'won' ? '🏆' : '💀') : '🔴'} {nameOf(id)} × {COUNTRIES[b.target].name}</p>
+          </button>
+        ))}
+      </div>
+      <Modal isOpen={!!zoomed} onClose={() => setBig('')} maxWidth="xl" title={zoomed && <>🔴 {nameOf(big)} × {COUNTRIES[zoomed.target].flag} {COUNTRIES[zoomed.target].name}</>}>
+        {zoomed && (
+          <>
+            <BattleScene key={zoomed.target} battle={scene(zoomed)} terrain={COUNTRIES[zoomed.target].terrain} />
+            <div className="grid grid-cols-2 gap-4"><Bar value={zoomed.a} color="bg-blue-500" /><Bar value={zoomed.d} color="bg-rose-500" /></div>
+          </>
+        )}
+      </Modal>
+    </>
+  );
+};
 
 /** Pódio final */
 export const LanEnd: React.FC = () => {

@@ -20,7 +20,7 @@ export const dialogOpen = () => {
 export const Dialogs: React.FC = () => {
   useGame();
   const g = game();
-  if (!g || g.mode === 'lan' || g.battle || g.strike) return null;
+  if (!g || g.mode === 'lan' || g.battle) return null;
   if (g.over) return <Over />;
   if (!g.storySeen) return <Story />;
   if (g.report.length) return <Report />;

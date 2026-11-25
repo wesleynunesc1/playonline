@@ -1,8 +1,8 @@
 import { BY_REGION, COUNTRIES, COUNTRY_IDS, REGIONS } from '../data/countries';
-import { RIVALS, RivalDef } from '../data/content';
-import { armyPower, budget, mods } from '../engine/calc';
+import { RIVALS, RivalDef, UNITS } from '../data/content';
+import { armyPower, budget, mods, myHotspots } from '../engine/calc';
 import { addXp } from '../engine/meta';
-import { G, M, PLAYER, bump, cheat, clamp, extraRivals, fail, game, hooks, isHuman, net, newGame, news, ok, owned, pick, rivalDef, save, scar, setGame } from '../engine/state';
+import { G, M, PLAYER, STRIKE_IMPACT, STRIKE_MS, StrikeKind, bump, cheat, clamp, extraRivals, fail, game, hooks, isHuman, net, newGame, news, ok, owned, pick, rivalDef, save, scar, setGame, showFx } from '../engine/state';
 import { autoPick, battleRound, cancelAttack, changeMorale, loseCountry } from '../engine/war';
 import { CARDS, CHALLENGES, CHALLENGE_PRIZE, COLORS, EMBLEMS, Effect, MAX_PLAYERS, MEDALS, MODES, ModeId, PHRASES, RULES, Tally, WORLD_EVENTS } from './content';
 import { Link, deviceId, hostRoom, joinRoom } from './net';
@@ -13,8 +13,10 @@ import { Link, deviceId, hostRoom, joinRoom } from './net';
  */
 export interface Player {
   id: string; name: string; emblem: string; country: string; ready: boolean; online: boolean;
-  n: number; power: number; money: number; score: number; tally: Partial<Record<Tally, number>>;
+  n: number; power: number; money: number; score: number; tally: Partial<Record<Tally, number>>; hot: string[];
 }
+/** Batalha de outro jogador, acompanhada ao vivo */
+export interface Live { target: string; a: number; d: number; round: number; last: string; done: string; kinds: string[]; at: number }
 export interface Feed { id: number; from: string; text: string; big?: boolean }
 export interface Proposal { from: string; kind: 'truce' | 'ally' | 'trade' }
 interface End { rank: string[]; medals: { player: string; id: string }[]; title: string }
@@ -33,7 +35,7 @@ export const L = {
   players: [] as Player[], mode: 'classica' as ModeId, rules: [] as string[],
   left: 0, hill: '', hand: [] as string[], nextCard: CARD_S, challenge: null as { id: string; base: number; left: number } | null,
   bounty: {} as Record<string, number>, feed: [] as Feed[], float: [] as Feed[], proposals: [] as Proposal[],
-  battleLeft: BATTLE_S, respawn: 0, end: null as End | null, unread: 0,
+  battleLeft: BATTLE_S, respawn: 0, end: null as End | null, unread: 0, live: {} as Record<string, Live>,
 };
 export const myself = () => L.players.find((p) => p.id === L.me);
 export const playerOf = (id: string) => L.players.find((p) => p.id === id);
@@ -81,7 +83,7 @@ const num = (v: unknown, a: number, b: number) => (typeof v === 'number' && Numb
 
 // ===== Sala =====
 function resetMatch() {
-  Object.assign(L, { feed: [], float: [], proposals: [], hand: [], nextCard: 12, challenge: null, bounty: {}, end: null, respawn: 0, unread: 0, error: '', connected: true });
+  Object.assign(L, { feed: [], float: [], proposals: [], hand: [], nextCard: 12, challenge: null, bounty: {}, live: {}, end: null, respawn: 0, unread: 0, error: '', connected: true });
   base = {};
   pending = {};
   acks = {};
@@ -110,7 +112,7 @@ function freeCountry(): string {
 }
 function addPlayer(name: string, emblem: string): Player {
   const id = ['h0', 'h1', 'h2', 'h3', 'h4', 'h5'].find((x) => !playerOf(x))!;
-  const p: Player = { id, name: name || `Jogador ${Number(id[1]) + 1}`, emblem: EMBLEMS.includes(emblem) ? emblem : pick(EMBLEMS), country: freeCountry(), ready: false, online: true, n: 1, power: 0, money: 0, score: 0, tally: {} };
+  const p: Player = { id, name: name || `Jogador ${Number(id[1]) + 1}`, emblem: EMBLEMS.includes(emblem) ? emblem : pick(EMBLEMS), country: freeCountry(), ready: false, online: true, n: 1, power: 0, money: 0, score: 0, tally: {}, hot: [] };
   L.players = [...L.players, p];
   return p;
 }
@@ -275,10 +277,12 @@ export function begin(ais: string[], hill: string, left: number) {
       toPlayer(owner, { t: 'war', betrayal });
     },
     lost: () => { lost++; },
-    nuke: (target: string) => {
-      if (L.host) broadcast({ t: 'nuke', target });
-      else wires.toHost({ t: 'nuke', target });
+    fx: (kind: StrikeKind, from: string, to: string, by: string) => {
+      const m = { t: 'fx', k: kind, f: from, to, by: by === PLAYER ? L.me : by };
+      if (L.host) broadcast(m);
+      else wires.toHost(m);
     },
+    battle: sendBattle,
   });
   newGame(me.country, 'lan', { humans: L.players.filter((p) => p !== me).map((p) => p.id), ais });
   const g = game();
@@ -332,6 +336,7 @@ export function playCard(index: number, target = '') {
     if (!playerOf(target) || target === L.me) return fail('Escolha um jogador.');
     if (locked(target)) return fail('É do seu time.');
     toPlayer(target, { t: 'card', id: card.id });
+    showFx('carta', game().capital, game().rivals[target].capital);
   } else if (card.target === 'all') for (const p of L.players) if (p.id !== L.me && !(card.fx && locked(p.id) && (card.fx.moneyPct ?? card.fx.guard ?? 0) < 0)) toPlayer(p.id, { t: 'card', id: card.id });
   if (card.target === 'self' && card.fx) applyEffect(card.fx);
   if (card.target !== 'foe' && card.id === 'eclipse') applyEffect(card.fx!);
@@ -444,9 +449,15 @@ export function hostReceive(device: string, m: Msg) {
     if (to === L.me) peerReceive(seat, inner);
     else if (playerOf(to)) wires.toSeat(to, { t: 'm', from: seat, m: inner });
   } else if (m.t === 'bounty' && playerOf(str(m.to, 2))) addBounty(str(m.to, 2), num(m.n, 0, 1e7));
-  else if (m.t === 'nuke' && COUNTRIES[str(m.target, 2)]) {
-    broadcast({ t: 'nuke', target: m.target }, seat);
-    seeNuke(str(m.target, 2));
+  else if (m.t === 'fx') {
+    if (!validFx(m)) return;
+    broadcast(m, seat);
+    seeFx(m);
+  } else if (m.t === 'bt') {
+    const b = cleanBattle(m);
+    if (!b) return;
+    broadcast({ t: 'bt', who: seat, ...b }, seat);
+    seeBattle(seat, b);
   } else if (m.t === 'done') challengeWon(seat, str(m.id, 4));
 }
 
@@ -474,7 +485,11 @@ export function guestReceive(m: Msg) {
   else if (m.t === 'event') worldEvent(str(m.id, 4), str(m.who, 2));
   else if (m.t === 'chal') newChallenge(str(m.id, 4));
   else if (m.t === 'won') challengeEnd(str(m.who, 2));
-  else if (m.t === 'nuke') seeNuke(str(m.target, 2));
+  else if (m.t === 'fx' && validFx(m)) seeFx(m);
+  else if (m.t === 'bt') {
+    const b = cleanBattle(m);
+    if (b) seeBattle(str(m.who, 2), b);
+  }
   else if (m.t === 'cash') {
     game().money += num(m.n, 0, 1e7);
     ok('Recompensa recebida!');
@@ -482,11 +497,33 @@ export function guestReceive(m: Msg) {
   bump();
 }
 
-/** Todos na sala assistem à detonação */
-function seeNuke(target: string) {
-  if (!COUNTRIES[target]) return;
-  scar(target, true);
-  setTimeout(() => hooks.nuke(target), 3200);
+// ===== Tudo que acontece aparece para todos =====
+const validFx = (m: Msg) => String(m.k) in STRIKE_MS && !!COUNTRIES[str(m.f, 2)] && !!COUNTRIES[str(m.to, 2)];
+function seeFx(m: Msg) {
+  const g = game();
+  const kind = m.k as StrikeKind;
+  const to = str(m.to, 2);
+  hooks.fx(kind, str(m.f, 2), to, local(str(m.by, 8)));
+  const impact = STRIKE_MS[kind] * STRIKE_IMPACT;
+  if (kind === 'bomba' || kind === 'nuclear') setTimeout(() => game() === g && scar(to, kind === 'nuclear'), impact);
+  if (kind === 'nuclear') setTimeout(() => game() === g && hooks.nuke(to), impact + 350);
+}
+function sendBattle() {
+  const b = G?.battle;
+  if (!b || b.boss) return;
+  const m = { t: 'bt', target: b.target, a: b.a / b.a0, d: b.d / b.d0, round: b.round, last: b.last ?? '', done: b.done, kinds: UNITS.filter((u) => b.army[u] > 0) };
+  if (L.host) broadcast({ ...m, who: L.me });
+  else wires.toHost(m);
+}
+function cleanBattle(m: Msg): Live | null {
+  if (!COUNTRIES[str(m.target, 2)]) return null;
+  const kinds = (Array.isArray(m.kinds) ? m.kinds : []).filter((u) => UNITS.includes(u));
+  return { target: str(m.target, 2), a: num(m.a, 0, 1), d: num(m.d, 0, 1), round: num(m.round, 0, 99), last: str(m.last, 10), done: str(m.done, 5), kinds, at: Date.now() };
+}
+function seeBattle(who: string, b: Live) {
+  if (!playerOf(who) || who === L.me) return;
+  L.live = { ...L.live, [who]: b };
+  bump();
 }
 
 function peerReceive(from: string, m: Msg) {
@@ -567,6 +604,7 @@ function applyOwner(id: string, owner: string, def: number, quiet = false) {
     news(`${COUNTRIES[id].name} foi perdido.`, 'war');
     hooks.sound('lose');
   }
+  if (!quiet && now) scar(id);
   Object.assign(c, { owner: now, def, siege: false, vassal: false, route: false });
 }
 
@@ -595,6 +633,7 @@ function hostUpdate(seat: string, m: Msg) {
   }
   acks[seat] = num(m.seq, 0, 1e9);
   p.power = num(m.power, 0, 1e8);
+  p.hot = (Array.isArray(m.hot) ? m.hot : []).filter((id) => COUNTRIES[id]).slice(0, 8);
   p.money = num(m.money, 0, 1e12);
   p.tally = Object.fromEntries(Object.entries((m.tally ?? {}) as object).slice(0, 40).map(([k, v]) => [k, num(v, 0, 1e12)]));
   if (g.rivals[seat]) g.rivals[seat].power = p.power;
@@ -643,7 +682,7 @@ export function sendUpdate() {
       b.d = d;
     }
   }
-  wires.toHost({ t: 'up', seq, claims, defs, hits, power: myPower(), money: Math.round(g.money), tally: tally() });
+  wires.toHost({ t: 'up', hot: myHotspots().slice(0, 8), seq, claims, defs, hits, power: myPower(), money: Math.round(g.money), tally: tally() });
 }
 function applyWorld(m: Msg) {
   const g = game();
@@ -669,11 +708,11 @@ function applyWorld(m: Msg) {
     if (c.owner !== PLAYER) c.def = d + (Math.round(c.def) - b.d || 0) * (o === b.o ? 1 : 0);
     base[id] = { o, d: o === L.me ? Math.round(c.def) : d };
   });
-  for (const [id, power, capital, alive] of (Array.isArray(m.rv) ? m.rv : []) as [string, number, string, boolean][]) {
+  for (const [id, power, capital, alive, war] of (Array.isArray(m.rv) ? m.rv : []) as [string, number, string, boolean, string][]) {
     const r = g.rivals[id];
     if (!r) continue;
     if (r.alive && !alive) hooks.sound('win');
-    Object.assign(r, { power: num(power, 0, 1e8), capital: COUNTRIES[capital] ? capital : r.capital, alive: !!alive });
+    Object.assign(r, { power: num(power, 0, 1e8), capital: COUNTRIES[capital] ? capital : r.capital, alive: !!alive, war: g.rivals[war] ? war : '', warTime: war ? 99 : 0 });
   }
   L.left = num(m.left, 0, 1e5);
   L.bounty = (m.bounty ?? {}) as Record<string, number>;
@@ -707,7 +746,7 @@ function pointsOf(p: Player): number {
 export function sendWorld() {
   const g = game();
   const me = myself()!;
-  Object.assign(me, { power: myPower(), money: Math.round(g.money), tally: tally() });
+  Object.assign(me, { hot: myHotspots().slice(0, 8), power: myPower(), money: Math.round(g.money), tally: tally() });
   for (const r of Object.values(g.rivals)) {
     if (isHuman(r.id)) continue;
     const lands = owned(r.id);
@@ -722,7 +761,7 @@ export function sendWorld() {
   refreshHumans();
   const o = COUNTRY_IDS.map((id) => canon(g.countries[id].owner)).join(',');
   const d = COUNTRY_IDS.map((id) => Math.max(1, Math.round(g.countries[id].def)));
-  const rv = Object.values(g.rivals).filter((r) => !isHuman(r.id)).map((r) => [r.id, Math.round(r.power), r.capital, r.alive]);
+  const rv = Object.values(g.rivals).filter((r) => !isHuman(r.id)).map((r) => [r.id, Math.round(r.power), r.capital, r.alive, r.war]);
   for (const p of L.players) if (p.id !== L.me) wires.toSeat(p.id, { t: 'w', o, d, rv, left: L.left, players: L.players, bounty: L.bounty, ack: acks[p.id] ?? 0 });
 }
 
@@ -732,6 +771,8 @@ export function lanTick(seconds: number) {
   if (!g || L.phase !== 'play') return;
   if (L.host) L.left = Math.max(0, L.left - seconds);
   peak = Math.max(peak, owned().length);
+  for (const id in L.live) if (Date.now() - L.live[id].at > (L.live[id].done ? 5000 : 9000)) delete L.live[id];
+  if (g.battle && !g.battle.done) sendBattle();
   if (cheat.cards) while (L.hand.length < HAND) L.hand = [...L.hand, pick(CARDS).id];
   if (!hasRule('semcartas')) {
     L.nextCard -= seconds * (hasRule('cartas') ? 2 : 1);
@@ -825,6 +866,7 @@ function worldEvent(id: string, who: string) {
   if (!e) return;
   say('', `${e.icon} ${e.name}: ${e.text}${who ? ` (${playerOf(who)?.name})` : ''}`);
   if (!who || who === L.me) applyEffect(e.fx);
+  if (id === 'w13' && who) hooks.fx('meteoro', 'GL', who === L.me ? game().capital : game().rivals[who]?.capital ?? 'GL', '');
   hooks.sound('alert');
 }
 function newChallenge(id: string) {
@@ -883,7 +925,7 @@ function finish(end: End, players: Player[]) {
 export function rematch() {
   if (!L.host) return;
   L.players = L.players.filter((p) => p.online);
-  for (const p of L.players) Object.assign(p, { ready: p.id === 'h0', n: 1, score: 0, tally: {} });
+  for (const p of L.players) Object.assign(p, { ready: p.id === 'h0', n: 1, score: 0, tally: {}, hot: [] });
   L.phase = 'lobby';
   L.end = null;
   setGame(null);
