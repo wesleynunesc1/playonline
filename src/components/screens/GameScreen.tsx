@@ -14,6 +14,7 @@ import { InteractiveMap } from '../map/InteractiveMap';
 import { CountryPanel } from '../panels/CountryPanel';
 import { BattleModal } from '../panels/BattleModal';
 import { NukeCinematic } from '../panels/NukeCinematic';
+import { HelpButton } from '../panels/HelpModal';
 import { Panels } from '../panels/Panels';
 import { Dialogs, dialogOpen } from '../panels/Dialogs';
 import { LanEnd, LanSide, LanTop } from '../panels/LanHud';
@@ -52,7 +53,7 @@ function useGameLoop() {
         // Aba suspensa: vira relatório de ausência
         if (!G.paused && !G.over) awayReport(G, Math.min(elapsed, 8 * 3600));
         bump();
-      } else tick(Math.min(elapsed, 5), dialogOpen() || useApp.getState().panel === 'menu');
+      } else tick(Math.min(elapsed, 5), dialogOpen() || useApp.getState().help || useApp.getState().panel === 'menu');
       updateMusic();
       sinceSave += elapsed;
       if (sinceSave > AUTOSAVE_S) {
@@ -98,7 +99,7 @@ export const GameScreen: React.FC = () => {
         <div className="absolute left-2 bottom-2 z-20 flex flex-col gap-2">
           {lan && <LanSide />}
           <PowerBar />
-          {!lan && <Speed />}
+          {!lan && <span className="flex gap-1.5"><Speed /><HelpButton className="glass-btn w-9 h-9 text-amber-300" /></span>}
         </div>
       </main>
       <nav className="game-nav relative z-30 shrink-0 grid grid-cols-8 bg-slate-950 border-t border-slate-800 pb-[env(safe-area-inset-bottom)]">

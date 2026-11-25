@@ -4,6 +4,7 @@ import { useApp } from '../../ui';
 import { COUNTRIES, REGIONS, abilityOf, getDifficulty } from '../../data/countries';
 import { RES_INFO, RIVALS, TERRAIN_INFO } from '../../data/content';
 import { newGame, scenarioOf } from '../../engine/state';
+import { HelpButton } from '../panels/HelpModal';
 import { Button } from '../common/Button';
 import { Card, Row } from '../common/Kit';
 
@@ -28,6 +29,7 @@ export const SelectCountryScreen: React.FC = () => {
       <header className="flex items-center gap-3 px-4 py-3 border-b border-slate-800 shrink-0">
         <button onClick={() => setScreen('home')} className="glass-btn h-10 px-3 gap-2 text-xs"><ArrowLeft size={16} /> Voltar</button>
         <h2 className="font-black">{sc ? `${sc.icon} ${sc.name}` : 'Escolha sua nação'}</h2>
+        <span className="ml-auto"><HelpButton /></span>
       </header>
       <div className="flex-1 min-h-0 flex flex-col md:flex-row gap-4 p-4 max-w-6xl mx-auto w-full">
         <aside className="md:w-80 md:order-2 shrink-0 space-y-3">

@@ -14,6 +14,7 @@ import { Button } from '../common/Button';
 import { Globe } from '../common/Globe';
 import { Modal } from '../common/Modal';
 import { Action, Bar } from '../common/Kit';
+import { HelpButton } from '../panels/HelpModal';
 import { AdminLogin } from '../panels/AdminPanel';
 
 const Item: React.FC<{ icon: React.ReactNode; title: string; text: string; i: number; hot?: boolean; onClick: () => void }> = ({ icon, title, text, i, hot, onClick }) => (
@@ -59,14 +60,15 @@ export const HomeScreen: React.FC = () => {
       <Globe />
       <div className="menu-shade" />
       <div className="relative z-10 min-h-full flex flex-col p-5 sm:p-10 safe-top">
-        <header className="flex items-center gap-3 text-xs">
-          <div className="glass-panel rounded-2xl px-3 py-2 w-44">
+        <header className="flex items-center gap-2 sm:gap-3 text-xs">
+          <div className="glass-panel rounded-2xl px-3 py-2 w-44 min-w-0">
             <p className="flex justify-between font-bold"><span className="truncate">{titleOf(level)}</span><span className="text-amber-300">{level}</span></p>
             <Bar value={(M.xp - xpFor(level)) / (xpFor(level + 1) - xpFor(level))} color="bg-amber-400" />
           </div>
-          <span className="glass-panel rounded-2xl px-3 py-2 hidden xs:inline">🔥 {M.streak}</span>
-          <span className="glass-panel rounded-2xl px-3 py-2 hidden xs:inline">🎁 {M.chests}</span>
-          <span className="ml-auto flex gap-2">
+          <span className="glass-panel rounded-2xl px-3 py-2 hidden sm:inline">🔥 {M.streak}</span>
+          <span className="glass-panel rounded-2xl px-3 py-2 hidden sm:inline">🎁 {M.chests}</span>
+          <span className="ml-auto flex gap-1.5 sm:gap-2 shrink-0">
+            <HelpButton className="glass-btn w-11 h-11 !border-amber-400 text-amber-300" />
             {isInstalled && <button onClick={checkNow} disabled={updating} className="glass-btn w-11 h-11" aria-label="Atualizar o jogo" title="Atualizar o jogo"><RefreshCw size={18} className={updating ? 'animate-spin' : ''} /></button>}
             <button onClick={toggleFullscreen} className="glass-btn w-11 h-11" aria-label="Tela cheia"><Maximize size={18} /></button>
             <button onClick={toggleSound} className="glass-btn w-11 h-11" aria-label={soundEnabled ? 'Desligar som' : 'Ligar som'}>{soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}</button>

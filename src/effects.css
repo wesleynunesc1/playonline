@@ -112,6 +112,10 @@
 .fallout { animation: fallout 2.2s ease-in-out infinite alternate; }
 @keyframes fallout { from { opacity: 0.25; } to { opacity: 0.9; } }
 
+/* ===== Ajuda ===== */
+.help-pulse { animation: help-pulse 1.4s ease-in-out infinite; }
+@keyframes help-pulse { 50% { box-shadow: 0 0 0 7px rgba(251, 191, 36, 0.28), 0 0 22px rgba(251, 191, 36, 0.7); transform: scale(1.08); } }
+
 /* ===== Menu inicial ===== */
 .menu-shade { position: fixed; inset: 0; pointer-events: none; background: linear-gradient(90deg, rgba(0, 4, 14, 0.82), rgba(0, 4, 14, 0.25) 45%, transparent 65%), linear-gradient(0deg, rgba(0, 4, 14, 0.8), transparent 40%); }
 @media (max-width: 639px) { .menu-shade { background: linear-gradient(0deg, rgba(0, 4, 14, 0.96) 30%, rgba(0, 4, 14, 0.5) 55%, transparent 75%); } }

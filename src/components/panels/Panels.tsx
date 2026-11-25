@@ -16,6 +16,7 @@ import {
 import { Loot, buyPerk, claimSeason, doPrestige, equip, finishGame, learnSkill, openChest, prestigeGain, ransom, ransomCost, seasonName, toggleStaff, weekKey } from '../../engine/meta';
 import { VICTORIES, victoryProgress } from '../../engine/tick';
 import { formatDuration, formatMoney, formatNumber } from '../../utils/formatters';
+import { HelpButton } from './HelpModal';
 import { HumanActions } from './LanHud';
 import { L, modeOf, quit } from '../../lan/match';
 import { checkNow, isInstalled } from '../../hooks/useUpdate';
@@ -354,6 +355,7 @@ const Menu: React.FC = () => {
     <>
       <p className="text-xs text-slate-400">{lan ? `Wi-Fi • ${modeOf().name} • sala ${L.code}` : scenarioOf(g.mode)?.name ?? 'Partida livre'}{!lan && ' • salvamento automático'}</p>
       <Button fullWidth onClick={() => setPanel(null)}>Continuar</Button>
+      <HelpButton label="Como jogar" className="glass-btn w-full h-11 text-sm font-semibold text-amber-300" />
       <Button fullWidth variant="secondary" onClick={toggleSound}>Som: {soundEnabled ? 'ligado' : 'desligado'}</Button>
       <Button fullWidth variant="secondary" onClick={() => toggle('music')}>Música: {M.music ? 'ligada' : 'desligada'}</Button>
       <Button fullWidth variant="secondary" onClick={() => toggle('voice')}>Locutor de notícias: {M.voice ? 'ligado' : 'desligado'}</Button>

@@ -13,6 +13,7 @@ interface App {
   selected: string;
   mode: string;
   admin: boolean;
+  help: boolean;
   soundEnabled: boolean;
   toast: { id: number; text: string; type: 'success' | 'danger' | 'info' } | null;
   setScreen: (s: Screen) => void;
@@ -29,6 +30,7 @@ export const useApp = create<App>((set, get) => ({
   selected: '',
   mode: 'livre',
   admin: false,
+  help: false,
   soundEnabled: sound.enabled,
   toast: null,
   setScreen: (screen) => {
