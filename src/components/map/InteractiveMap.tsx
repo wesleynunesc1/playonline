@@ -5,6 +5,7 @@ import { COUNTRIES, COUNTRY_IDS, NUMERIC_TO_COUNTRY } from '../../data/countries
 import { Game, PLAYER, ZOMBIES, game, rivalDef, useGame } from '../../engine/state';
 import { L } from '../../lan/match';
 import { reach } from '../../engine/calc';
+import { MapFx } from '../../fx/mapFx';
 import { useWorldGeo } from '../../services/worldGeo';
 import { ZoomIn, ZoomOut, LocateFixed, Loader2 } from 'lucide-react';
 
@@ -17,7 +18,6 @@ const MARKER_PX = 22;
 const DETAIL_PX_PER_UNIT = 4;
 
 type CountryId = string;
-type Strike = NonNullable<Game['strike']>;
 type Threat = NonNullable<Game['threat']>;
 interface View { k: number; x: number; y: number }
 interface Shape { key: string; d: string; countryId?: CountryId }
@@ -64,33 +64,6 @@ function arcPath([x1, y1]: Point, [x2, y2]: Point): string {
   const cy = (y1 + y2) / 2 - dist * 0.35;
   return `M${x1},${y1} Q${cx},${cy} ${x2},${y2}`;
 }
-
-const SPARK_ANGLES = Array.from({ length: 14 }, (_, i) => Math.round((i * 360) / 14));
-
-const StrikeLayer = ({ strike, anchors, scale }: { strike: Strike; anchors: Record<CountryId, Point>; scale: number }) => {
-  const from = anchors[strike.from];
-  const to = anchors[strike.to];
-  const d = arcPath(from, to);
-  const color = strike.hostile ? '#f43f5e' : '#fbbf24';
-  return (
-    <g key={strike.key} pointerEvents="none">
-      <path d={d} pathLength={1} className="strike-path" stroke={color} vectorEffect="non-scaling-stroke" />
-      <circle r={4 * scale} fill="#fff" style={{ filter: `drop-shadow(0 0 4px ${color})` }}>
-        <animateMotion dur="0.9s" path={d} fill="freeze" />
-      </circle>
-      <g transform={`translate(${to[0]},${to[1]}) scale(${scale})`}>
-        <circle r={46} className="strike-ring" stroke={color} />
-        {SPARK_ANGLES.map((a, i) => (
-          <g key={a} transform={`rotate(${a})`}>
-            <rect x={0} y={-1.5} width={8 + (i % 3) * 4} height={3} rx={1.5} className="strike-spark" fill={i % 2 ? '#fef08a' : color} />
-          </g>
-        ))}
-        <circle r={26} className="strike-blast" fill={color} />
-        <circle r={14} className="strike-blast strike-blast-core" fill="#fff" />
-      </g>
-    </g>
-  );
-};
 
 /** Comboios entre a capital e os territórios conquistados */
 const SupplyLayer = memo(function SupplyLayer({ capital, owned, anchors, scale }: {
@@ -157,8 +130,6 @@ export const InteractiveMap: React.FC = () => {
       countryId: NUMERIC_TO_COUNTRY[String(f.id)],
     }));
   }, [geo, projection]);
-  // Um único contorno de todos os continentes: relevo e brilho costeiro baratos
-  const coast = useMemo(() => shapes.map((s) => s.d).join(''), [shapes]);
   const ownedKey = COUNTRY_IDS.filter((id) => g.countries[id].owner === PLAYER && id !== playerCountryId).slice(0, 24).join(',');
   const graticule = useMemo(() => (projection ? geoPath(projection)(geoGraticule10()) ?? '' : ''), [projection]);
   const anchors = useMemo(() => {
@@ -169,11 +140,13 @@ export const InteractiveMap: React.FC = () => {
   }, [projection]);
 
   // ---------- Medidas da tela ----------
+  const [box, setBox] = useState({ cw: W, ch: H });
   const measure = useCallback(() => {
     const svg = svgRef.current;
     if (!svg) return { cw: W, ch: H };
     const cw = svg.clientWidth || W;
     const ch = svg.clientHeight || H;
+    setBox((b) => (b.cw === cw && b.ch === ch ? b : { cw, ch }));
     setUnitPx(Math.min(cw / W, ch / H));
     return { cw, ch };
   }, []);
@@ -307,15 +280,59 @@ export const InteractiveMap: React.FC = () => {
     else gesture.current = null;
   };
 
+  // ---------- Efeitos de combate ----------
+  const fxCanvas = useRef<HTMLCanvasElement>(null);
+  const shaker = useRef<HTMLDivElement>(null);
+  const fx = useRef<MapFx | null>(null);
+  useEffect(() => {
+    const engine = new MapFx(fxCanvas.current!);
+    engine.onShake = (power) => {
+      const el = shaker.current;
+      if (!el || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      const px = 14 * power;
+      el.animate(Array.from({ length: 12 }, (_, i) => ({ transform: `translate(${(Math.random() - 0.5) * px * (1 - i / 12)}px, ${(Math.random() - 0.5) * px * (1 - i / 12)}px)` })), { duration: 350 + 900 * power });
+    };
+    fx.current = engine;
+    return () => engine.destroy();
+  }, []);
+  const offX = (box.cw - W * unitPx) / 2;
+  const offY = (box.ch - H * unitPx) / 2;
+  if (fx.current) {
+    fx.current.place = (x, y) => [offX + (view.x + x * view.k) * unitPx, offY + (view.y + y * view.k) * unitPx];
+    fx.current.zoom = unitPx * view.k;
+  }
+  useEffect(() => {
+    if (strike && anchors) fx.current?.attack(strike.kind, anchors[strike.from], anchors[strike.to]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strike?.key]);
+  // Países que mudaram de mão longe do jogador também mostram combate
+  const owners = useRef<Record<string, string>>({});
+  useEffect(() => {
+    if (!anchors) return;
+    for (const id of COUNTRY_IDS) {
+      const now = g.countries[id].owner;
+      const before = owners.current[id];
+      if (before !== undefined && before !== now && strike?.to !== id && now !== PLAYER) fx.current?.skirmish(anchors[id]);
+      owners.current[id] = now;
+    }
+  }, [anchors, g, tickVersion, strike]);
+
+  const daylight = 0.5 + 0.5 * Math.cos((g.time / 240) * Math.PI * 2);
   const center = (): Point => [W / 2, H / 2];
   const pxPerUnit = unitPx * view.k;
   const markerScale = 1 / pxPerUnit;
   const showDetails = pxPerUnit >= DETAIL_PX_PER_UNIT;
 
   return (
-    <div
-      className={`map-ocean relative w-full h-full overflow-hidden select-none ${strike ? 'map-shake' : ''} ${threat ? 'map-alert' : ''}`}
-    >
+    <div ref={shaker} className={`map-ocean relative w-full h-full overflow-hidden select-none ${threat ? 'map-alert' : ''}`}>
+      {/* Satélite (NASA) já na projeção do mapa; a noite acende as cidades */}
+      <div
+        className="satellite"
+        style={{ width: W * unitPx, height: H * unitPx, transform: `translate(${offX + view.x * unitPx}px, ${offY + view.y * unitPx}px) scale(${view.k})` }}
+      >
+        <img src="/img/map-day.webp" alt="" draggable={false} />
+        <img src="/img/map-night.webp" alt="" draggable={false} className="night" style={{ opacity: (1 - daylight) * 0.82 }} />
+      </div>
       <div className="ocean-light" />
       <svg
         ref={svgRef}
@@ -328,26 +345,20 @@ export const InteractiveMap: React.FC = () => {
         onPointerCancel={onPointerUp}
       >
         <defs>
-          <linearGradient id="gradRival" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#7c8ba1" />
-            <stop offset="100%" stopColor="#3f4c5f" />
-          </linearGradient>
-          <linearGradient id="gradOwned" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#3b82f6" />
-            <stop offset="100%" stopColor="#1e40af" />
-          </linearGradient>
-          <linearGradient id="gradCapital" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#60a5fa" />
-            <stop offset="100%" stopColor="#2563eb" />
-          </linearGradient>
+          <radialGradient id="burn"><stop offset="0%" stopColor="#0a0705" stopOpacity=".92" /><stop offset="45%" stopColor="#1c120b" stopOpacity=".7" /><stop offset="100%" stopColor="#2a1a0e" stopOpacity="0" /></radialGradient>
+          <radialGradient id="fallout"><stop offset="0%" stopColor="#a3e635" stopOpacity=".5" /><stop offset="100%" stopColor="#4d7c0f" stopOpacity="0" /></radialGradient>
         </defs>
 
         <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
           <path d={graticule} className="graticule" vectorEffect="non-scaling-stroke" />
-          <path d={coast} className="coast coast-far" vectorEffect="non-scaling-stroke" />
-          <path d={coast} className="coast coast-near" vectorEffect="non-scaling-stroke" />
-          <path d={coast} className="land-depth" transform={`translate(0,${2.6 / Math.sqrt(view.k)})`} />
           <CountryShapes shapes={shapes} visuals={visuals} />
+
+          {anchors && g.scars.map((s) => (
+            <g key={s.id + s.at} transform={`translate(${anchors[s.id].join(',')}) scale(${1 / Math.sqrt(view.k)})`} pointerEvents="none">
+              <circle r={s.nuke ? 26 : 14} fill="url(#burn)" opacity={Math.max(0.25, 1 - (g.time - s.at) / 600)} />
+              {s.nuke && <circle r={32} fill="url(#fallout)" className="fallout" />}
+            </g>
+          ))}
 
           {/* Marcadores com tamanho constante na tela */}
           {anchors &&
@@ -399,13 +410,13 @@ export const InteractiveMap: React.FC = () => {
 
           {anchors && threat && <ThreatLayer threat={threat} from={g.rivals[threat.by]?.capital} anchors={anchors} />}
 
-          {anchors && strike && <StrikeLayer strike={strike} anchors={anchors} scale={markerScale} />}
         </g>
       </svg>
 
+      <canvas ref={fxCanvas} className="absolute inset-0 w-full h-full pointer-events-none" />
       <div className="cloud-layer" />
       <div className="map-vignette" />
-      {strike && <div key={strike.key} className={`impact-flash ${strike.hostile ? 'impact-hostile' : ''}`} />}
+      {strike?.kind === 'nuclear' && <div key={strike.key} className="nuke-flash" />}
 
       {!geo && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-400 text-xs font-mono">

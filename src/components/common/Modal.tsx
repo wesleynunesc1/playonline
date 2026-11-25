@@ -12,7 +12,7 @@ interface ModalProps {
   showCloseButton?: boolean;
 }
 
-const WIDTH = { sm: 'sm:max-w-sm', md: 'sm:max-w-md', lg: 'sm:max-w-lg', xl: 'sm:max-w-xl' };
+const WIDTH = { sm: 'sm:max-w-sm', md: 'sm:max-w-md', lg: 'sm:max-w-lg', xl: 'sm:max-w-3xl' };
 const CLOSE_DRAG_PX = 110;
 
 /** Janela central no computador; folha que sobe de baixo (e fecha arrastando) no celular */

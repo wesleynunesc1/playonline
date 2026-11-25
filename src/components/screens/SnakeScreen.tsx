@@ -119,15 +119,15 @@ export const SnakeScreen: React.FC = () => {
       last = now;
       if (statusRef.current === 'playing') {
         acc += dt;
-        while (statusRef.current === 'playing' && acc >= stepMs(game.current)) {
-          acc -= stepMs(game.current);
+        while (statusRef.current === 'playing' && acc >= stepMs(game.current, cheat.snakeSlow)) {
+          acc -= stepMs(game.current, cheat.snakeSlow);
           advance();
         }
       }
       const s = statusRef.current;
       const active = s === 'playing' || s === 'paused';
       if (!active) acc = 0;
-      const t = active ? Math.min(1, acc / stepMs(game.current)) : 1;
+      const t = active ? Math.min(1, acc / stepMs(game.current, cheat.snakeSlow)) : 1;
       if (canvasRef.current) renderer.current.draw(canvasRef.current, game.current, t, now, dt / 1000, s === 'over');
       raf = requestAnimationFrame(frame);
     };

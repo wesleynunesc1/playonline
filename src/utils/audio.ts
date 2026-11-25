@@ -68,6 +68,49 @@ class SoundSystem {
     return freqs.map((freq, i) => ({ freq, at: i * step, dur, gain, type }));
   }
 
+  /** Ruído filtrado: base de explosões, motores e tiros */
+  private noise(at: number, dur: number, from: number, to: number, gain: number, attack = 0.005, type: BiquadFilterType = 'lowpass') {
+    const ctx = this.enabled ? this.getCtx() : null;
+    if (!ctx) return;
+    this.noiseBuf ??= (() => {
+      const b = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+      const d = b.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      return b;
+    })();
+    const t = ctx.currentTime + at;
+    const src = ctx.createBufferSource();
+    const filter = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    filter.type = type;
+    filter.frequency.setValueAtTime(from, t);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(20, to), t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(gain, t + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(filter).connect(g).connect(ctx.destination);
+    src.start(t, Math.random());
+    src.stop(t + dur + 0.05);
+  }
+  private noiseBuf: AudioBuffer | null = null;
+
+  playJet() { this.noise(0, 2.2, 500, 2600, 0.16, 1.5, 'bandpass'); }
+  playGuns(volume = 1) {
+    for (let i = 0; i < 9; i++) this.noise(i * 0.085 + Math.random() * 0.04, 0.09, 2600, 500, 0.1 * volume);
+    this.noise(0.35, 0.6, 700, 60, 0.22 * volume);
+  }
+  playSiren() {
+    this.play([0, 1.2, 2.4].map((at) => ({ freq: 330, slideTo: 720, at, dur: 1.15, gain: 0.09, type: 'sawtooth' as Wave })), [200, 100, 200, 100, 200]);
+  }
+  /** Detonação: estalo, trovão e ronco longo */
+  playNuke() {
+    this.noise(0, 0.5, 6000, 300, 0.5);
+    this.noise(0.15, 7, 420, 28, 0.75, 0.25);
+    this.noise(1.4, 5, 160, 24, 0.6, 0.8);
+    this.play([{ freq: 70, slideTo: 18, at: 0, dur: 4, gain: 0.5, type: 'sine' }], [400, 60, 600, 60, 900]);
+  }
   playClick() { this.play([{ freq: 600, slideTo: 800, at: 0, dur: 0.05, gain: 0.06, type: 'sine' }], 8); }
   playBuy() { this.play(this.arpeggio([523.25, 659.25, 783.99, 1046.5], 0.04, 0.08, 0.1, 'triangle'), 15); }
   playRecruit() { this.play([{ freq: 140, slideTo: 90, at: 0, dur: 0.15, gain: 0.14, type: 'square' }], 25); }
@@ -86,6 +129,7 @@ class SoundSystem {
   playLaunch() { this.play([{ freq: 900, slideTo: 120, at: 0, dur: 0.9, gain: 0.07, type: 'sawtooth' }], 20); }
   /** Impacto: explosão grave */
   playImpact() {
+    this.noise(0, 1.4, 1800, 40, 0.4);
     this.play(
       [
         { freq: 90, slideTo: 30, at: 0, dur: 0.5, gain: 0.3, type: 'sine' },

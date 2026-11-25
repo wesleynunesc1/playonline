@@ -2,7 +2,7 @@ import { BY_REGION, COUNTRIES, COUNTRY_IDS, REGIONS } from '../data/countries';
 import { RIVALS, RivalDef } from '../data/content';
 import { armyPower, budget, mods } from '../engine/calc';
 import { addXp } from '../engine/meta';
-import { G, M, PLAYER, bump, cheat, clamp, extraRivals, fail, game, hooks, isHuman, net, newGame, news, ok, owned, pick, rivalDef, save, setGame } from '../engine/state';
+import { G, M, PLAYER, bump, cheat, clamp, extraRivals, fail, game, hooks, isHuman, net, newGame, news, ok, owned, pick, rivalDef, save, scar, setGame } from '../engine/state';
 import { autoPick, battleRound, cancelAttack, changeMorale, loseCountry } from '../engine/war';
 import { CARDS, CHALLENGES, CHALLENGE_PRIZE, COLORS, EMBLEMS, Effect, MAX_PLAYERS, MEDALS, MODES, ModeId, PHRASES, RULES, Tally, WORLD_EVENTS } from './content';
 import { Link, deviceId, hostRoom, joinRoom } from './net';
@@ -275,6 +275,10 @@ export function begin(ais: string[], hill: string, left: number) {
       toPlayer(owner, { t: 'war', betrayal });
     },
     lost: () => { lost++; },
+    nuke: (target: string) => {
+      if (L.host) broadcast({ t: 'nuke', target });
+      else wires.toHost({ t: 'nuke', target });
+    },
   });
   newGame(me.country, 'lan', { humans: L.players.filter((p) => p !== me).map((p) => p.id), ais });
   const g = game();
@@ -440,7 +444,10 @@ export function hostReceive(device: string, m: Msg) {
     if (to === L.me) peerReceive(seat, inner);
     else if (playerOf(to)) wires.toSeat(to, { t: 'm', from: seat, m: inner });
   } else if (m.t === 'bounty' && playerOf(str(m.to, 2))) addBounty(str(m.to, 2), num(m.n, 0, 1e7));
-  else if (m.t === 'done') challengeWon(seat, str(m.id, 4));
+  else if (m.t === 'nuke' && COUNTRIES[str(m.target, 2)]) {
+    broadcast({ t: 'nuke', target: m.target }, seat);
+    seeNuke(str(m.target, 2));
+  } else if (m.t === 'done') challengeWon(seat, str(m.id, 4));
 }
 
 export function guestReceive(m: Msg) {
@@ -467,11 +474,19 @@ export function guestReceive(m: Msg) {
   else if (m.t === 'event') worldEvent(str(m.id, 4), str(m.who, 2));
   else if (m.t === 'chal') newChallenge(str(m.id, 4));
   else if (m.t === 'won') challengeEnd(str(m.who, 2));
+  else if (m.t === 'nuke') seeNuke(str(m.target, 2));
   else if (m.t === 'cash') {
     game().money += num(m.n, 0, 1e7);
     ok('Recompensa recebida!');
   } else if (m.t === 'end') finish(m.end as End, m.players as Player[]);
   bump();
+}
+
+/** Todos na sala assistem à detonação */
+function seeNuke(target: string) {
+  if (!COUNTRIES[target]) return;
+  scar(target, true);
+  setTimeout(() => hooks.nuke(target), 3200);
 }
 
 function peerReceive(from: string, m: Msg) {

@@ -9,6 +9,10 @@ import { Building, CAMPAIGN, ModKey, Power, RIVALS, RESOURCES, RivalDef, RES_INF
 export const PLAYER = 'P';
 export const ZOMBIES = 'Z';
 export type Army = Record<Unit, number>;
+export type StrikeKind = 'terra' | 'mar' | 'ar' | 'bomba' | 'nuclear' | 'inimigo';
+/** Duração de cada animação de ataque e o momento do impacto dentro dela */
+export const STRIKE_MS: Record<StrikeKind, number> = { terra: 2500, mar: 2700, ar: 2400, bomba: 2600, nuclear: 3800, inimigo: 2500 };
+export const STRIKE_IMPACT = 0.82;
 export type Tactic = 'avancar' | 'flanquear' | 'atrair';
 
 export interface CountryState {
@@ -31,7 +35,7 @@ export interface Rival {
 }
 export interface Battle {
   target: string; army: Army; general: string; a0: number; d0: number; a: number; d: number; round: number;
-  stance: Tactic; hint: Tactic; log: string[]; done: '' | 'won' | 'lost' | 'fled'; boss: boolean; summary: string[];
+  stance: Tactic; hint: Tactic; last?: Tactic; log: string[]; done: '' | 'won' | 'lost' | 'fled'; boss: boolean; summary: string[];
 }
 export interface News { id: number; text: string; kind: 'war' | 'market' | 'diplo' | 'fun' }
 export interface Game {
@@ -41,11 +45,13 @@ export interface Game {
   wonders: Record<string, string>; powers: Record<Power, number>; shield: boolean; para: boolean; satellite: number; sanction: number;
   countries: Record<string, CountryState>; rivals: Record<string, Rival>; coalition: boolean; space: number;
   threat: { by: string; target: string; left: number; power: number } | null;
-  strike: { from: string; to: string; hostile: boolean; key: number } | null;
+  strike: { from: string; to: string; kind: StrikeKind; key: number } | null;
   battle: Battle | null; news: News[]; crisis: string; vote: { rival: string; text: string; kind: 'sancao' | 'paz' | 'contra' } | null;
   timers: Record<'market' | 'event' | 'vote' | 'joke' | 'special' | 'revolt' | 'raid', number>;
   wave: number; defeated: number; achievements: string[]; victories: string[]; over: { won: boolean; title: string; text: string } | null;
   stats: Record<Stat, number>; report: string[]; storySeen: boolean; seq: number; buffs: { k: ModKey; v: number; left: number }[];
+  /** Marcas de guerra no mapa */
+  scars: { id: string; nuke: boolean; at: number }[];
 }
 export interface GeneralState { lvl: number; xp: number; pts: number; skills: Record<Skill, number>; item: string; captor: string }
 export interface Mission { stat: Stat; text: string; n: number; have: number; done: boolean }
@@ -105,6 +111,7 @@ export function loadSave(): Game | null {
   const g = read<Game>(SAVE_KEY);
   if (!g || g.version !== VERSION || !COUNTRIES[g.capital]) return null;
   g.buffs ??= [];
+  g.scars ??= [];
   return g;
 }
 
@@ -121,7 +128,7 @@ export const rivalDef = (id: string) => RIVALS.find((r) => r.id === id) ?? extra
 /** Chaves do administrador (menu protegido por senha) */
 export const cheat = {
   god: false, win: false, rich: false, army: false, reach: false, free: false, power: false, calm: false, freeze: false, see: false,
-  snake: false, cards: false, speed: 1,
+  snake: false, snakeSlow: false, cards: false, speed: 1,
 };
 /** Ligação com a partida no Wi-Fi (preenchida por lan/match) */
 export const net = {
@@ -131,7 +138,12 @@ export const net = {
   cyber: (_owner: string) => {},
   war: (_owner: string, _betrayal: boolean) => {},
   lost: () => {},
+  nuke: (_target: string) => {},
 };
+export function scar(id: string, nuke = false) {
+  const g = game();
+  g.scars = [{ id, nuke, at: g.time }, ...g.scars.filter((s) => s.id !== id || (s.nuke && !nuke))].slice(0, 30);
+}
 export const scenarioOf = (mode: string) => [...SCENARIOS, ...CAMPAIGN].find((s) => s.id === mode) ?? null;
 export function ownerName(owner: string) {
   if (owner === PLAYER) return 'Você';
@@ -147,6 +159,7 @@ export function news(text: string, kind: News['kind'] = 'diplo') {
 export const hooks = {
   onNews: (_text: string, _kind: News['kind']) => {},
   toast: (_text: string, _type: 'success' | 'danger' | 'info') => {},
+  nuke: (_target: string) => {},
   sound: (_name: 'buy' | 'recruit' | 'win' | 'lose' | 'alert' | 'launch' | 'impact' | 'tech' | 'spy') => {},
 };
 export const ok = (text: string) => {
@@ -209,7 +222,7 @@ export function newGame(countryId: string, mode = 'livre', lan?: { humans: strin
     crisis: '', vote: null, timers: { market: 12, event: 60, vote: 200, joke: 25, special: 45, revolt: 30, raid: 80 },
     wave: 0, defeated: 0, achievements: [], victories: [], over: null,
     stats: { conquests: 0, battles: 0, defended: 0, recruited: 0, upgrades: 0, techs: 0, spies: 0, trades: 0, gifts: 0, earned: 0, powers: 0, sieges: 0 },
-    report: [], storySeen: !sc?.story, seq: 0, buffs: [],
+    report: [], storySeen: !sc?.story, seq: 0, buffs: [], scars: [],
   };
   news(`${COUNTRIES[countryId].name} entra na disputa pelo mundo!`);
   save();

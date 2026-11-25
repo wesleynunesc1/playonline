@@ -2,7 +2,7 @@ import { COUNTRIES, distance } from '../data/countries';
 import { GENERALS, POWERS, Power, UNITS, UNIT_INFO, Unit } from '../data/content';
 import { SHIP_CAPACITY, armyPower, attackPower, defensePower, generalStats, landTroops, mods, reach, recruitCost, revealed, winChance } from './calc';
 import { addGeneralXp, addXp, freeGenerals, track, weekKey } from './meta';
-import { Army, Battle, M, PLAYER, Tactic, ZOMBIES, bump, cheat, clamp, emptyArmy, fail, game, hooks, isHuman, isMine, net, news, ok, owned, ownerName, pick, rand, rivalDef, save } from './state';
+import { Army, Battle, M, PLAYER, STRIKE_IMPACT, STRIKE_MS, StrikeKind, Tactic, ZOMBIES, bump, cheat, clamp, emptyArmy, fail, game, hooks, isHuman, isMine, net, news, ok, owned, ownerName, pick, rand, rivalDef, save, scar } from './state';
 
 /** Batalhas, poderes, cercos e defesa. */
 
@@ -117,21 +117,23 @@ export function startAttack(target: string, army: Army, general: string) {
   if (g.rivals[owner]) provoke(owner, 25, `Você atacou ${COUNTRIES[target].name}.`);
   const battle = createBattle(target, { ...army }, general, attackPower(army, target, general), defensePower(target));
   const from = owned().reduce((best, id) => (distance(id, target) < distance(best, target) ? id : best), g.capital);
-  g.strike = { from, to: target, hostile: false, key: ++g.seq };
-  hooks.sound('launch');
+  launch(from, target, way);
   if (isHuman(owner)) net.incoming(owner, target);
   bump();
   setTimeout(() => {
     if (game() !== g || !g.strike) return;
     g.strike = null;
     g.battle = battle;
-    hooks.sound('impact');
     bump();
-  }, timing.strike);
+  }, STRIKE_MS[way] * timing.strike);
   return true;
 }
-/** Duração do lançamento; os testes zeram */
-export const timing = { strike: 1100 };
+/** Multiplicador da duração dos lançamentos; os testes zeram */
+export const timing = { strike: 1 };
+function launch(from: string, to: string, kind: StrikeKind) {
+  const g = game();
+  g.strike = { from, to, kind, key: ++g.seq };
+}
 
 export function battleRound(tactic: Tactic) {
   const g = game();
@@ -144,8 +146,8 @@ export function battleRound(tactic: Tactic) {
   const taken = (b.d0 * 0.3 * rand(0.85, 1.15)) / mine;
   b.d = cheat.win ? 0 : Math.max(0, b.d - dealt);
   if (!cheat.win) b.a = Math.max(0, b.a - taken);
+  b.last = tactic;
   b.log = [`${good ? '✅' : bad ? '❌' : '➖'} ${TACTICS[tactic].name} contra ${TACTICS[b.stance].name.toLowerCase()}`, ...b.log].slice(0, 5);
-  hooks.sound('impact');
   b.round++;
   if (b.d <= 0 && (b.a > 0 || dealt >= taken)) endBattle('won');
   else if (b.a <= 0) endBattle('lost');
@@ -226,6 +228,7 @@ export function conquer(id: string, peaceful = false) {
   const c = g.countries[id];
   const before = c.owner;
   Object.assign(c, { owner: PLAYER, def: Math.max(10, Math.round(COUNTRIES[id].defense * 0.2)), happy: peaceful ? 75 : 50, sab: 0, cyber: 0, siege: false, vassal: false, spy: false, route: false });
+  if (!peaceful) scar(id);
   freeGenerals(id);
   track('conquests');
   addXp(15);
@@ -288,12 +291,10 @@ export function resolveThreat() {
   const who = t.by === 'alien' ? 'Frota alienígena' : t.by === 'onda' ? `Onda ${g.wave}` : ownerName(t.by);
   const name = COUNTRIES[t.target].name;
   const from = g.rivals[t.by]?.capital ?? owned('')[0] ?? t.target;
-  g.strike = { from, to: t.target, hostile: true, key: ++g.seq };
-  hooks.sound('launch');
+  launch(from, t.target, 'inimigo');
   setTimeout(() => {
     if (game() !== g) return;
     g.strike = null;
-    hooks.sound('impact');
     if (g.shield) {
       g.shield = false;
       news(`Escudo antimíssil anulou o ataque a ${name}!`, 'war');
@@ -323,12 +324,13 @@ export function resolveThreat() {
     }
     save();
     bump();
-  }, timing.strike);
+  }, STRIKE_MS.inimigo * timing.strike);
 }
 
 /** O jogador perde um país; a sede muda se a capital cair. Azarão: último país ganha resistência heroica */
 export function loseCountry(id: string, to: string) {
   const g = game();
+  scar(id);
   Object.assign(g.countries[id], { owner: to, def: Math.round(COUNTRIES[id].defense * 0.6), happy: 60, siege: false });
   changeMorale(-0.05);
   const rest = owned();
@@ -375,17 +377,42 @@ export function usePower(p: Power, target = '') {
     news(`Arma nuclear devasta ${COUNTRIES[target].name}. O mundo se volta contra você.`, 'war');
   }
   if (POWERS[p].needsTarget) {
-    g.strike = { from: g.capital, to: target, hostile: p === 'nuclear', key: ++g.seq };
+    const nuke = p === 'nuclear';
+    const kind = nuke ? 'nuclear' : 'bomba';
+    launch(g.capital, target, kind);
+    if (nuke) net.nuke(target);
+    if (nuke) setTimeout(() => game() === g && hooks.nuke(target), STRIKE_MS.nuclear * STRIKE_IMPACT * timing.strike + 350 * timing.strike);
     setTimeout(() => {
       if (game() !== g) return;
       g.strike = null;
-      hooks.sound('impact');
+      scar(target, nuke);
       bump();
-    }, timing.strike);
-    hooks.sound('launch');
+    }, STRIKE_MS[kind] * timing.strike);
   } else hooks.sound('tech');
   g.powers[p] = POWERS[p].cooldown * (1 - Math.min(0.5, mods().power));
   track('powers');
+  bump();
+  return true;
+}
+
+/** Ataque forçado pelo mod menu, sem custo nem recarga */
+export function forceStrike(kind: 'bomba' | 'nuclear', target: string) {
+  const g = game();
+  if (g.strike || g.battle) return fail('Há um ataque em andamento.');
+  const c = g.countries[target];
+  const nuke = kind === 'nuclear';
+  launch(g.capital === target ? owned().find((x) => x !== target) ?? 'GL' : g.capital, target, kind);
+  if (nuke) {
+    net.nuke(target);
+    setTimeout(() => game() === g && hooks.nuke(target), STRIKE_MS.nuclear * STRIKE_IMPACT * timing.strike + 350 * timing.strike);
+  }
+  setTimeout(() => {
+    if (game() !== g) return;
+    g.strike = null;
+    c.def = Math.max(3, c.def * (nuke ? 0.1 : 0.6));
+    scar(target, nuke);
+    bump();
+  }, STRIKE_MS[kind] * timing.strike);
   bump();
   return true;
 }

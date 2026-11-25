@@ -1,7 +1,8 @@
 import { BRANCHES, CAMPAIGN, ERAS, GENERALS, ITEMS, PERKS, RESOURCES, UNITS, WONDERS } from '../data/content';
 import { BY_REGION, COUNTRY_IDS } from '../data/countries';
-import { G, M, PLAYER, bump, cheat, game, isMine, owned, save } from './state';
-import { conquer, lostCountry } from './war';
+import { G, M, PLAYER, ZOMBIES, bump, cheat, fail, game, isHuman, isMine, owned, pick, save } from './state';
+import { autoBattle, conquer, lostCountry } from './war';
+import { tick } from './tick';
 import { grantGeneral, track } from './meta';
 
 /** Funções do menu de administrador. */
@@ -22,6 +23,7 @@ export const FLAGS: { id: Exclude<keyof typeof cheat, 'speed'>; name: string; ic
   { id: 'freeze', name: 'Congelar rivais', icon: '🧊', text: 'Impérios da máquina não agem' },
   { id: 'see', name: 'Ver tudo', icon: '👁️', text: 'Planos, poder e táticas revelados' },
   { id: 'snake', name: 'Cobra imortal', icon: '🐍', text: 'Atravessa tudo na Cobra' },
+  { id: 'snakeSlow', name: 'Cobra em câmera lenta', icon: '🐌', text: 'Velocidade fixa e lenta' },
   { id: 'cards', name: 'Cartas infinitas', icon: '🃏', text: 'Wi-Fi: mão sempre cheia' },
 ];
 
@@ -111,6 +113,99 @@ export function weakenAll() {
   for (const id of COUNTRY_IDS) if (g.countries[id].owner !== PLAYER) g.countries[id].def = 5;
   for (const r of Object.values(g.rivals)) r.power = 5;
   done();
+}
+// ===== Mod menu =====
+export function happyPeople() {
+  for (const id of owned()) game().countries[id].happy = 100;
+  done();
+}
+export function fortify(n: number) {
+  for (const id of owned()) game().countries[id].def += n;
+  done();
+}
+export function winBattle() {
+  if (!game().battle) return fail('Nenhuma batalha em andamento.');
+  const before = cheat.win;
+  cheat.win = true;
+  autoBattle();
+  cheat.win = before;
+  return true;
+}
+export function skip(seconds: number) {
+  for (let i = 0; i < seconds && !game().over; i++) tick(1);
+  done();
+}
+export function nextSeason() {
+  game().time += 60 - (game().time % 60);
+  done();
+}
+export function toggleNight() {
+  game().time += 120;
+  done();
+}
+export function market(times: number) {
+  for (const r of RESOURCES) game().prices[r] *= times;
+  done();
+}
+export function forceVote() {
+  game().vote = { rival: '', kind: 'paz', text: 'Cessar-fogo mundial de 1 minuto?' };
+  done();
+}
+export function spawnZombies() {
+  const free = COUNTRY_IDS.filter((id) => game().countries[id].owner === '');
+  for (let i = 0; i < 4 && free.length; i++) game().countries[pick(free)].owner = ZOMBIES;
+  done();
+}
+export function worldWar() {
+  const live = Object.values(game().rivals).filter((r) => r.alive && !isHuman(r.id));
+  live.forEach((r, i) => {
+    if (live.length > 1) r.war = live[(i + 1) % live.length].id;
+    r.warTime = 600;
+  });
+  done();
+}
+export function worldPeace() {
+  const g = game();
+  for (const r of Object.values(g.rivals)) Object.assign(r, { war: '', warTime: 0, truce: 600 });
+  Object.assign(g, { infamy: 0, coalition: false, threat: null });
+  done();
+}
+export function freeWorld() {
+  const g = game();
+  const homes = Object.values(g.rivals).map((r) => r.capital);
+  for (const id of COUNTRY_IDS) if (g.countries[id].owner !== PLAYER && !isHuman(g.countries[id].owner) && !homes.includes(id)) g.countries[id].owner = '';
+  done();
+}
+/** Muda o dono de qualquer país, com as consequências para o antigo dono */
+export function setOwner(id: string, owner: string) {
+  const g = game();
+  const before = g.countries[id].owner;
+  if (before === owner) return;
+  if (owner === PLAYER) conquer(id, true);
+  else {
+    if (before === PLAYER && owned().length === 1) return fail('Você precisa de pelo menos um país.');
+    Object.assign(g.countries[id], { owner, vassal: false, route: false, siege: false });
+    if (before === PLAYER && g.capital === id) g.capital = owned()[0];
+    if (g.rivals[before]) lostCountry(before, id);
+    if (g.rivals[owner] && !g.rivals[owner].alive) Object.assign(g.rivals[owner], { alive: true, capital: id });
+  }
+  done();
+}
+export function annexRival(id: string) {
+  for (const x of owned(id)) conquer(x, true);
+  done();
+}
+export function reviveRival(id: string) {
+  const free = COUNTRY_IDS.filter((x) => game().countries[x].owner === '');
+  if (!free.length) return fail('Não há país livre.');
+  return setOwner(pick(free), id);
+}
+export function attackMe(id: string) {
+  const g = game();
+  if (g.threat) return fail('Já existe uma invasão a caminho.');
+  g.threat = { by: id, target: pick(owned()), left: 15, power: g.rivals[id].power };
+  done();
+  return true;
 }
 export function forceEnd(won: boolean) {
   game().over = { won, title: won ? 'Vitória!' : 'Derrota', text: 'Encerrada pelo administrador.' };

@@ -63,7 +63,7 @@ export function turn(game: SnakeGame, dir: Direction) {
   if (game.queue.length < 2 && last.x * next.x + last.y * next.y === 0) game.queue.push(dir);
 }
 
-export const stepMs = (game: SnakeGame) => Math.max(72, 150 - game.eaten * 2.5);
+export const stepMs = (game: SnakeGame, slow = false) => (slow ? 230 : Math.max(72, 150 - game.eaten * 2.5));
 
 export function step(game: SnakeGame, immortal = false): StepResult {
   game.dir = game.queue.shift() ?? game.dir;

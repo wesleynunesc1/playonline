@@ -1,17 +1,17 @@
 import React, { useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import { COUNTRIES } from '../../data/countries';
-import { GENERALS, TERRAIN_INFO, UNITS, UNIT_INFO } from '../../data/content';
+import { GENERALS, TERRAIN_INFO } from '../../data/content';
 import { Tactic, game, useGame } from '../../engine/state';
 import { BOSS, TACTICS, autoBattle, battleRound, closeBattle, retreat } from '../../engine/war';
 import { formatNumber } from '../../utils/formatters';
 import { L } from '../../lan/match';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
+import { BattleScene } from './BattleScene';
 import { Bar } from '../common/Kit';
 
 const TITLE = { won: 'Vitória!', lost: 'Derrota', fled: 'Retirada', '': '' };
-const ICONS = 12;
 
 /** Batalha em rodadas: leia a tática inimiga e escolha a que vence */
 export const BattleModal: React.FC = () => {
@@ -24,21 +24,12 @@ export const BattleModal: React.FC = () => {
   const base = COUNTRIES[b.target];
   const name = b.boss ? BOSS.name : base.name;
   const general = GENERALS.find((x) => x.id === b.general);
-  const units = UNITS.filter((u) => b.army[u] > 0);
-  const soldiers = (ratio: number, icons: string[], side: string) =>
-    Array.from({ length: Math.ceil(ratio * ICONS) }, (_, i) => (
-      <span key={i} className={`battle-unit ${side}`} style={{ animationDelay: `${(i % 5) * 0.13}s` }}>{icons[i % icons.length]}</span>
-    ));
 
   return (
-    <Modal isOpen onClose={b.done ? closeBattle : () => {}} maxWidth="lg" showCloseButton={false}
+    <Modal isOpen onClose={b.done ? closeBattle : () => {}} maxWidth="xl" showCloseButton={false}
       title={b.done ? TITLE[b.done] : <>⚔️ Batalha por {b.boss ? `${BOSS.icon} ${name}` : `${base.flag} ${name}`}</>}
       subtitle={b.done ? name : `Rodada ${b.round}${game().mode === 'lan' ? ` • ⏱ ${Math.ceil(L.battleLeft)}s` : ''}${b.boss ? '' : ` • ${TERRAIN_INFO[base.terrain].icon} ${TERRAIN_INFO[base.terrain].name}`}`}>
-      <div className={`battlefield terrain-${b.boss ? 'deserto' : base.terrain}`} key={b.round}>
-        <div className="battle-side">{soldiers(b.a / b.a0, units.length ? units.map((u) => UNIT_INFO[u].icon) : ['🪖'], 'march-right')}</div>
-        {b.round > 1 && !b.done && <span className="battle-boom">💥</span>}
-        <div className="battle-side justify-end">{b.boss ? <span className="text-6xl battle-unit march-left">{BOSS.icon}</span> : soldiers(b.d / b.d0, ['🪖', '🛡️', '✈️'], 'march-left')}</div>
-      </div>
+      <BattleScene key={b.target + b.a0} battle={b} terrain={b.boss ? 'deserto' : base.terrain} boss={b.boss} />
       <div className="grid grid-cols-2 gap-4 text-xs">
         <div className="space-y-1">
           <p className="text-blue-300 font-bold">{general ? `${general.icon} ${general.name}` : 'Suas tropas'} • {formatNumber(b.a)}</p>

@@ -13,6 +13,7 @@ import { useAnimatedNumber } from '../../hooks/useAnimatedNumber';
 import { InteractiveMap } from '../map/InteractiveMap';
 import { CountryPanel } from '../panels/CountryPanel';
 import { BattleModal } from '../panels/BattleModal';
+import { NukeCinematic } from '../panels/NukeCinematic';
 import { Panels } from '../panels/Panels';
 import { Dialogs, dialogOpen } from '../panels/Dialogs';
 import { LanEnd, LanSide, LanTop } from '../panels/LanHud';
@@ -112,6 +113,7 @@ export const GameScreen: React.FC = () => {
       <CountryPanel />
       <Panels />
       <BattleModal />
+      <NukeCinematic />
       <Dialogs />
       <LanEnd />
     </div>
