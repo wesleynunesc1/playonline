@@ -8,13 +8,14 @@ globalThis.sessionStorage = globalThis.localStorage;
 const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false }, optimizeDeps: { noDiscovery: true }, appType: 'custom', logLevel: 'error' });
 const D = await server.ssrLoadModule('/src/war/data.ts');
 const S = await server.ssrLoadModule('/src/war/sim.ts');
+const N = await server.ssrLoadModule('/src/war/nation.ts');
 const B = await server.ssrLoadModule('/src/war/bot.ts');
 
 // Dados oficiais e catálogo
 assert.equal(D.CITIES.length, 184);
 assert.equal(D.CITIES.reduce((s, c) => s + c.pop, 0), 8794957);
 for (const u of D.UNIT_IDS) assert.ok(D.WORKS[D.UNITS[u].from], u);
-const total = D.UNIT_IDS.length + D.WORKS_IDS.length + D.POWER_IDS.length + D.RESEARCH.length * 3 + Object.keys(D.LANDMARKS).length + Object.keys(D.REGION_BONUS).length + D.EVENTS.length + D.MODES.length + D.RULES.length + D.MEDALS.length + D.PHRASES.length + D.QUESTS.length + D.ERAS.length;
+const total = D.UNIT_IDS.length + D.WORKS_IDS.length + D.POWER_IDS.length + D.RESEARCH.length * 3 + Object.keys(D.LANDMARKS).length + Object.keys(D.REGION_BONUS).length + D.EVENTS.length + D.MODES.length + D.RULES.length + D.MEDALS.length + D.PHRASES.length + D.QUESTS.length + D.ERAS.length + N.DOCTRINES.length + N.POLICIES.length + N.WONDERS.length + Object.keys(N.SPIES).length + N.DILEMMAS.length + N.DISASTERS.length + N.CRATES.length + N.VICTORIES.length;
 assert.ok(total >= 150, `${total} ideias`);
 console.log(`✔ 184 cidades, ${D.ROADS.length} estradas, ${total} itens de conteúdo`);
 
@@ -28,7 +29,7 @@ w.nextEvent = 1e9; // sem eventos aleatórios no teste de regras
 const p = w.players[0];
 const home = S.cityAt(w, p.start);
 assert.ok(home.owner === 0 && S.armySize(w, 0) === 6);
-p.money = 1e6;
+p.money = 2e5;
 p.fuel = 1e6;
 assert.equal(S.command(w, 0, { c: 'build', city: home.id, k: 'fabrica' }), '');
 assert.notEqual(S.command(w, 0, { c: 'train', city: home.id, k: 'tanque' }), '', 'fábrica em obras');
@@ -160,6 +161,62 @@ assert.ok(JSON.stringify(pk).length < 60000, `${JSON.stringify(pk).length} bytes
   }
   assert.ok(!first || first > 900);
   console.log(`  ⚖️ 40 min equilibrado: primeira guerra aos ${Math.round(first / 60)} min, eras ${mid.players.map((q) => q.era)}, cidades ${mid.players.map((q) => S.citiesOf(mid, q.i).length)}`);
+}
+// Nação: doutrina, políticas, impostos, maravilhas, espiões, mercado, dilemas, caixas e revolta
+{
+  const g = S.createWorld(setup(3), 'dominio', 40, []);
+  g.nextEvent = 1e9;
+  const a = g.players[0];
+  const h = S.cityAt(g, a.start);
+  Object.assign(a, { money: 1e5, fuel: 1e5, era: 5 });
+  assert.equal(S.command(g, 0, { c: 'doc', id: 'mercador' }), '');
+  assert.notEqual(S.command(g, 0, { c: 'doc', id: 'blindado' }), '');
+  for (const p of N.POLICIES.slice(0, 5)) assert.equal(S.command(g, 0, { c: 'pol', id: p.id }), '');
+  assert.match(S.command(g, 0, { c: 'pol', id: N.POLICIES[6].id }), /vaga/);
+  const base = S.incomeOf(g, 0)[0];
+  S.command(g, 0, { c: 'tax', v: 1 });
+  g.t += 2;
+  assert.ok(S.incomeOf(g, 0)[0] > base);
+  assert.equal(S.command(g, 0, { c: 'wonder', id: 'porto', city: h.id }), '');
+  assert.notEqual(S.command(g, 0, { c: 'wonder', id: 'arena', city: h.id }), '');
+  run(g, 85);
+  assert.ok(g.wonders[0].left === 0 && a.stats.wonders === 1);
+  assert.equal(S.command(g, 0, { c: 'market', buy: true }), '');
+  assert.equal(S.command(g, 0, { c: 'loan', pay: false }), '');
+  assert.ok(a.n.debt > 1500);
+  assert.equal(S.command(g, 0, { c: 'loan', pay: true }), '');
+  assert.equal(a.n.debt, 0);
+  for (let i = 0; i < N.DILEMMAS.length; i++) for (const n of [0, 1]) {
+    a.n.dil = { i, left: 40 };
+    assert.equal(S.command(g, 0, { c: 'choose', n }), '');
+  }
+  for (const k of Object.keys(N.SPIES)) for (let i = 0; i < 12; i++) {
+    a.n.spy = 0;
+    S.command(g, 0, { c: 'spy', to: 1, k });
+  }
+  assert.ok(a.stats.spies > 5);
+  assert.match(S.command(g, 0, { c: 'spy', to: 0, k: 'mapa' }), /inválido/);
+  assert.equal(S.command(g, 0, { c: 'merc', city: h.id, k: 'tanque' }), '');
+  const u = g.units.find((x) => x.o === 0);
+  assert.equal(S.command(g, 0, { c: 'patrol', u: [u.i], x: u.x + 2, z: u.z }), '');
+  run(g, 12);
+  assert.ok(u.go === 1 && u.pat, 'patrulha continua');
+  g.crates = [{ x: u.x, z: u.z, k: 0, left: 100 }];
+  run(g, 1.2);
+  assert.ok(a.stats.crates >= 1);
+  const c = g.cities.find((x) => x.owner < 0);
+  Object.assign(c, { owner: 0, mood: 0, ruin: 1 });
+  S.command(g, 0, { c: 'tax', v: 1 });
+  for (let i = 0; i < 600 && c.owner === 0; i++) {
+    c.mood = 0;
+    run(g, 1);
+  }
+  assert.equal(c.owner, -1, 'revolta');
+  a.n.dil = null;
+  for (const bad of [{ c: 'pol', id: 'x' }, { c: 'wonder', id: 'x', city: 1 }, { c: 'spy', to: 99, k: 'mapa' }, { c: 'spy', to: 1, k: 'zz' }, { c: 'tax', v: 7 }, { c: 'patrol', u: 5, x: 1, z: 1 }, { c: 'choose', n: 0 }, { c: 'merc', city: 3, k: 'zz' }]) assert.notEqual(S.command(g, 0, bad), '');
+  for (const r of D.RESEARCH) a.res[r.id] = 3;
+  run(g, 3);
+  assert.match(g.over.title, /Ciência/);
 }
 console.log('✔ Regras, conquista, apoios e rede');
 

@@ -4,7 +4,7 @@ import { Button } from '../common/Button';
 import { Modal } from '../common/Modal';
 
 /** Leva todo o progresso para outro aparelho por um código ou arquivo */
-const KEYS = ['WORLD_EMPIRE_V3', 'WORLD_EMPIRE_META', 'PLAY_ONLINE_WAR', 'PLAY_ONLINE_SNAKE_BEST', 'PLAY_ONLINE_LAN'];
+const KEYS = ['WORLD_EMPIRE_V3', 'WORLD_EMPIRE_META', 'PLAY_ONLINE_WAR', 'PLAY_ONLINE_WAR_SAVE', 'PLAY_ONLINE_SNAKE_BEST', 'PLAY_ONLINE_LAN'];
 const PREFIX = 'PO1.';
 
 async function pipe(data: Uint8Array, stream: CompressionStream | DecompressionStream) {

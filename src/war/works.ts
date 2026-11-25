@@ -225,3 +225,64 @@ export function worksGeometry(b: WorksId): THREE.BufferGeometry {
   if (!g) cache.set(b, (g = model(b)));
   return g;
 }
+
+/** Maravilhas: construções únicas e grandes */
+const wonders = new Map<string, THREE.BufferGeometry>();
+export function wonderGeometry(id: string): THREE.BufferGeometry {
+  const old = wonders.get(id);
+  if (old) return old;
+  const k = new Kit();
+  k.cyl(1.5, 0.06, '#8f8c84', [0, 0.03, 0], [0, 0, 0], 32).cyl(1.36, 0.05, '#b5b1a6', [0, 0.07, 0], [0, 0, 0], 32);
+  const white = '#eceae3';
+  const gold = '#c9a03f';
+  if (id === 'ponte') {
+    k.box(3.4, 0.08, 0.5, '#4a4d50', [0, 0.55, 0]);
+    for (const x of [-0.8, 0.8]) k.box(0.12, 1.9, 0.12, white, [x, 0.95, -0.24]).box(0.12, 1.9, 0.12, white, [x, 0.95, 0.24]).box(0.14, 0.1, 0.6, white, [x, 1.7, 0]);
+    for (const x of [-0.8, 0.8]) for (let i = 1; i < 5; i++) for (const s of [-1, 1]) for (const z of [-0.24, 0.24]) k.cyl(0.012, Math.hypot(i * 0.18, 1.2), STEEL, [x + i * 0.09 * s, 1.2, z], [0, 0, Math.atan2(i * 0.18 * s, 1.2)], 5);
+  } else if (id === 'catedral') {
+    k.box(0.9, 0.9, 2, '#e2d6bd', [0, 0.53, 0]).wedge(1, 0.5, 2.1, 0.04, '#8a4a36', [0, 1.22, 0]).put(new THREE.SphereGeometry(0.42, 20, 12, 0, 6.3, 0, 1.57), '#7f9a8c', [0, 1.35, -0.4]);
+    for (const x of [-0.42, 0.42]) k.box(0.32, 1.9, 0.32, '#e2d6bd', [x, 0.98, 0.95]).put(new THREE.ConeGeometry(0.26, 0.6, 8), '#8a4a36', [x, 2.2, 0.95]).box(0.03, 0.2, 0.03, gold, [x, 2.58, 0.95]);
+    k.glow(() => k.cyl(0.2, 0.03, '#5aa2c9', [0, 0.95, 1.01], [HALF, 0, 0], 20));
+  } else if (id === 'arena') {
+    k.put(new THREE.LatheGeometry([[0.5, 0.1], [1.05, 0.62], [1.12, 0.62], [1.2, 0.06]].map(([x, y]) => new THREE.Vector2(x, y)), 48), white, [0, 0.06, 0]).box(0.8, 0.02, 0.55, '#4a8f3c', [0, 0.12, 0]);
+    k.put(new THREE.LatheGeometry([[0.72, 0.82], [1.22, 0.7], [1.22, 0.74], [0.72, 0.86]].map(([x, y]) => new THREE.Vector2(x, y)), 48), '#f6f7f7', [0, 0.06, 0]);
+    k.glow(() => { for (let i = 0; i < 8; i++) k.box(0.16, 0.1, 0.03, '#fff3cf', [Math.cos(i * 0.785) * 0.74, 0.95, Math.sin(i * 0.785) * 0.74], [0, -i * 0.785 + HALF, 0]); });
+  } else if (id === 'porto') {
+    k.box(2.6, 0.1, 1.2, '#8d9094', [0, 0.1, -0.3]).box(1.9, 0.26, 0.5, '#23405f', [0, 0.16, 0.75]).box(0.3, 0.34, 0.4, white, [-0.7, 0.45, 0.75]);
+    for (let i = 0; i < 16; i++) k.box(0.2, 0.12, 0.12, ['#b5483a', '#2f6f9e', '#c79a36', '#4f7f52'][i % 4], [-0.35 + (i % 6) * 0.22, 0.35 + Math.floor(i / 6) * 0.13, 0.75]);
+    for (const x of [-0.7, 0.2, 0.95]) k.box(0.06, 1, 0.06, '#d0782c', [x, 0.6, -0.2]).box(0.06, 1, 0.06, '#d0782c', [x, 0.6, 0.2]).box(0.08, 0.07, 1.5, '#d0782c', [x, 1.12, 0.3]);
+  } else if (id === 'universidade') {
+    block(k, 2, 0.6, 0.6, [0, 0.08, -0.6], '#e6dfcf');
+    for (const x of [-0.8, 0.8]) block(k, 0.5, 0.8, 1.2, [x, 0.08, 0.2], '#e6dfcf');
+    k.put(new THREE.SphereGeometry(0.45, 24, 12, 0, 6.3, 0, 1.57), '#cfd8dc', [0, 0.72, -0.6]).box(0.9, 0.02, 1, '#567a45', [0, 0.1, 0.35]);
+    trees(k, [[-0.3, 0.3], [0.3, 0.3], [-0.3, 0.8], [0.3, 0.8]]);
+  } else if (id === 'usina') {
+    for (const [x, z] of [[-0.6, -0.4], [0.5, -0.4], [0, 0.5]] as const) k.put(new THREE.SphereGeometry(0.42, 24, 16), white, [x, 0.6, z]).cyl(0.3, 0.2, STEEL, [x, 0.18, z], [0, 0, 0], 16);
+    k.box(1.2, 0.05, 0.06, '#5ea96a', [0, 0.5, -0.4]);
+    k.glow(() => { for (const [x, z] of [[-0.6, -0.4], [0.5, -0.4], [0, 0.5]] as const) k.cyl(0.425, 0.05, '#4ade80', [x, 0.6, z], [0, 0, 0], 24); });
+  } else if (id === 'muralha') {
+    for (let i = 0; i < 8; i++) {
+      const a = (i * Math.PI) / 4;
+      k.box(0.95, 0.6, 0.2, '#9c968a', [Math.cos(a) * 1.15, 0.36, Math.sin(a) * 1.15], [0, -a + HALF, 0]).cyl(0.2, 1, '#8b857a', [Math.cos(a + 0.39) * 1.24, 0.55, Math.sin(a + 0.39) * 1.24], [0, 0, 0], 10);
+    }
+    block(k, 0.8, 1.1, 0.8, [0, 0.08, 0], '#8b857a');
+  } else if (id === 'espacial') {
+    k.cyl(0.18, 1.9, white, [0, 1.05, 0], [0, 0, 0], 16).put(new THREE.ConeGeometry(0.18, 0.5, 16), '#b5483a', [0, 2.25, 0]);
+    for (const a of [0, 2.1, 4.2]) k.cyl(0.1, 1, white, [Math.cos(a) * 0.28, 0.6, Math.sin(a) * 0.28], [0, 0, 0], 12).box(0.2, 0.3, 0.04, DARK, [Math.cos(a) * 0.3, 0.2, Math.sin(a) * 0.3], [0, -a, 0]);
+    for (const x of [-0.7, -0.5]) for (const z of [-0.1, 0.1]) k.box(0.04, 2.3, 0.04, '#c0542f', [x, 1.2, z]);
+    for (let i = 0; i < 6; i++) k.box(0.24, 0.03, 0.24, '#c0542f', [-0.6, 0.4 + i * 0.36, 0]);
+    k.box(0.4, 0.06, 0.1, '#c0542f', [-0.35, 1.7, 0]);
+  } else if (id === 'cerebro') {
+    k.box(1.5, 0.5, 1.5, '#2d3339', [0, 0.33, 0]);
+    for (let i = 0; i < 4; i++) k.box(1.2 - i * 0.26, 0.4, 1.2 - i * 0.26, i % 2 ? '#39424a' : '#2d3339', [0, 0.75 + i * 0.4, 0], [0, i * 0.2, 0]);
+    k.glow(() => { for (let i = 0; i < 4; i++) k.box(1.24 - i * 0.26, 0.05, 1.24 - i * 0.26, '#38d5f2', [0, 0.72 + i * 0.4, 0], [0, i * 0.2, 0]); });
+  } else {
+    k.cyl(0.42, 2.6, white, [0, 1.35, 0], [0, 0, 0], 24, 0.2);
+    for (let i = 0; i < 9; i++) k.cyl(0.43 - i * 0.022, 0.04, gold, [0, 0.3 + i * 0.28, 0], [0, 0, 0], 24);
+    k.glow(() => k.ball(0.34, '#ffd76a', [0, 2.95, 0]));
+    for (let i = 0; i < 10; i++) k.box(0.5, 0.03, 0.05, gold, [Math.cos(i * 0.628) * 0.5, 2.95 + Math.sin(i * 0.628) * 0.5, 0], [0, 0, i * 0.628]);
+  }
+  const g = k.build();
+  wonders.set(id, g);
+  return g;
+}

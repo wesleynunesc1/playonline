@@ -262,13 +262,13 @@ export const STARS = [3, 8, 16];
 export const STAR_BONUS = 0.12;
 
 // ===== 15 medalhas =====
-export type Stat = 'kills' | 'lost' | 'caps' | 'lostCities' | 'built' | 'trained' | 'spent' | 'powers' | 'tanks' | 'air' | 'drones' | 'research' | 'damage' | 'earned' | 'nukes' | 'dev' | 'annex';
+export type Stat = 'kills' | 'lost' | 'caps' | 'lostCities' | 'built' | 'trained' | 'spent' | 'powers' | 'tanks' | 'air' | 'drones' | 'research' | 'damage' | 'earned' | 'nukes' | 'dev' | 'annex' | 'spies' | 'wonders' | 'crates';
 export const MEDALS: { name: string; icon: string; stat: Stat }[] = [
   { name: 'Ás do Combate', icon: '🎖️', stat: 'kills' }, { name: 'Libertador', icon: '🚩', stat: 'caps' }, { name: 'Construtor', icon: '🏗️', stat: 'built' },
   { name: 'Recrutador', icon: '🪖', stat: 'trained' }, { name: 'Gastador', icon: '💸', stat: 'spent' }, { name: 'Chuva de Fogo', icon: '💥', stat: 'powers' },
   { name: 'Coração de Aço', icon: '🚜', stat: 'tanks' }, { name: 'Dono do Céu', icon: '✈️', stat: 'air' }, { name: 'Mestre dos Drones', icon: '🛩️', stat: 'drones' },
   { name: 'Cientista', icon: '🔬', stat: 'research' }, { name: 'Devastador', icon: '☄️', stat: 'damage' }, { name: 'Magnata', icon: '💰', stat: 'earned' },
-  { name: 'Senhor do Átomo', icon: '☢️', stat: 'nukes' }, { name: 'Sacrifício', icon: '🕯️', stat: 'lost' }, { name: 'Resistente', icon: '🧱', stat: 'lostCities' },
+  { name: 'Senhor do Átomo', icon: '☢️', stat: 'nukes' }, { name: 'Mestre dos Espiões', icon: '👁️', stat: 'spies' }, { name: 'Arquiteto', icon: '🏆', stat: 'wonders' }, { name: 'Caçador de caixas', icon: '📦', stat: 'crates' }, { name: 'Sacrifício', icon: '🕯️', stat: 'lost' }, { name: 'Resistente', icon: '🧱', stat: 'lostCities' },
 ];
 export const PHRASES = ['Bora!', 'Trégua?', 'Vou te pegar', 'Ajuda aqui!', 'Boa!', 'Kkkkk', 'Recuar!', 'Avançar!', 'Traidor!', 'GG', 'Égua, macho!', 'Arretado! 🔥'];
 export const COLORS = ['#2f7bff', '#ff3b3b', '#22c55e', '#f5b301', '#b04bff', '#ff7a1a'];

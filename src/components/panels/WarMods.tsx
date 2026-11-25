@@ -82,6 +82,8 @@ const WarMods: React.FC = () => {
             <Btn onClick={act(() => { p.money += 10000; })}>💰 +10 mil</Btn>
             <Btn onClick={act(() => { p.fuel += 5000; })}>⛽ +5 mil</Btn>
             <Btn onClick={act(() => { for (const r of RESEARCH) p.res[r.id] = 3; })}>🔬 Toda a pesquisa</Btn>
+            <Btn onClick={act(() => { p.n.spy = 0; p.n.debt = 0; })}>👁️ Espião pronto e sem dívida</Btn>
+            <Btn onClick={act(() => { for (const c of own) c.mood = 100; })}>😀 Povo 100% feliz</Btn>
             <Btn onClick={act(() => { p.era = 5; })}>☢️ Ir para a Era 5</Btn>
             <Btn onClick={act(() => { for (const k of POWER_IDS) p.cool[k] = 0; })}>💥 Apoios prontos</Btn>
           </Grid>
@@ -114,6 +116,7 @@ const WarMods: React.FC = () => {
       {tab === 'cidades' && (
         <>
           <Grid>
+            <Btn onClick={act(() => { for (const x of w.wonders) if (x.o === W.me) x.left = Math.min(x.left, 1); })}>👑 Terminar maravilha</Btn>
             <Btn onClick={act(() => { for (const c of own) Object.assign(c, { dev: 3, devLeft: 0, ruin: 0 }); })}>🌃 Evoluir todas ao máximo</Btn>
             <Btn onClick={act(() => { for (const c of own) c.hp = c.max; })}>❤️ Reparar minhas</Btn>
             <Btn onClick={act(() => { for (const c of own) for (const k of c.works) k.left = 0; })}>🏗️ Terminar obras</Btn>

@@ -34,23 +34,76 @@ export const useWar = () => useSyncExternalStore((f) => (subs.add(f), () => subs
 
 // ===== Histórico =====
 const KEY = 'PLAY_ONLINE_WAR';
-export interface Career { played: number; wins: number; kills: number; caps: number }
+const SAVE = 'PLAY_ONLINE_WAR_SAVE';
+export interface Career { played: number; wins: number; kills: number; caps: number; built: number; wonders: number; nukes: number; annex: number; spies: number; crates: number; dev: number; best: number }
+const ZERO: Career = { played: 0, wins: 0, kills: 0, caps: 0, built: 0, wonders: 0, nukes: 0, annex: 0, spies: 0, crates: 0, dev: 0, best: 0 };
 export function career(): Career {
   try {
-    return { played: 0, wins: 0, kills: 0, caps: 0, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') };
+    return { ...ZERO, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') };
   } catch {
-    return { played: 0, wins: 0, kills: 0, caps: 0 };
+    return { ...ZERO };
   }
 }
 function record(w: World) {
   const p = w.players[W.me];
-  const first = w.players[w.over!.rank[0]];
   const c = career();
+  for (const k of ['kills', 'caps', 'built', 'wonders', 'nukes', 'annex', 'spies', 'crates', 'dev'] as const) c[k] += Math.round(p.stats[k] ?? 0);
+  c.played++;
+  if (w.players[w.over!.rank[0]].team === p.team) c.wins++;
+  c.best = Math.max(c.best, w.cities.filter((x) => x.owner === W.me).length);
   try {
-    localStorage.setItem(KEY, JSON.stringify({
-      played: c.played + 1, wins: c.wins + (first.team === p.team ? 1 : 0), kills: c.kills + Math.round(p.stats.kills ?? 0), caps: c.caps + Math.round(p.stats.caps ?? 0),
-    }));
+    localStorage.setItem(KEY, JSON.stringify(c));
+    if (W.solo) localStorage.removeItem(SAVE);
   } catch { /* armazenamento indisponível */ }
+}
+/** Experiência da carreira: vira nível e título */
+export const careerXp = (c: Career) => c.played * 40 + c.wins * 120 + c.kills * 2 + c.caps * 15 + c.annex * 12 + c.wonders * 60 + c.dev * 8 + c.spies * 10;
+const TITLES = ['Vereador', 'Prefeito', 'Deputado', 'Senador', 'Governador', 'Ministro', 'Presidente', 'Lenda do Ceará'];
+export function careerLevel(c: Career) {
+  const xp = careerXp(c);
+  const level = Math.floor(Math.sqrt(xp / 60)) + 1;
+  return { level, title: TITLES[Math.min(TITLES.length - 1, Math.floor((level - 1) / 3))], part: (xp - (level - 1) ** 2 * 60) / ((level ** 2 - (level - 1) ** 2) * 60) };
+}
+export const FEATS: { name: string; icon: string; text: string; ok: (c: Career) => boolean }[] = [
+  { name: 'Primeiros passos', icon: '🏡', text: 'Termine uma partida', ok: (c) => c.played >= 1 }, { name: 'Vitória!', icon: '🏆', text: 'Vença uma partida', ok: (c) => c.wins >= 1 },
+  { name: 'Veterano', icon: '🎖️', text: 'Termine 10 partidas', ok: (c) => c.played >= 10 }, { name: 'Invencível', icon: '👑', text: 'Vença 10 partidas', ok: (c) => c.wins >= 10 },
+  { name: 'Diplomata', icon: '🤝', text: 'Traga 20 cidades por acordo', ok: (c) => c.annex >= 20 }, { name: 'Pacificador', icon: '🕊️', text: 'Traga 100 cidades por acordo', ok: (c) => c.annex >= 100 },
+  { name: 'Conquistador', icon: '🚩', text: 'Tome 25 cidades', ok: (c) => c.caps >= 25 }, { name: 'Senhor da guerra', icon: '⚔️', text: 'Tome 100 cidades', ok: (c) => c.caps >= 100 },
+  { name: 'Atirador', icon: '🎯', text: '100 abates', ok: (c) => c.kills >= 100 }, { name: 'Exterminador', icon: '💀', text: '1000 abates', ok: (c) => c.kills >= 1000 },
+  { name: 'Urbanista', icon: '🌆', text: 'Evolua 30 cidades', ok: (c) => c.dev >= 30 }, { name: 'Metrópole', icon: '🌃', text: 'Evolua 150 cidades', ok: (c) => c.dev >= 150 },
+  { name: 'Mestre de obras', icon: '🏗️', text: '100 construções', ok: (c) => c.built >= 100 }, { name: 'Maravilhoso', icon: '✨', text: 'Erga 3 maravilhas', ok: (c) => c.wonders >= 3 },
+  { name: 'Patrimônio', icon: '🌐', text: 'Erga 15 maravilhas', ok: (c) => c.wonders >= 15 }, { name: 'Agente secreto', icon: '👁️', text: '10 missões de espionagem', ok: (c) => c.spies >= 10 },
+  { name: 'Garimpeiro', icon: '📦', text: 'Pegue 25 caixas', ok: (c) => c.crates >= 25 }, { name: 'Era atômica', icon: '☢️', text: 'Lance uma arma nuclear', ok: (c) => c.nukes >= 1 },
+  { name: 'Meio Ceará', icon: '🗺️', text: 'Termine com 92 cidades', ok: (c) => c.best >= 92 }, { name: 'Dono do Ceará', icon: '🌎', text: 'Termine com 150 cidades', ok: (c) => c.best >= 150 },
+];
+// ===== Partida solo salva =====
+function saveSolo() {
+  if (!W.solo || !W.world || W.world.over || W.replay) return;
+  try {
+    localStorage.setItem(SAVE, JSON.stringify({ v: 1, world: { ...W.world, fx: [] }, seats: W.seats, o: options() }));
+  } catch { /* sem espaço: segue sem salvar */ }
+}
+export function savedSolo(): { t: number; cities: number } | null {
+  try {
+    const s = JSON.parse(localStorage.getItem(SAVE) ?? 'null');
+    return s?.v === 1 ? { t: s.world.t, cities: s.world.cities.filter((c: { owner: number }) => c.owner === 0).length } : null;
+  } catch {
+    return null;
+  }
+}
+export function resumeSolo() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SAVE)!);
+    quitWar();
+    Object.assign(W, s.o, { phase: 'play', host: true, solo: true, seat: s.seats[0].id, seats: s.seats, me: 0, world: s.world, paused: false, frozen: false, speed: 1 });
+    film = [];
+    W.best = null;
+    fxQueue.length = 0;
+    runLoop();
+    touch();
+  } catch {
+    hooks.toast('Não foi possível abrir a partida salva.', 'danger');
+  }
 }
 
 // ===== Sala =====
@@ -291,6 +344,7 @@ export function backToLobby() {
   syncLobby();
 }
 export function quitWar() {
+  saveSolo();
   stopReplay();
   clearInterval(timer);
   room?.close();
@@ -385,6 +439,7 @@ function runLoop() {
       net = [];
     }
     if (ticks % 2 === 0) touch();
+    if (ticks % 100 === 0) saveSolo();
     if (w.over) {
       clearInterval(timer);
       broadcast({ t: 's', p: pack(w, true) });

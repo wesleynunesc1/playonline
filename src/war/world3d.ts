@@ -10,7 +10,8 @@ import { Post } from './post';
 import { Scenery, Sky, U } from './scenery';
 import { BOUNDS, PHONE, Y, spread } from './terrain';
 import { UNIT_NIGHT, UNIT_TIME, unitGeometry, unitMaterial } from './units';
-import { worksGeometry } from './works';
+import { wonderGeometry, worksGeometry } from './works';
+import { WONDERS } from './nation';
 
 /** Mundo aberto em 3D: terreno, cidades, tropas, efeitos e visão. Lê o estado da partida a cada quadro. */
 export interface Tap { x: number; z: number; unit: Unit | null; city: City | null }
@@ -133,6 +134,8 @@ export class World3D {
   private burnt = new THREE.MeshStandardMaterial({ color: '#1d1a17', roughness: 1 });
   private flags!: { pole: THREE.InstancedMesh; cloth: THREE.InstancedMesh; sig: string };
   private cranes!: THREE.InstancedMesh;
+  private crates!: THREE.InstancedMesh;
+  private wonders = new Map<string, THREE.Mesh>();
   private heard = 0;
   private scenery: Scenery;
   private flashes: THREE.PointLight[] = [];
@@ -390,6 +393,15 @@ export class World3D {
     const bar = (w: number, h: number, d: number, x: number, y: number) => new THREE.BoxGeometry(w, h, d).translate(x, y, 0);
     this.cranes = inst(mergeGeometries([bar(0.02, 0.5, 0.02, 0, 0.25), bar(0.42, 0.018, 0.018, 0.11, 0.5), bar(0.06, 0.05, 0.04, -0.09, 0.48), bar(0.004, 0.2, 0.004, 0.26, 0.4), bar(0.05, 0.03, 0.04, 0.26, 0.29)])!, mat('#f2a51d', { rough: 0.6 }), 80);
     this.cranes.castShadow = true;
+    this.crates = inst(mergeGeometries([new THREE.BoxGeometry(0.13, 0.11, 0.13).translate(0, 0.055, 0).toNonIndexed(), new THREE.BoxGeometry(0.14, 0.02, 0.03).translate(0, 0.06, 0).toNonIndexed(), new THREE.BoxGeometry(0.03, 0.02, 0.14).translate(0, 0.115, 0).toNonIndexed()])!, mat('#c98b3a', { rough: 0.7 }), 12);
+    this.crates.castShadow = true;
+    for (const d of WONDERS) {
+      const m = new THREE.Mesh(wonderGeometry(d.id), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.15 }));
+      m.castShadow = m.receiveShadow = true;
+      m.visible = false;
+      m.scale.setScalar(0.16);
+      this.wonders.set(d.id, add(m));
+    }
     const flat = (g: THREE.BufferGeometry) => g.rotateX(-Math.PI / 2);
     this.discs = inst(flat(new THREE.RingGeometry(0.8, 1, 24)), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.95, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -8, polygonOffsetUnits: -30 }), 400, 3);
     this.discs.setColorAt(0, new THREE.Color());
@@ -458,6 +470,7 @@ export class World3D {
       for (const f of fxQueue.splice(0)) this.effect(f, now);
       this.drawWorks(w);
       this.drawFlags(w);
+      this.drawExtras(w, now);
       this.drawUnits(w, dt, now);
       this.ambience(w, dt);
     } else {
@@ -466,7 +479,8 @@ export class World3D {
       for (const m of this.units.values()) m.count = 0;
       this.works.forEach((m) => { m.count = 0; });
       this.worksSig = this.flags.sig = '';
-      this.flags.pole.count = this.flags.cloth.count = this.cranes.count = 0;
+      this.flags.pole.count = this.flags.cloth.count = this.cranes.count = this.crates.count = 0;
+      this.wonders.forEach((m) => { m.visible = false; });
       this.discs.count = this.barBack.count = this.barFill.count = 0;
     }
     this.drawLabels(w);
@@ -604,6 +618,28 @@ export class World3D {
     this.barBack.setMatrixAt(n, m.compose(p, q, new THREE.Vector3(w * 1.06, w * 0.2, 1)));
     this.barFill.setMatrixAt(n, m.compose(p.addScaledVector(right, -(w * (1 - f)) / 2), q, new THREE.Vector3(w * f, w * 0.13, 1)));
     this.barFill.setColorAt(n, new THREE.Color(k < 0.3 ? '#ef4444' : color));
+  }
+  /** Caixas de suprimento e maravilhas */
+  private drawExtras(w: World, now: number) {
+    const m = new THREE.Matrix4();
+    const list = w.crates.slice(0, 12);
+    list.forEach((c, i) => {
+      this.crates.setMatrixAt(i, m.makeRotationY(now / 1400 + i).scale(new THREE.Vector3().setScalar(Math.min(1.8, this.zoom))).setPosition(c.x, Y(c.x, c.z) + 0.03 + Math.abs(Math.sin(now / 420 + i)) * 0.05, c.z));
+      if (this.dist < 30 && Math.random() < 0.12) this.fire.add(c.x, Y(c.x, c.z) + 0.2, c.z, { life: 1.2, s0: 0.05, s1: 0.02, vy: 0.5, g: 0.9, b: 0.5 });
+    });
+    this.crates.count = list.length;
+    this.crates.instanceMatrix.needsUpdate = true;
+    this.wonders.forEach((mesh, id) => {
+      const x = w.wonders.find((k) => k.id === id);
+      mesh.visible = !!x;
+      if (!x) return;
+      const c = CITY[x.city];
+      const r = spread(c) * 0.62 + 0.1;
+      const [px, pz] = [c.x - r * 0.75, c.z + r * 0.66];
+      const total = WONDERS.find((k) => k.id === id)!.time;
+      mesh.position.set(px, Y(px, pz) + 0.015, pz);
+      mesh.scale.set(0.16, 0.16 * (x.left > 0 ? 0.08 + 0.92 * (1 - x.left / total) : 1), 0.16);
+    });
   }
   private drawFlags(w: World) {
     const sig = w.cities.map((c) => c.owner).join();
@@ -851,6 +887,13 @@ export class World3D {
         for (let i = 0; i < 3; i++) this.boom(x2 + rand(-0.3, 0.3), Y(x2 + rand(-0.3, 0.3), z2 + rand(-0.3, 0.3)) + 4 + rand(-0.3, 0.3), z2 + rand(-0.3, 0.3), 1.6);
         this.ring(x2, z2, 2.5, '#7dd3fc', 1);
       } });
+    } else if (k === 'caixa') {
+      if (!near) return;
+      this.ring(x2, z2, 0.7, '#facc15', 0.8);
+      this.play(x2, z2, 300, () => sound.playBuy());
+    } else if (k === 'desastre') {
+      for (let i = 0; i < 14; i++) this.later.push({ at: now + i * 160, run: () => this.smoke.add(x2 + rand(-0.5, 0.5), Y(x2, z2) + 0.15, z2 + rand(-0.5, 0.5), { life: 2.6, s0: 0.2, s1: 0.9, vy: 0.4, r: 0.3, g: 0.28, b: 0.26, a: 0.6 }) });
+      if (near) this.shake = Math.max(this.shake, 0.4);
     } else if (k === 'evolui' || k === 'era') {
       if (!near) return;
       this.ring(x2, z2, k === 'era' ? 4 : 1.4, k === 'era' ? '#facc15' : '#4ade80', 1.4);

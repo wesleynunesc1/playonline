@@ -250,6 +250,12 @@ input[type='range']::-webkit-slider-thumb { width: 26px; height: 26px; }
 .war-pic { width: 2.1rem; height: 1.9rem; display: inline-block; object-fit: contain; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5)); }
 .war-pic.big { width: 4.4rem; height: 3.5rem; }
 .war-nuke { background: rgba(153, 27, 27, 0.95) !important; border-color: #f87171 !important; font-weight: 800; animation: pulse 0.7s infinite alternate !important; }
+.war-groups { position: absolute; left: 50%; bottom: 0.5rem; transform: translateX(-50%); display: flex; gap: 0.4rem; z-index: 9; }
+.war-groups button { width: 3rem; height: 2.8rem; border-radius: 0.9rem; background: var(--glass); border: 1px solid var(--line); font-weight: 800; line-height: 1.1; }
+.war-groups small { display: block; font-size: 9.5px; opacity: 0.75; }
+.war-dilemma { position: absolute; left: 50%; bottom: 0.5rem; transform: translateX(-50%); width: min(26rem, calc(100% - 0.8rem)); z-index: 14; display: grid; gap: 0.55rem; padding: 0.9rem; border-radius: 1.2rem; background: linear-gradient(180deg, rgba(34, 27, 14, 0.96), rgba(12, 14, 20, 0.97)); border: 1px solid rgba(245, 196, 81, 0.5); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55); }
+.war-dilemma button { padding: 0.65rem; border-radius: 0.9rem; background: rgba(255, 255, 255, 0.09); border: 1px solid var(--line); text-align: center; }
+.war-dilemma small { display: block; margin-top: 0.15rem; font-size: 10.5px; color: #f5d78f; }
 .war-mini { position: absolute; right: 0.35rem; top: 5rem; width: 5.6rem; border-radius: 1.1rem; border: 1px solid var(--line); background: var(--glass); backdrop-filter: blur(10px); z-index: 9; touch-action: none; padding: 0.2rem; }
 .war-offer { border-color: #38bdf8 !important; display: grid; gap: 0.4rem; }
 .war-offer button { flex: 1; padding: 0.45rem; border-radius: 0.7rem; background: #0284c7; font-weight: 700; }
@@ -259,7 +265,7 @@ input[type='range']::-webkit-slider-thumb { width: 26px; height: 26px; }
 .war-flash { position: absolute; inset: 0; background: #fff; pointer-events: none; z-index: 20; animation: war-flash 1.6s ease-out forwards; }
 @keyframes war-flash { to { opacity: 0; visibility: hidden; } }
 /* Avisos da guerra ficam embaixo, sem cobrir a cidade */
-.app-frame:has(.war) .toast-in { bottom: auto; top: calc(max(20px, env(safe-area-inset-top)) + 9.5rem); }
+.app-frame:has(.war) .toast-in { bottom: auto; top: calc(max(20px, env(safe-area-inset-top)) + 14rem); }
 .app-frame:has(.war) .toast-in p { border-radius: 1rem; background: rgba(11, 15, 23, 0.92); font-size: 13px; padding: 0.6rem 1rem; }
 @media (orientation: landscape) {
   .war-hero { padding-top: 2vh; }

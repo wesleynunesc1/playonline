@@ -3,15 +3,17 @@ import {
   UnitId, WORKS, WorksDef, WorksId, cityFuel, cityGun, cityHp, cityIncome, researchCost, slotsOf, unitCap,
 } from './data';
 
+import { Crate, Nation, NationCmd, extraCap, govern, moodBonus, nationBonus, newNation, stepNation, studyFactor, tradeRate, victoryOf, VICTORIES } from './nation';
+
 /** Simulação da guerra. Roda só no aparelho do criador da sala, em passos de 0,1 s. */
 export const STEP = 0.1;
 export interface Player {
   i: number; name: string; emblem: string; color: string; team: number; bot: number; online: boolean; start: number; alive: boolean;
-  money: number; fuel: number; res: Record<string, number>; cool: Partial<Record<PowerId, number>>; stats: Partial<Record<Stat, number>>; hold: number; quests: string[]; era: number;
+  money: number; fuel: number; res: Record<string, number>; cool: Partial<Record<PowerId, number>>; stats: Partial<Record<Stat, number>>; hold: number; quests: string[]; era: number; n: Nation;
 }
 export interface Works { k: WorksId; left: number; cool: number }
-export interface CityState { id: number; x: number; z: number; owner: number; hp: number; max: number; cap: number; capBy: number; works: Works[]; q: { u: UnitId; left: number }[]; rx: number; rz: number; off: number; cool: number; hit: number; loop: UnitId | ''; dev: number; devLeft: number; deal: { by: number; left: number } | null; ruin: number }
-export interface Unit { i: number; k: UnitId; o: number; x: number; z: number; hp: number; max: number; tx: number; tz: number; go: 0 | 1 | 2; cool: number; off: number; dir: number; hit: number; kills: number; star: number; aim: number }
+export interface CityState { id: number; x: number; z: number; owner: number; hp: number; max: number; cap: number; capBy: number; works: Works[]; q: { u: UnitId; left: number }[]; rx: number; rz: number; off: number; cool: number; hit: number; loop: UnitId | ''; dev: number; devLeft: number; deal: { by: number; left: number } | null; ruin: number; mood: number }
+export interface Unit { i: number; k: UnitId; o: number; x: number; z: number; hp: number; max: number; tx: number; tz: number; go: 0 | 1 | 2; cool: number; off: number; dir: number; hit: number; kills: number; star: number; aim: number; pat: [number, number, number, number] | null; scout: number }
 /** Efeito visual: tipo, origem, destino */
 export type Fx = [kind: string, x1: number, z1: number, x2: number, z2: number, air?: number];
 export interface Zone { k: PowerId; o: number; x: number; z: number; left: number; tick: number }
@@ -19,6 +21,8 @@ export interface Zone { k: PowerId; o: number; x: number; z: number; left: numbe
 export interface Rad { x: number; z: number; r: number; left: number }
 export interface World {
   rads: Rad[];
+  crates: Crate[];
+  wonders: { id: string; o: number; city: number; left: number }[];
   /** Relação entre cada par de jogadores (REL), em matriz simétrica */
   rel: number[];
   offers: { a: number; b: number; k: number; left: number }[];
@@ -36,6 +40,7 @@ export type Cmd =
   | { c: 'cancel'; city: number }
   | { c: 'rally'; city: number; x: number; z: number }
   | { c: 'power'; k: PowerId; x: number; z: number }
+  | NationCmd
   | { c: 'dev'; city: number }
   | { c: 'annex'; city: number }
   | { c: 'era' }
@@ -63,15 +68,15 @@ export const popOf = (w: World, i: number) => citiesOf(w, i).reduce((s, c) => s 
 export function createWorld(list: Setup[], mode: ModeId, minutes: number, rules: string[]): World {
   const humans = list.filter((p) => !p.bot).length;
   const w: World = {
-    rads: [], rel: [], offers: [], ult: [], t: 0, left: minutes ? minutes * 60 : 1e7, mode, rules, units: [], zones: [], fx: [], log: [], seq: 0, event: null, nextEvent: 70, over: null,
+    rads: [], crates: [], wonders: [], rel: [], offers: [], ult: [], t: 0, left: minutes ? minutes * 60 : 1e7, mode, rules, units: [], zones: [], fx: [], log: [], seq: 0, event: null, nextEvent: 70, over: null,
     players: list.map((p, i) => ({
-      i, name: p.name, emblem: p.emblem, color: COLORS[i % COLORS.length], bot: p.bot, online: true, start: p.start, alive: true, hold: 0, quests: [], era: rules.includes('avancado') ? 3 : 1,
+      i, name: p.name, emblem: p.emblem, color: COLORS[i % COLORS.length], bot: p.bot, online: true, start: p.start, alive: true, hold: 0, quests: [], era: rules.includes('avancado') ? 3 : 1, n: newNation(),
       team: mode === 'equipes' ? i % 2 : mode === 'coop' ? (p.bot ? 100 : 0) : i + 10,
       money: rules.includes('rico') ? 6000 : 1200, fuel: rules.includes('rico') ? 2000 : 400, res: {}, cool: {}, stats: {},
     })),
     cities: CITIES.map((c) => {
       const max = Math.round(cityHp(c.level) * (rules.includes('fraco') ? 0.5 : rules.includes('forte') ? 2 : 1));
-      return { id: c.id, x: c.x, z: c.z, owner: -1, hp: max, max, cap: 0, capBy: -1, works: [], q: [], rx: c.x, rz: c.z, off: 0, cool: 0, hit: 0, loop: '' as const, dev: 0, devLeft: 0, deal: null, ruin: 0 };
+      return { id: c.id, x: c.x, z: c.z, owner: -1, hp: max, max, cap: 0, capBy: -1, works: [], q: [], rx: c.x, rz: c.z, off: 0, cool: 0, hit: 0, loop: '' as const, dev: 0, devLeft: 0, deal: null, ruin: 0, mood: 70 };
     }),
   };
   w.rel = w.players.flatMap((a) => w.players.map((b) => (a.i === b.i ? REL.alianca : rules.includes('guerra') && a.team !== b.team ? REL.guerra : a.team === b.team ? REL.alianca : REL.paz)));
@@ -90,7 +95,7 @@ export function createWorld(list: Setup[], mode: ModeId, minutes: number, rules:
 }
 export function spawn(w: World, k: UnitId, o: number, x: number, z: number): Unit {
   const hp = Math.round(UNITS[k].hp * (1 + bonusOf(w, o).armor));
-  const u: Unit = { i: ++w.seq, k, o, x, z, hp, max: hp, tx: x, tz: z, go: 0, cool: rand(0, 0.5), off: 0, dir: 0, hit: 0, kills: 0, star: 0, aim: 0 };
+  const u: Unit = { i: ++w.seq, k, o, x, z, hp, max: hp, tx: x, tz: z, go: 0, cool: rand(0, 0.5), off: 0, dir: 0, hit: 0, kills: 0, star: 0, aim: 0, pat: null, scout: 0 };
   w.units.push(u);
   return u;
 }
@@ -115,6 +120,7 @@ export function bonusOf(w: World, i: number): Record<BonusKey, number> {
     const mine = citiesOf(w, i);
     for (const c of mine) add(LANDMARKS[c.id]?.bonus);
     for (const r in REGION_BONUS) if (w.cities.every((c) => CITY[c.id].region !== r || c.owner === i)) add(REGION_BONUS[r]);
+    nationBonus(w, i, add);
     if (w.event) add(EVENTS[w.event.i].bonus);
     if (hasRule(w, 'renda')) out.income += 0.6;
     if (hasRule(w, 'veloz')) out.speed += 0.5;
@@ -148,26 +154,27 @@ export function incomeOf(w: World, i: number): [number, number] {
     // Cidade contaminada não produz
     if (c.owner !== i || irradiated(w, c.x, c.z)) continue;
     const lvl = CITY[c.id].level;
-    m += cityIncome(lvl) * (1 + c.dev * 0.5);
+    const happy = moodBonus(c.mood);
+    m += cityIncome(lvl) * (1 + c.dev * 0.5) * happy;
     f += cityFuel(lvl) * (1 + c.dev * 0.4);
     for (const k of c.works) {
       if (k.left > 0) continue;
-      m += WORKS[k.k].income ?? 0;
+      m += (WORKS[k.k].income ?? 0) * happy;
       f += WORKS[k.k].fuelOut ?? 0;
     }
   }
   // Cada acordo de comércio ou aliança rende um pouco aos dois
-  const trade = 1 + tradesOf(w, i) * 0.08;
+  const trade = 1 + tradesOf(w, i) * tradeRate(w, i);
   return [Math.max(0, m * (1 + b.income) * trade), Math.max(0, f * (1 + b.fuel) * trade)];
 }
 export const tradesOf = (w: World, i: number) => w.players.filter((p) => p.i !== i && p.alive && p.team !== w.players[i].team && relOf(w, i, p.i) >= REL.comercio).length;
 export const slotsIn = (w: World, c: CityState) => slotsOf(CITY[c.id].level) + c.dev + (w.players[c.owner]?.start === c.id ? 1 : 0);
 export const armySize = (w: World, i: number) => w.units.reduce((n, u) => n + (u.o === i ? 1 : 0), 0);
-export const armyCap = (w: World, i: number) => (mods.get(i)?.nocap ? 200 : unitCap(citiesOf(w, i).length));
-const stat = (p: Player | undefined, s: Stat, n = 1) => {
+export const armyCap = (w: World, i: number) => (mods.get(i)?.nocap ? 200 : unitCap(citiesOf(w, i).length) + extraCap(w, i));
+export const stat = (p: Player | undefined, s: Stat, n = 1) => {
   if (p) p.stats[s] = (p.stats[s] ?? 0) + n;
 };
-const say = (w: World, t: string, k = 'info') => {
+export const say = (w: World, t: string, k = 'info') => {
   w.log = [{ t, k }, ...w.log].slice(0, 12);
 };
 
@@ -200,12 +207,12 @@ export function command(w: World, i: number, cmd: Cmd): string {
         const ring = Math.ceil(Math.sqrt(n));
         const a = n * 2.4;
         const r = n ? 0.22 * ring + 0.05 : 0;
-        Object.assign(u, { tx: Math.max(-40, Math.min(40, cmd.x + Math.cos(a) * r)), tz: Math.max(-44, Math.min(44, cmd.z + Math.sin(a) * r)), go: cmd.hold ? 2 : 1, aim });
+        Object.assign(u, { tx: Math.max(-40, Math.min(40, cmd.x + Math.cos(a) * r)), tz: Math.max(-44, Math.min(44, cmd.z + Math.sin(a) * r)), go: cmd.hold ? 2 : 1, aim, pat: null, scout: 0 });
       });
       return '';
     }
     case 'stop':
-      for (const u of w.units) if (u.o === i && Array.isArray(cmd.u) && cmd.u.includes(u.i)) Object.assign(u, { go: 0, tx: u.x, tz: u.z });
+      for (const u of w.units) if (u.o === i && Array.isArray(cmd.u) && cmd.u.includes(u.i)) Object.assign(u, { go: 0, tx: u.x, tz: u.z, pat: null, scout: 0 });
       return '';
     case 'build': {
       const c = own(cmd.city);
@@ -317,7 +324,7 @@ export function command(w: World, i: number, cmd: Cmd): string {
       const r = RESEARCH.find((x) => x.id === cmd.id);
       const lvl = p.res[cmd.id] ?? 0;
       if (!r || lvl >= 3) return 'Pesquisa completa.';
-      const no = pay([mods.get(i)?.free ? 0 : researchCost(lvl), 0]);
+      const no = pay([mods.get(i)?.free ? 0 : Math.round(researchCost(lvl) * studyFactor(w, i)), 0]);
       if (no) return no;
       p.res[cmd.id] = lvl + 1;
       stat(p, 'research');
@@ -344,7 +351,7 @@ export function command(w: World, i: number, cmd: Cmd): string {
       return '';
     }
   }
-  return 'Ordem desconhecida.';
+  return govern(w, i, cmd, pay) ?? 'Ordem desconhecida.';
 }
 
 /** O que falta para usar um apoio; '' quando liberado */
@@ -513,7 +520,10 @@ export function step(w: World) {
   stepZones(w);
   stepDiplomacy(w);
   if (w.rads.length) stepRads(w, near);
-  if (Math.round(w.t / STEP) % 10 === 0) stepQuests(w);
+  if (Math.round(w.t / STEP) % 10 === 0) {
+    stepQuests(w);
+    stepNation(w);
+  }
   for (const u of w.units) stepUnit(w, u, near, smoked);
   for (const c of w.cities) stepCity(w, c, near, smoked);
   w.units = w.units.filter((u) => u.hp > 0);
@@ -605,6 +615,14 @@ function stepUnit(w: World, u: Unit, near: Near, smoked: (x: number, z: number) 
     const k = Math.hypot(u.tx - u.x, u.tz - u.z);
     if (k < 0.12) {
       u.go = 0;
+      // Patrulha vai e volta; batedor escolhe outro canto do mapa
+      if (u.pat) {
+        const [a, b, e, f] = u.pat;
+        Object.assign(u, { pat: [e, f, a, b], tx: a, tz: b, go: 1 });
+      } else if (u.scout) {
+        const c = w.cities[Math.floor(Math.random() * w.cities.length)];
+        Object.assign(u, { tx: c.x, tz: c.z, go: 1 });
+      }
       return;
     }
     u.dir = Math.atan2(u.tz - u.z, u.tx - u.x);
@@ -726,7 +744,7 @@ function stepCity(w: World, c: CityState, near: Near, smoked: (x: number, z: num
   const before = c.owner;
   if (before >= 0) stat(w.players[before], 'lostCities');
   stat(w.players[taker], 'caps');
-  Object.assign(c, { owner: taker, cap: 0, capBy: -1, q: [], loop: '', devLeft: 0, hp: c.max * 0.35, rx: c.x, rz: c.z + 0.9 });
+  Object.assign(c, { owner: taker, cap: 0, capBy: -1, q: [], loop: '', devLeft: 0, mood: 35, hp: c.max * 0.35, rx: c.x, rz: c.z + 0.9 });
   c.works = c.works.filter((k) => k.k !== 'comando').slice(0, Math.max(0, c.works.length - 1));
   w.players[taker].money += 80 * lvl;
   w.fx.push(['tomada', c.x, c.z, c.x, c.z]);
@@ -839,12 +857,24 @@ function checkEnd(w: World) {
   const alive = w.players.filter((p) => p.alive);
   const teams = new Set(alive.map((p) => p.team));
   const held = w.mode === 'capital' && w.players.some((p) => p.hold >= 180);
-  if (w.left > 0 && teams.size > 1 && !held) return;
+  // Mundo aberto tem outros caminhos para vencer
+  let path = '';
+  let hero = -1;
+  if (w.mode === 'dominio' && Math.round(w.t / STEP) % 20 === 0) for (const p of alive) {
+    const k = victoryOf(w, p.i).findIndex(([a, b]) => a >= b);
+    if (k >= 0) {
+      path = VICTORIES[k].name;
+      hero = p.i;
+      break;
+    }
+  }
+  if (w.left > 0 && teams.size > 1 && !held && hero < 0) return;
   const rank = [...w.players].sort((a, b) => Number(b.alive) - Number(a.alive) || scoreOf(w, b.i) - scoreOf(w, a.i) || popOf(w, b.i) - popOf(w, a.i)).map((p) => p.i);
+  if (hero >= 0) rank.unshift(...rank.splice(rank.indexOf(hero), 1));
   const first = w.players[rank[0]];
   w.over = {
     rank,
-    title: w.mode === 'coop' ? (first.bot ? 'A máquina venceu!' : 'Os humanos venceram!') : w.mode === 'equipes' ? `Time ${first.team ? 'B' : 'A'} venceu!` : `${first.name} venceu!`,
+    title: w.mode === 'coop' ? (first.bot ? 'A máquina venceu!' : 'Os humanos venceram!') : w.mode === 'equipes' ? `Time ${first.team ? 'B' : 'A'} venceu!` : `${first.name} venceu${path ? `: ${path}` : '!'}`,
   };
 }
 
@@ -859,6 +889,8 @@ export function eyes(w: World, i: number): [number, number, number][] {
     const extra = c.works.some((k) => k.k === 'radar' && k.left <= 0) ? 5 : c.works.some((k) => k.k === 'vigia' && k.left <= 0) ? 1.5 : 0;
     out.push([c.x, c.z, (2.6 + extra) * v]);
   }
+  // Cidades vigiadas por espiões
+  for (const s of w.players[i].n.see) for (const c of w.cities) if (c.owner === s.o) out.push([c.x, c.z, 2.6]);
   for (const z of w.zones) if (z.k === 'satelite' && allied(w, z.o, i)) out.push([z.x, z.z, POWERS.satelite.radius]);
   return out;
 }
@@ -867,7 +899,7 @@ export function eyes(w: World, i: number): [number, number, number][] {
 const SMALL = { bala: 1, canhao: 1, missil: 1, baixa: 1 };
 const r2 = (n: number) => Math.round(n * 100) / 100;
 export type Pack = { t: number; l: number; u: number[]; fx: Fx[]; z: Zone[]; r: Rad[]; full?: Full };
-export interface Full { rel: number[]; offers: World['offers']; ult: World['ult']; cities: unknown[]; players: Player[]; log: World['log']; event: World['event']; over: World['over'] }
+export interface Full { crates: Crate[]; wonders: World['wonders']; rel: number[]; offers: World['offers']; ult: World['ult']; cities: unknown[]; players: Player[]; log: World['log']; event: World['event']; over: World['over'] }
 export function pack(w: World, full: boolean): Pack {
   const u: number[] = [];
   for (const x of w.units) u.push(x.i, UNIT_IDS.indexOf(x.k), x.o, Math.round(x.x * 100), Math.round(x.z * 100), Math.max(1, Math.round((x.hp / x.max) * 100)), Math.round(x.dir * 50), x.go, (x.off > 0 ? 1 : 0) + x.star * 2);
@@ -878,7 +910,8 @@ export function pack(w: World, full: boolean): Pack {
     fx: [...w.fx.filter((f) => f[0] in SMALL).slice(-70), ...w.fx.filter((f) => !(f[0] in SMALL)).slice(-120)].map((f) => [f[0], r2(f[1]), r2(f[2]), r2(f[3]), r2(f[4]), f[5] ?? 0] as Fx),
     ...(full ? {
       full: {
-        cities: w.cities.map((c) => [c.owner, Math.round((c.hp / c.max) * 100), c.max, r2(c.cap), c.capBy, c.works.map((k) => [k.k, Math.ceil(k.left), Math.ceil(k.cool)]), c.q.map((q) => [q.u, Math.ceil(q.left)]), r2(c.rx), r2(c.rz), c.off > 0 ? 1 : 0, c.hit > 0 ? 1 : 0, c.loop, c.dev, Math.ceil(c.devLeft), c.deal ? [c.deal.by, Math.ceil(c.deal.left)] : 0, r2(c.ruin)]),
+        cities: w.cities.map((c) => [c.owner, Math.round((c.hp / c.max) * 100), c.max, r2(c.cap), c.capBy, c.works.map((k) => [k.k, Math.ceil(k.left), Math.ceil(k.cool)]), c.q.map((q) => [q.u, Math.ceil(q.left)]), r2(c.rx), r2(c.rz), c.off > 0 ? 1 : 0, c.hit > 0 ? 1 : 0, c.loop, c.dev, Math.ceil(c.devLeft), c.deal ? [c.deal.by, Math.ceil(c.deal.left)] : 0, r2(c.ruin), Math.round(c.mood)]),
+        crates: w.crates.map((c) => ({ ...c, x: r2(c.x), z: r2(c.z) })), wonders: w.wonders,
         rel: w.rel, offers: w.offers, ult: w.ult,
         players: w.players.map((p) => ({ ...p, money: Math.floor(p.money), fuel: Math.floor(p.fuel) })), log: w.log, event: w.event, over: w.over,
       },
@@ -897,7 +930,7 @@ export function unpack(w: World, p: Pack) {
     const [i, k, o, x, z, hp, dir, go, off] = p.u.slice(n, n + 9);
     const kind = UNIT_IDS[k];
     if (!kind || !w.players[o]) continue;
-    const u = old.get(i) ?? ({ i, k: kind, o, tx: 0, tz: 0, cool: 0, hit: 0, max: 100 } as Unit);
+    const u = old.get(i) ?? ({ i, k: kind, o, tx: 0, tz: 0, cool: 0, hit: 0, max: 100, pat: null, scout: 0 } as unknown as Unit);
     Object.assign(u, { k: kind, o, x: x / 100, z: z / 100, hp, max: 100, dir: dir / 50, go: go as 0, off: off & 1, star: off >> 1 });
     units.push(u);
   }
@@ -909,14 +942,16 @@ export function unpack(w: World, p: Pack) {
   w.event = f.event;
   w.over = f.over;
   w.rel = f.rel;
+  w.crates = f.crates;
+  w.wonders = f.wonders;
   w.offers = f.offers;
   w.ult = f.ult;
-  (f.cities as [number, number, number, number, number, [WorksId, number, number][], [UnitId, number][], number, number, number, number, UnitId | '', number, number, 0 | [number, number], number][]).forEach((c, n) => {
+  (f.cities as [number, number, number, number, number, [WorksId, number, number][], [UnitId, number][], number, number, number, number, UnitId | '', number, number, 0 | [number, number], number, number][]).forEach((c, n) => {
     const s = w.cities[n];
     if (!s) return;
     Object.assign(s, {
       owner: c[0], hp: (c[1] / 100) * c[2], max: c[2], cap: c[3], capBy: c[4], works: c[5].filter((k) => WORKS[k[0]]).map((k) => ({ k: k[0], left: k[1], cool: k[2] })),
-      q: c[6].filter((q) => UNITS[q[0]]).map((q) => ({ u: q[0], left: q[1] })), rx: c[7], rz: c[8], off: c[9], hit: c[10], loop: c[11], dev: c[12], devLeft: c[13], deal: c[14] ? { by: c[14][0], left: c[14][1] } : null, ruin: c[15],
+      q: c[6].filter((q) => UNITS[q[0]]).map((q) => ({ u: q[0], left: q[1] })), rx: c[7], rz: c[8], off: c[9], hit: c[10], loop: c[11], dev: c[12], devLeft: c[13], deal: c[14] ? { by: c[14][0], left: c[14][1] } : null, ruin: c[15], mood: c[16],
     });
   });
 }
