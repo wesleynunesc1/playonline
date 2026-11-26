@@ -1,9 +1,9 @@
-# Play Online
+# Play Online: Magnata do Cassino
 
-World Empire (estratégia, solo e no Wi-Fi) e Jogo da Cobra.
+Jogo de gerenciamento em 3D: construa e administre um resort cassino em andares, com dinheiro fictício (sem apostas reais nem compras).
 
 - `npm run dev`: desenvolvimento
-- `node scripts/test-gameplay.mjs` e `node scripts/test-lan.mjs`: testes
-- Imagens da Terra em `public/img`: NASA Blue Marble e Black Marble (domínio público), reprojetadas para o mapa
-- Ceará: malha municipal e Censo 2022 do IBGE. Bandeiras: Twemoji Country Flags (CC-BY 4.0)
-- `node scripts/test-ceara.mjs`: testes da Guerra no Ceará
+- `src/casino/data.ts`: salas, hóspedes, equipe, rivais e cidades (mude números aqui)
+- `src/casino/sim.ts`: economia, missões, eventos, salvamento e renda com o app fechado
+- `src/casino/scene.ts`: cenário 3D (three.js)
+- Mod menu: senha só na variável `ADMIN_PIN` da Vercel, conferida em `api/admin.ts`
