@@ -21,8 +21,8 @@ export default {
         }
       },
       fontFamily: {
-        sans: ['Bandeiras', 'Inter', 'system-ui', '-apple-system', 'sans-serif'],
-        mono: ['Bandeiras', 'JetBrains Mono', 'ui-monospace', 'monospace']
+        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        mono: ['JetBrains Mono', 'ui-monospace', 'monospace']
       }
     },
   },

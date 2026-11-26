@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { hooks, save } from '../../engine/state';
-import { Button } from '../common/Button';
-import { Modal } from '../common/Modal';
+import { persist as save, say } from '../casino/sim';
+import { Button } from './common/Button';
+import { Modal } from './common/Modal';
 
 /** Leva todo o progresso para outro aparelho por um código ou arquivo */
-const KEYS = ['WORLD_EMPIRE_V3', 'WORLD_EMPIRE_META', 'PLAY_ONLINE_WAR', 'PLAY_ONLINE_WAR_SAVE', 'PLAY_ONLINE_WAR_SAVE1', 'PLAY_ONLINE_WAR_SAVE2', 'PLAY_ONLINE_WAR_FAV', 'PLAY_ONLINE_WAR_PREFS', 'PLAY_ONLINE_SNAKE_BEST', 'PLAY_ONLINE_LAN'];
+const KEYS = ['PLAY_ONLINE_CASSINO', 'PLAY_ONLINE_CASSINO_HQ'];
 const PREFIX = 'PO1.';
 
 async function pipe(data: Uint8Array, stream: CompressionStream | DecompressionStream) {
@@ -27,7 +27,7 @@ export async function readCode(code: string): Promise<Record<string, string>> {
   for (const k of KEYS) {
     const v = all[k];
     if (typeof v !== 'string') continue;
-    if (k !== 'PLAY_ONLINE_SNAKE_BEST') JSON.parse(v); // recusa dados corrompidos
+    JSON.parse(v); // recusa dados corrompidos
     out[k] = v;
   }
   if (!Object.keys(out).length) throw new Error('vazio');
@@ -43,7 +43,7 @@ export const BackupModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     setCode(c);
     try {
       await navigator.clipboard.writeText(c);
-      hooks.toast('Código copiado!', 'success');
+      say('Código copiado!');
     } catch { /* a pessoa copia da caixa */ }
   };
   const download = async () => {
@@ -61,7 +61,7 @@ export const BackupModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       location.reload();
     } catch {
       setSure(false);
-      hooks.toast('Código inválido. Nada foi mudado.', 'danger');
+      say('Código inválido. Nada foi mudado.');
     }
   };
   return (

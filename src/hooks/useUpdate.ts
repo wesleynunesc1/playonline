@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { create } from 'zustand';
-import { hooks, save } from '../engine/state';
+import { persist as save, say } from '../casino/sim';
 
 const CHECK_MS = 5 * 60_000;
 const SCRIPT = /\/assets\/index-[\w-]+\.js/;
@@ -33,7 +33,7 @@ export async function applyUpdate() {
     location.reload();
   } catch {
     useUpdate.setState({ busy: false });
-    hooks.toast('Sem conexão para atualizar.', 'danger');
+    say('Sem conexão para atualizar.');
   }
 }
 /** Botão do menu: atualiza se houver versão nova; senão, avisa que está em dia */
@@ -41,9 +41,9 @@ export async function checkNow() {
   useUpdate.setState({ busy: true });
   try {
     if (await hasNewVersion()) return applyUpdate();
-    hooks.toast('Você já está na versão mais recente.', 'success');
+    say('Você já está na versão mais recente.');
   } catch {
-    hooks.toast('Sem conexão para verificar.', 'danger');
+    say('Sem conexão para verificar.');
   }
   useUpdate.setState({ busy: false });
 }

@@ -1,11 +1,11 @@
 {
-  "name": "Play Online: World Empire",
-  "short_name": "World Empire",
+  "name": "Play Online: Magnata do Cassino",
+  "short_name": "Magnata",
   "start_url": "/",
   "display": "fullscreen",
   "orientation": "any",
-  "background_color": "#05070f",
-  "theme_color": "#0a0d14",
+  "background_color": "#1a0630",
+  "theme_color": "#1a0630",
   "lang": "pt-BR",
   "icons": [{ "src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }, { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
 }

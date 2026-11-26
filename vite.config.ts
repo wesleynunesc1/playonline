@@ -6,7 +6,7 @@ const devApi = (): Plugin => ({
   name: 'dev-api',
   configureServer(server) {
     server.middlewares.use('/api', async (req, res, next) => {
-      const name = /^\/(lan|admin)$/.exec(req.url ?? '')?.[1];
+      const name = /^\/(admin)$/.exec(req.url ?? '')?.[1];
       if (!name) return next();
       const chunks: Buffer[] = [];
       for await (const c of req) chunks.push(c as Buffer);
@@ -22,4 +22,5 @@ const devApi = (): Plugin => ({
 export default defineConfig({
   plugins: [react(), devApi()],
   server: { port: 3000, host: true },
+  build: { chunkSizeWarningLimit: 900 }, // three.js sozinho passa de 500 kB
 });
