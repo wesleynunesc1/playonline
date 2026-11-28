@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { sound } from '../utils/audio';
 import {
-  CASH_SECONDS, CITIES, EVENTS, EventId, FLOORS, FRANCHISE, GUESTS, GuestId, OFFLINE_MAX, RIVALS, ROOM, ROOMS, RoomDef, SHOP, STAFF, STAFF_MAX, STARS, StaffId, cityMult, cityName,
+  CASH_SECONDS, CITIES, EVENTS, EventId, FLOORS, GUESTS, GuestId, OFFLINE_MAX, RIVALS, ROOM, ROOMS, RoomDef, SHOP, STAFF, STAFF_MAX, STARS, StaffId, TUNE, cityMult, cityName,
 } from './data';
 
 /** Economia do Magnata Fitness. Tudo roda no aparelho e continua rendendo com o app fechado. */
@@ -11,8 +11,10 @@ export interface Gym {
   rooms: Record<string, Room>; staff: Record<StaffId, number>; deco: number; mkt: number; targets: GuestId[];
   dobro: number; event: { id: EventId; left: number; room?: string } | null; nextEvent: number;
   quest: number; beaten: number; collects: number; day: string; streak: number; t: number; played: number;
-  /** Unidades antigas da rede: continuam rendendo uma parte do lucro */
+  /** Unidades já abertas da rede (lucro que tinham ao passar a vez) */
   units: { city: number; income: number }[]; won: boolean;
+  /** Pedido dos alunos: subir uma sala até um nível antes do prazo */
+  request: { room: string; target: number; left: number; cash: number } | null; nextReq: number;
 }
 const KEY = 'PLAY_ONLINE_ACADEMIA';
 try {
@@ -22,7 +24,7 @@ const fresh = (city = 0, gems = 0, streak = 0, day = '', units: Gym['units'] = [
   v: 1, money: 30, gems, earned: 0, city, floors: 1,
   rooms: { recepcao: { lv: 1, cash: 0, mgr: true }, musculacao: { lv: 1, cash: 0, mgr: false } },
   staff: { professor: 0, atendente: 0, personal: 0, limpeza: 0 }, deco: 0, mkt: 0, targets: [],
-  dobro: 0, event: null, nextEvent: 60, quest: 0, beaten: 0, collects: 0, day, streak, t: Date.now(), played: 0, units, won,
+  dobro: 0, event: null, nextEvent: 60, quest: 0, beaten: 0, collects: 0, day, streak, t: Date.now(), played: 0, units, won, request: null, nextReq: 90,
 });
 export let C: Gym = fresh();
 /** Trapaças do mod menu (não ficam salvas) */
@@ -30,31 +32,33 @@ export const mod = { income: 1, free: false };
 
 // ===== Fórmulas =====
 export const lv = (id: string) => C.rooms[id]?.lv ?? 0;
-export const equip = (d: RoomDef, l: number) => (l > 0 ? Math.min(d.max, 1 + Math.floor(l / 5)) : 0);
+export const equip = (d: RoomDef, l: number) => (l > 0 ? Math.min(d.max, 1 + Math.floor(l / TUNE.equipEvery)) : 0);
 export const ticket = (d: RoomDef) => Math.max(5, (d.cost / 100) * (d.svc / d.seats));
 export const capacity = (d: RoomDef, l: number) => (equip(d, l) * d.seats) / d.svc;
-export const roomCost = (d: RoomDef, l: number) => (d.kind === 'lobby' ? 40 * Math.pow(1.17, l) : l === 0 ? d.cost : Math.max(d.cost, 20) * Math.pow(1.15, l));
+/** Preços sobem a cada cidade nova, um pouco menos que o lucro */
+const cc = () => Math.pow(TUNE.costCity, C.city);
+export const roomCost = (d: RoomDef, l: number) => cc() * (d.kind === 'lobby' ? 40 * Math.pow(TUNE.lobbyGrow, l) : l === 0 ? d.cost : Math.max(d.cost, 20) * Math.pow(TUNE.grow, l));
 export const ROOM_MAX = 100;
 export const costN = (d: RoomDef, l: number, n: number) => {
   let s = 0;
   for (let i = 0; i < n && l + i < ROOM_MAX; i++) s += roomCost(d, l + i);
   return s;
 };
-export const mgrCost = (d: RoomDef) => Math.max(400, d.cost * 12);
-export const staffCost = (id: StaffId, l: number) => STAFF.find((s) => s.id === id)!.base * Math.pow(1.6, l);
-export const decoCost = (l: number) => 800 * Math.pow(1.55, l);
-export const mktCost = (l: number) => 600 * Math.pow(1.5, l);
+export const mgrCost = (d: RoomDef) => cc() * Math.max(400, d.cost * 12);
+export const staffCost = (id: StaffId, l: number) => cc() * STAFF.find((s) => s.id === id)!.base * Math.pow(TUNE.staffGrow, l);
+export const decoCost = (l: number) => cc() * 800 * Math.pow(TUNE.staffGrow, l);
+export const mktCost = (l: number) => cc() * 600 * Math.pow(TUNE.staffGrow, l);
 export const UPG_MAX = 40;
 export const targetSlots = () => (C.mkt >= 20 ? 3 : C.mkt >= 8 ? 2 : C.mkt >= 1 ? 1 : 0);
-export const floorCost = (f: number) => FLOORS[f]?.cost ?? Infinity;
+export const floorCost = (f: number) => cc() * (FLOORS[f]?.cost ?? Infinity);
 export const levelsSum = () => ROOMS.reduce((s, d) => s + (d.kind === 'lobby' ? 0 : lv(d.id)), 0);
 export const stars = () => STARS.filter((t) => levelsSum() >= t).length;
-export const rivalFame = (i: number) => RIVALS[i].fame * Math.pow(2, C.city);
+export const rivalFame = (i: number) => RIVALS[i].fame * Math.pow(TUNE.rivalCity, C.city);
 export const guestsOpen = () => GUESTS.filter((g) => stars() >= g.stars + 1 || g.stars === 0);
 
 export interface RoomStat { demand: number; cap: number; served: number; income: number; spend: number }
-export interface Stats { network: number; arrivals: number; sat: number; income: number; rooms: Record<string, RoomStat>; mix: Record<string, number> }
-export let S: Stats = { network: 0, arrivals: 0, sat: 1, income: 0, rooms: {}, mix: {} };
+export interface Stats { brand: number; arrivals: number; sat: number; income: number; rooms: Record<string, RoomStat>; mix: Record<string, number> }
+export let S: Stats = { brand: 1, arrivals: 0, sat: 1, income: 0, rooms: {}, mix: {} };
 
 /** Calcula alunos, ocupação e lucro de cada sala */
 export function compute(): Stats {
@@ -65,7 +69,7 @@ export function compute(): Stats {
   for (const g of open) mix[g.id] /= tot;
   const ev = C.event;
   const sat0 = 1 + 0.03 * (C.staff.personal + C.staff.limpeza) + 0.01 * C.deco + (ev?.id === 'aulao' ? 0.3 : 0);
-  const arrivals = 0.45 * (1 + 0.2 * (lv('recepcao') - 1)) * (1 + 0.05 * C.deco) * (1 + 0.06 * C.mkt) * (ev?.id === 'verao' ? 2 : 1);
+  const arrivals = 0.45 * (1 + 0.2 * (lv('recepcao') - 1)) * (1 + 0.05 * C.deco) * (1 + 0.06 * C.mkt) * (ev?.id === 'verao' ? 2 : 1) * (1 + 0.15 * C.units.length);
   const rooms: Record<string, RoomStat> = {};
   let want = 0, lost = 0;
   const pass: { d: RoomDef; demand: number; spend: number }[] = [];
@@ -93,15 +97,15 @@ export function compute(): Stats {
     const served = Math.min(dem, cap);
     const staff = 1 + 0.06 * (d.game ? C.staff.professor : C.staff.atendente);
     const evm = (ev?.id === 'promo' && d.id === 'musculacao' ? 3 : 1) * (ev?.id === 'campeonato' && ev.room === d.id ? 2 : 1);
-    const inc = served * ticket(d) * l * Math.pow(2, Math.floor(l / 25)) * spend * staff * cityMult(C.city) * (C.dobro > 0 ? 2 : 1) * evm * mod.income;
+    const inc = served * ticket(d) * l * Math.pow(2, Math.floor(l / 25)) * spend * staff * cityMult(C.city) * (C.dobro > 0 ? 2 : 1) * evm * brand() * mod.income;
     rooms[d.id] = { demand: dem, cap, served, income: inc, spend };
     income += inc;
   }
-  return (S = { network: network(), arrivals: arrivals * sat, sat, income, rooms, mix });
+  return (S = { brand: brand(), arrivals: arrivals * sat, sat, income, rooms, mix });
 }
 
-/** Lucro por segundo que as unidades antigas da rede mandam */
-export const network = () => C.units.reduce((s, u) => s + u.income, 0) * mod.income;
+/** Cada academia da rede deixa a marca mais forte: mais lucro e mais alunos em todas */
+export const brand = () => 1 + TUNE.brand * C.units.length;
 
 // ===== Loja reativa da interface =====
 export const useGym = create<{ v: number; offline: number; toast: string; quest: boolean; won: boolean }>(() => ({ v: 0, offline: 0, toast: '', quest: false, won: false }));
@@ -113,7 +117,7 @@ export function say(text: string) {
   toastTimer = setTimeout(() => useGym.setState({ toast: '' }), 3200);
 }
 /** Ganchos para a cena 3D reagir (dinheiro voando, festa) */
-export const fx = { collect: (_id: string, _amount: number) => {}, rebuild: () => {} };
+export const fx = { collect: (_id: string, _amount: number) => {}, rebuild: () => {}, level: (_id: string, _lv: number, _milestone: boolean) => {} };
 
 // ===== Ações =====
 const pay = (n: number) => {
@@ -138,6 +142,12 @@ export function upgrade(id: string, n: number) {
   C.rooms[id] = { lv: l + steps, cash: C.rooms[id]?.cash ?? 0, mgr: C.rooms[id]?.mgr ?? false };
   sound.playBuy();
   if (!l) say(`${d.icon} ${d.name} inaugurado!`);
+  const milestone = Math.floor((l + steps) / 25) > Math.floor(l / 25);
+  if (milestone) {
+    sound.playTechUnlocked();
+    say(`⭐ ${d.name} nível ${Math.floor((l + steps) / 25) * 25}: lucro em dobro!`);
+  }
+  fx.level(id, l + steps, milestone);
   done();
 }
 /** Quantos níveis dá para comprar agora (botão MÁX) */
@@ -245,12 +255,12 @@ export function claimVip() {
 /** Abre a próxima unidade da rede em outra cidade. A atual vira franquia e continua rendendo */
 export function moveCity() {
   if (C.beaten < RIVALS.length) return;
-  const units = [...C.units, { city: C.city, income: compute().income * FRANCHISE }];
+  const units = [...C.units, { city: C.city, income: compute().income }];
   const next = fresh(C.city + 1, C.gems + 25, C.streak, C.day, units, C.won);
   next.quest = C.quest;
   C = next;
   sound.playVictory();
-  say(`🏗️ Academia de ${cityName(C.city)} aberta! Tudo rende ${cityMult(C.city)}x`);
+  say(`🏗️ Academia de ${cityName(C.city)} aberta! A marca agora dá +${Math.round((brand() - 1) * 100)}% de lucro`);
   done(true);
 }
 export function startEvent(id: EventId) {
@@ -263,46 +273,47 @@ export function startEvent(id: EventId) {
 }
 
 // ===== Missões =====
-interface Quest { text: string; need: number; get: () => number; gems: number; cash: number }
-const q = (text: string, need: number, get: () => number, gems: number, cash = 0): Quest => ({ text, need, get, gems, cash });
+/** go: sala alvo, ou o que a seta deve mostrar ('mgr', 'up', 'cash', 'p:painel', 'floor') */
+interface Quest { text: string; need: number; get: () => number; gems: number; cash: number; go: string }
+const q = (text: string, need: number, get: () => number, gems: number, cash = 0, go = 'up'): Quest => ({ text, need, get, gems, cash, go });
 const mgrs = () => ROOMS.filter((d) => d.kind !== 'lobby' && C.rooms[d.id]?.mgr).length;
 const QUESTS: Quest[] = [
-  q('Melhore a Musculação ao nível 5', 5, () => lv('musculacao'), 2, 60),
-  q('Melhore a Recepção ao nível 3', 3, () => lv('recepcao'), 2, 100),
-  q('Construa as Esteiras', 1, () => lv('esteiras'), 3, 200),
-  q('Recolha o dinheiro das salas 10 vezes', 10, () => C.collects, 2, 300),
-  q('Contrate um gerente', 1, mgrs, 5, 500),
-  q('Construa o Vestiário', 1, () => lv('vestiario'), 3, 800),
-  q('Melhore a estrutura (nível 2)', 2, () => C.deco, 3, 1_000),
-  q('Faça marketing (nível 1)', 1, () => C.mkt, 3, 1_000),
-  q('Musculação no nível 25', 25, () => lv('musculacao'), 5, 3_000),
-  q('Abra o Andar Funcional', 2, () => C.floors, 5, 5_000),
-  q('Construa o Spinning', 1, () => lv('spinning'), 4, 8_000),
-  q('Treine os professores (nível 3)', 3, () => C.staff.professor, 4, 10_000),
-  q('Construa o Funcional', 1, () => lv('funcional'), 4, 15_000),
-  q('Ganhe 2 estrelas', 2, stars, 6, 20_000),
-  q(`Passe a ${RIVALS[0].name} no ranking`, 1, () => C.beaten, 6, 30_000),
-  q('Gerente em 4 salas', 4, mgrs, 6, 50_000),
-  q('Abra o andar de Lutas e Dança', 3, () => C.floors, 8, 100_000),
-  q('Construa o Ringue de Lutas', 1, () => lv('ringue'), 6, 200_000),
-  q('Ganhe 3 estrelas', 3, stars, 8, 400_000),
-  q(`Passe a ${RIVALS[2].name} no ranking`, 3, () => C.beaten, 8, 800_000),
-  q('Abra o andar Bem-estar', 4, () => C.floors, 10, 2_000_000),
-  q('Construa a Natação', 1, () => lv('natacao'), 8, 5_000_000),
-  q('Ganhe 4 estrelas', 4, stars, 10, 10_000_000),
-  q('Abra a Cobertura Premium', 5, () => C.floors, 12, 40_000_000),
-  q('Construa o Personal VIP', 1, () => lv('vip'), 10, 80_000_000),
-  q('Ganhe 5 estrelas', 5, stars, 15, 200_000_000),
-  q('Seja a academia número 1 da cidade', RIVALS.length, () => C.beaten, 20, 500_000_000),
-  q('Abra a segunda unidade da rede', 1, () => C.units.length, 25),
-  q('Tenha 4 academias na rede', 3, () => C.units.length, 30),
-  q(`Tenha ${CITIES.length} academias na rede`, CITIES.length - 1, () => C.units.length, 50),
+  q('Melhore a Musculação ao nível 5', 5, () => lv('musculacao'), 2, 60, 'musculacao'),
+  q('Melhore a Recepção ao nível 3', 3, () => lv('recepcao'), 2, 100, 'recepcao'),
+  q('Construa as Esteiras', 1, () => lv('esteiras'), 3, 200, 'esteiras'),
+  q('Recolha o dinheiro das salas 10 vezes', 10, () => C.collects, 2, 300, 'cash'),
+  q('Contrate um gerente', 1, mgrs, 5, 500, 'mgr'),
+  q('Construa o Vestiário', 1, () => lv('vestiario'), 3, 800, 'vestiario'),
+  q('Melhore a estrutura (nível 2)', 2, () => C.deco, 3, 1_000, 'p:decoracao'),
+  q('Faça marketing (nível 1)', 1, () => C.mkt, 3, 1_000, 'p:marketing'),
+  q('Musculação no nível 25', 25, () => lv('musculacao'), 5, 3_000, 'musculacao'),
+  q('Abra o Andar Funcional', 2, () => C.floors, 5, 5_000, 'floor'),
+  q('Construa o Spinning', 1, () => lv('spinning'), 4, 8_000, 'spinning'),
+  q('Treine os professores (nível 3)', 3, () => C.staff.professor, 4, 10_000, 'p:equipe'),
+  q('Construa o Funcional', 1, () => lv('funcional'), 4, 15_000, 'funcional'),
+  q('Ganhe 2 estrelas', 2, stars, 6, 20_000, 'up'),
+  q(`Passe a ${RIVALS[0].name} no ranking`, 1, () => C.beaten, 6, 30_000, 'p:rede'),
+  q('Gerente em 4 salas', 4, mgrs, 6, 50_000, 'mgr'),
+  q('Abra o andar de Lutas e Dança', 3, () => C.floors, 8, 100_000, 'floor'),
+  q('Construa o Ringue de Lutas', 1, () => lv('ringue'), 6, 200_000, 'ringue'),
+  q('Ganhe 3 estrelas', 3, stars, 8, 400_000, 'up'),
+  q(`Passe a ${RIVALS[2].name} no ranking`, 3, () => C.beaten, 8, 800_000, 'p:rede'),
+  q('Abra o andar Bem-estar', 4, () => C.floors, 10, 2_000_000, 'floor'),
+  q('Construa a Natação', 1, () => lv('natacao'), 8, 5_000_000, 'natacao'),
+  q('Ganhe 4 estrelas', 4, stars, 10, 10_000_000, 'up'),
+  q('Abra a Cobertura Premium', 5, () => C.floors, 12, 40_000_000, 'floor'),
+  q('Construa o Personal VIP', 1, () => lv('vip'), 10, 80_000_000, 'vip'),
+  q('Ganhe 5 estrelas', 5, stars, 15, 200_000_000, 'up'),
+  q('Seja a academia número 1 da cidade', RIVALS.length, () => C.beaten, 20, 500_000_000, 'p:rede'),
+  q('Abra a segunda unidade da rede', 1, () => C.units.length, 25, 0, 'p:rede'),
+  q('Tenha 4 academias na rede', 3, () => C.units.length, 30, 0, 'p:rede'),
+  q(`Tenha ${CITIES.length} academias na rede`, CITIES.length - 1, () => C.units.length, 50, 0, 'p:rede'),
 ];
 export function quest() {
   if (C.quest < QUESTS.length) return QUESTS[C.quest];
   const n = C.quest - QUESTS.length + 1;
   const goal = 1e9 * Math.pow(10, n) * cityMult(C.city);
-  return q(`Lucre ${money(goal)} no total`, goal, () => C.earned, 10);
+  return q(`Lucre ${money(goal)} no total`, goal, () => C.earned, 10, 0, 'up');
 }
 export function claimQuest() {
   const k = quest();
@@ -313,6 +324,49 @@ export function claimQuest() {
   sound.playTechUnlocked();
   say(`🎯 Missão cumprida: +${k.gems} 🏅`);
   done();
+}
+
+/** Para onde a seta do guia aponta agora: id da sala, 'p:painel' ou 'floor' */
+export function guide(): string {
+  const go = quest().go;
+  const built = ROOMS.filter((d) => d.floor < C.floors && lv(d.id) && d.kind !== 'lobby');
+  if (go === 'mgr') return built.find((d) => !C.rooms[d.id].mgr)?.id ?? 'p:equipe';
+  if (go === 'cash') return built.slice().sort((a, b) => C.rooms[b.id].cash - C.rooms[a.id].cash)[0]?.id ?? 'musculacao';
+  if (go === 'up') return built.slice().sort((a, b) => roomCost(a, lv(a.id)) - roomCost(b, lv(b.id)))[0]?.id ?? 'musculacao';
+  if (go === 'floor' && C.floors >= FLOORS.length) return 'p:rede';
+  return go;
+}
+
+/** Pedidos dos alunos: aparecem de tempos em tempos e dão prêmio se cumpridos no prazo */
+function requests(dt: number) {
+  const r = C.request;
+  if (r) {
+    if (lv(r.room) >= r.target) {
+      C.money += r.cash;
+      C.earned += r.cash;
+      C.gems += 2;
+      C.request = null;
+      C.nextReq = 120 + Math.random() * 120;
+      sound.playVictory();
+      say(`🙌 Pedido atendido! +${money(r.cash)} e 2 🏅`);
+    } else if ((r.left -= dt) <= 0) {
+      C.request = null;
+      C.nextReq = 120 + Math.random() * 120;
+      say('😕 O pedido dos alunos não foi atendido a tempo');
+    }
+    return;
+  }
+  if ((C.nextReq -= dt) > 0) return;
+  const pool = ROOMS.filter((d) => d.floor < C.floors && d.kind !== 'lobby' && lv(d.id) && lv(d.id) < ROOM_MAX);
+  const d = pool[Math.floor(Math.random() * pool.length)];
+  if (!d) return;
+  const l = lv(d.id);
+  let n = 2 + Math.floor(Math.random() * 5);
+  while (n > 1 && costN(d, l, n) > C.money + S.income * 120) n--;
+  const cost = costN(d, l, n);
+  C.request = { room: d.id, target: Math.min(ROOM_MAX, l + n), left: 150, cash: Math.max(50, cost * 0.6 + S.income * 30) };
+  sound.playSonar();
+  say(`📣 Os alunos pedem: ${d.name} no nível ${l + n}!`);
 }
 
 // ===== Tempo =====
@@ -328,14 +382,6 @@ export function tick(dt: number) {
 function step(dt: number) {
   const s = compute();
   C.played += dt;
-  C.money += s.network * dt;
-  C.earned += s.network * dt;
-  // Fim da história: a rede chegou a todas as cidades e a última unidade é a número 1
-  if (!C.won && C.units.length >= CITIES.length - 1 && C.beaten >= RIVALS.length) {
-    C.won = true;
-    useGym.setState({ won: true });
-    sound.playVictory();
-  }
   for (const id in s.rooms) {
     const r = C.rooms[id];
     const inc = s.rooms[id].income * dt;
@@ -345,6 +391,7 @@ function step(dt: number) {
     } else r.cash = Math.min(Math.max(r.cash, s.rooms[id].income * CASH_SECONDS), r.cash + inc);
   }
   if (C.dobro > 0) C.dobro = Math.max(0, C.dobro - dt);
+  requests(dt);
   const ev = C.event;
   if (ev && (ev.left -= dt) <= 0) {
     if (ev.id === 'campeonato' && ev.room) {
@@ -365,6 +412,12 @@ function step(dt: number) {
     C.gems += g;
     say(`🏆 Você passou a ${RIVALS[C.beaten].name}! +${g} 🏅`);
     C.beaten++;
+    sound.playVictory();
+  }
+  // Fim da história: a rede chegou a todas as cidades e a última unidade é a número 1
+  if (!C.won && C.units.length >= CITIES.length - 1 && C.beaten >= RIVALS.length) {
+    C.won = true;
+    useGym.setState({ won: true });
     sound.playVictory();
   }
   const k = quest();
@@ -399,7 +452,7 @@ export function load() {
   }
   const away = Math.min(OFFLINE_MAX, Math.max(0, (Date.now() - C.t) / 1000));
   const s = compute();
-  let gain = away > 30 ? s.network * away : 0;
+  let gain = 0;
   if (away > 30) for (const id in s.rooms) {
     const r = C.rooms[id];
     const inc = s.rooms[id].income * away;

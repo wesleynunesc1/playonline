@@ -17,9 +17,9 @@ export const SLOTS: [number, number, number, number][] = [[-6.9, -3.6, 12.4, 10.
 export const FLOORS: FloorDef[] = [
   { name: 'Térreo', cost: 0, wall: '#1f2937', neon: '#22d3ee' },
   { name: 'Andar Funcional', cost: 12_000, wall: '#3b1d1d', neon: '#fb923c' },
-  { name: 'Lutas e Dança', cost: 220_000, wall: '#2e1a47', neon: '#e879f9' },
-  { name: 'Bem-estar', cost: 4_500_000, wall: '#123a3a', neon: '#34d399' },
-  { name: 'Cobertura Premium', cost: 90_000_000, wall: '#2b2410', neon: '#facc15' },
+  { name: 'Lutas e Dança', cost: 600_000, wall: '#2e1a47', neon: '#e879f9' },
+  { name: 'Bem-estar', cost: 60_000_000, wall: '#123a3a', neon: '#34d399' },
+  { name: 'Cobertura Premium', cost: 6_000_000_000, wall: '#2b2410', neon: '#facc15' },
 ];
 
 const r = (id: string, name: string, icon: string, kind: Kind, floor: number, slot: 0 | 1 | 2 | 3, game: boolean, cost: number, seats: number, svc: number, max: number, carpet: [string, string], text: string, style = 0): RoomDef =>
@@ -39,14 +39,14 @@ export const ROOMS: RoomDef[] = [
   r('danca', 'Estúdio de Dança', '💃', 'estudio', 2, 1, true, 320_000, 6, 16, 6, ['#4a044e', '#f0abfc'], 'Zumba, forró e ritmos.'),
   r('yoga', 'Yoga', '🧘', 'estudio', 2, 2, true, 450_000, 4, 14, 8, ['#3f2d20', '#fcd34d'], 'Respiração e alongamento.', 1),
   r('pilates', 'Pilates', '🤾', 'estudio', 2, 3, true, 700_000, 2, 12, 6, ['#164e63', '#a5f3fc'], 'Aparelhos para postura e força.', 2),
-  r('natacao', 'Natação', '🏊', 'agua', 3, 0, true, 3_800_000, 6, 20, 6, ['#0369a1', '#e0f2fe'], 'Piscina semiolímpica aquecida.'),
-  r('fisio', 'Fisioterapia', '🩺', 'macas', 3, 1, false, 6_000_000, 2, 16, 8, ['#f1f5f9', '#38bdf8'], 'Recuperação de lesões.'),
-  r('nutri', 'Nutricionista', '🥗', 'mesas', 3, 2, false, 8_000_000, 2, 12, 6, ['#365314', '#bef264'], 'Dieta e avaliação física.'),
-  r('sauna', 'Sauna e Spa', '♨️', 'agua', 3, 3, false, 12_000_000, 3, 18, 6, ['#7c2d12', '#fed7aa'], 'Vapor, massagem e relaxamento.', 1),
-  r('vip', 'Personal VIP', '👑', 'pesos', 4, 0, true, 70_000_000, 2, 10, 10, ['#1c1917', '#facc15'], 'Aparelhos de ouro e treino exclusivo.', 1),
-  r('areia', 'Quadra de Areia', '🏐', 'funcional', 4, 1, true, 110_000_000, 6, 14, 4, ['#d6b370', '#fef3c7'], 'Vôlei e beach tennis no terraço.', 1),
-  r('crio', 'Recuperação Premium', '🧊', 'macas', 4, 2, false, 160_000_000, 2, 20, 8, ['#0c4a6e', '#bae6fd'], 'Banheira de gelo e massagem.', 1),
-  r('lounge', 'Lounge', '🛋️', 'mesas', 4, 3, false, 240_000_000, 4, 16, 8, ['#27272a', '#d4d4d8'], 'Sofás, café e vista da cidade.', 2),
+  r('natacao', 'Natação', '🏊', 'agua', 3, 0, true, 20_000_000, 6, 20, 6, ['#0369a1', '#e0f2fe'], 'Piscina semiolímpica aquecida.'),
+  r('fisio', 'Fisioterapia', '🩺', 'macas', 3, 1, false, 32_000_000, 2, 16, 8, ['#f1f5f9', '#38bdf8'], 'Recuperação de lesões.'),
+  r('nutri', 'Nutricionista', '🥗', 'mesas', 3, 2, false, 50_000_000, 2, 12, 6, ['#365314', '#bef264'], 'Dieta e avaliação física.'),
+  r('sauna', 'Sauna e Spa', '♨️', 'agua', 3, 3, false, 80_000_000, 3, 18, 6, ['#7c2d12', '#fed7aa'], 'Vapor, massagem e relaxamento.', 1),
+  r('vip', 'Personal VIP', '👑', 'pesos', 4, 0, true, 2_000_000_000, 2, 10, 10, ['#1c1917', '#facc15'], 'Aparelhos de ouro e treino exclusivo.', 1),
+  r('areia', 'Quadra de Areia', '🏐', 'funcional', 4, 1, true, 3_200_000_000, 6, 14, 4, ['#d6b370', '#fef3c7'], 'Vôlei e beach tennis no terraço.', 1),
+  r('crio', 'Recuperação Premium', '🧊', 'macas', 4, 2, false, 5_000_000_000, 2, 20, 8, ['#0c4a6e', '#bae6fd'], 'Banheira de gelo e massagem.', 1),
+  r('lounge', 'Lounge', '🛋️', 'mesas', 4, 3, false, 8_000_000_000, 4, 16, 8, ['#27272a', '#d4d4d8'], 'Sofás, café e vista da cidade.', 2),
 ];
 export const ROOM = Object.fromEntries(ROOMS.map((x) => [x.id, x])) as Record<string, RoomDef>;
 
@@ -73,19 +73,20 @@ export const STAFF_MAX = 25;
 
 /** Academias rivais da cidade: passar cada uma dá medalhas; passar todas libera a próxima unidade da rede */
 export const RIVALS = [
-  { name: 'Academia Bairro Forte', icon: '🏚️', fame: 6 },
-  { name: 'Corpo em Forma', icon: '🤸', fame: 60 },
-  { name: 'Força Total', icon: '🦾', fame: 500 },
-  { name: 'Studio Equilíbrio', icon: '🧘', fame: 4_000 },
-  { name: 'Mega Fit Nordeste', icon: '🌵', fame: 30_000 },
-  { name: 'Titã Academias', icon: '🏆', fame: 200_000 },
+  { name: 'Academia Bairro Forte', icon: '🏚️', fame: 40 },
+  { name: 'Corpo em Forma', icon: '🤸', fame: 3_000 },
+  { name: 'Força Total', icon: '🦾', fame: 100_000 },
+  { name: 'Studio Equilíbrio', icon: '🧘', fame: 3_000_000 },
+  { name: 'Mega Fit Nordeste', icon: '🌵', fame: 120_000_000 },
+  { name: 'Titã Academias', icon: '🏆', fame: 3_000_000_000 },
 ];
 export const CITIES = ['Fortaleza', 'Caucaia', 'Maracanaú', 'Sobral', 'Juazeiro do Norte', 'Crato', 'Iguatu', 'Quixadá'];
 export const cityName = (i: number) => CITIES[i % CITIES.length] + (i >= CITIES.length ? ` ${Math.floor(i / CITIES.length) + 1}` : '');
 /** Cada unidade nova multiplica todo o lucro */
 export const cityMult = (i: number) => Math.pow(3, i);
-/** Parte do lucro de uma unidade que continua entrando depois que você abre a próxima */
-export const FRANCHISE = 0.25;
+
+/** Ritmo do jogo, conferido com node scripts/test-gym.mjs */
+export const TUNE = { brand: 0.4, grow: 1.28, lobbyGrow: 1.3, staffGrow: 1.8, costCity: 3, rivalCity: 3, equipEvery: 8 };
 
 export const STARS = [0, 30, 90, 200, 380];
 export const OFFLINE_MAX = 4 * 3600;

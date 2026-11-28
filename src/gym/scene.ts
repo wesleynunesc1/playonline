@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Post } from './post';
 import { FLOORS, FLOOR_H, GUESTS, ROOMS, RoomDef, SLOTS } from './data';
-import { C, S, collect, equip, floorCost, fx, lv, money, roomCost } from './sim';
+import { C, S, collect, equip, floorCost, fx, guide, lv, money, roomCost } from './sim';
 
 /** Academia 3D em andares flutuantes, visto de cima na diagonal. Nada aqui muda a economia. */
 type Act = 'sit' | 'stand' | 'run' | 'lift' | 'bike' | 'dance';
@@ -496,6 +496,8 @@ export class GymScene {
   private tags = new Map<string, HTMLElement>();
   private cab = new THREE.Mesh(GEO.box, mat('#ffd60a', { glow: 0.6, m: 0.6, r: 0.3 }));
   private sparks: THREE.Points;
+  private frame = new THREE.Group();
+  private picked: string | null = null;
   private raf = 0;
   private last = performance.now();
   private t = 0;
@@ -550,6 +552,9 @@ export class GymScene {
     this.resize();
     this.build();
     fx.collect = (id, a) => this.burst(id, a);
+    fx.level = (id, l, big) => this.levelUp(id, l, big);
+    this.frame.visible = false;
+    this.scene.add(this.frame);
     fx.rebuild = () => this.build();
     canvas.addEventListener('pointerdown', this.down);
     canvas.addEventListener('pointermove', this.move);
@@ -715,14 +720,17 @@ export class GymScene {
   }
   /** Atualiza os textos (4 vezes por segundo) */
   texts() {
+    const g = guide();
     for (const [k, el] of this.tags) {
+      el.classList.toggle('guide', k === g || (k === 'floor' && g === 'floor'));
       let html: string;
       if (k === 'floor') html = `<b>🔒 ${FLOORS[C.floors].name}</b><span class="cz-build">Abrir ${money(floorCost(C.floors))}</span>`;
       else {
         const d = ROOMS.find((x) => x.id === k)!;
         const l = lv(k), r = C.rooms[k];
+        const up = l < 100 && C.money >= roomCost(d, l) ? '<i class="cz-up">⬆</i>' : '';
         html = l
-          ? `<b>${d.icon} ${d.name}</b><span>Nv ${l}${r?.mgr && d.kind !== 'lobby' ? ' · 🧑‍💼' : ''}</span>${r && !r.mgr && r.cash >= 1 ? `<button class="cz-cash${S.rooms[k] && r.cash >= S.rooms[k].income * 60 ? ' full' : ''}">💵 ${money(r.cash)}</button>` : ''}`
+          ? `<b>${d.icon} ${d.name}${up}</b><span>Nv ${l}${r?.mgr && d.kind !== 'lobby' ? ' · 🧑‍💼' : ''}</span>${r && !r.mgr && r.cash >= 1 ? `<button class="cz-cash${S.rooms[k] && r.cash >= S.rooms[k].income * 60 ? ' full' : ''}">💵 ${money(r.cash)}</button>` : ''}`
           : `<b>${d.icon} ${d.name}</b><span class="cz-build${C.money >= roomCost(d, 0) ? ' ok' : ''}">🔨 ${money(roomCost(d, 0))}</span>`;
       }
       if (el.dataset.h !== html) {
@@ -768,11 +776,46 @@ export class GymScene {
     this.scene.add(s);
     this.bills.push({ s, v: new THREE.Vector3((Math.random() - 0.5) * 2 * up, 2.5 + Math.random() * 2 * up, (Math.random() - 0.5) * 2 * up), life: 1.6 });
   }
-  private burst(id: string, _a: number) {
-    const d = ROOMS.find((x) => x.id === id);
-    if (!d) return;
-    const p = new THREE.Vector3(SLOTS[d.slot][0], d.floor * FLOOR_H + 1.5, SLOTS[d.slot][1]);
+  private center(id: string, y = 1.5) {
+    const d = ROOMS.find((x) => x.id === id)!;
+    return new THREE.Vector3(SLOTS[d.slot][0], d.floor * FLOOR_H + y, SLOTS[d.slot][1]);
+  }
+  /** Texto que sobe e some por cima da sala */
+  private float(id: string, text: string, cls = '') {
+    const v = this.center(id, 3).project(this.cam);
+    const el = document.createElement('div');
+    el.className = `cz-float ${cls}`;
+    el.textContent = text;
+    el.style.left = `${((v.x + 1) / 2) * this.canvas.clientWidth}px`;
+    el.style.top = `${((1 - v.y) / 2) * this.canvas.clientHeight}px`;
+    this.overlay.appendChild(el);
+    setTimeout(() => el.remove(), 1400);
+  }
+  private burst(id: string, a: number) {
+    const p = this.center(id);
     for (let i = 0; i < 14; i++) this.bill(p, 2);
+    this.float(id, `+${money(a)}`);
+  }
+  private levelUp(id: string, l: number, big: boolean) {
+    this.float(id, big ? `⭐ Nv ${l} · lucro x2!` : `Nv ${l}`, big ? 'big' : 'lv');
+    if (big) for (let i = 0; i < 24; i++) this.bill(this.center(id), 3);
+  }
+  /** Contorno de luz na sala escolhida */
+  select(id: string | null) {
+    this.picked = id;
+    this.frame.clear();
+    this.frame.visible = !!id;
+    if (!id) return;
+    const d = ROOMS.find((x) => x.id === id)!;
+    const [cx, cz, w, dd] = SLOTS[d.slot];
+    const m = mat('#ffffff', { glow: 2.2, op: 0.9 });
+    for (const [x, z, sx, sz] of [[0, -dd / 2, w, 0.12], [0, dd / 2, w, 0.12], [-w / 2, 0, 0.12, dd], [w / 2, 0, 0.12, dd]]) {
+      const b = new THREE.Mesh(GEO.box, m);
+      b.position.set(x, 0.08, z);
+      b.scale.set(sx, 0.1, sz);
+      this.frame.add(b);
+    }
+    this.frame.position.set(cx, d.floor * FLOOR_H, cz);
   }
 
   // ===== Hóspedes andando =====
@@ -953,6 +996,7 @@ export class GymScene {
     this.cab.position.set(0, cyc + 1.2, -9.2);
     this.cab.visible = C.floors > 1;
     this.sparks.rotation.y += dt * 0.01;
+    if (this.picked) this.frame.scale.setScalar(1 + Math.sin(this.t * 5) * 0.01);
     this.screens(dt);
     this.walk(dt);
     // Notas saindo das salas que dão lucro
@@ -1051,6 +1095,7 @@ export class GymScene {
     this.r.dispose();
     fx.collect = () => {};
     fx.rebuild = () => {};
+    fx.level = () => {};
   }
 }
 
