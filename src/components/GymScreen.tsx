@@ -1,35 +1,35 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Maximize, RefreshCw, Volume2, VolumeX, X } from 'lucide-react';
-import { CASH_SECONDS, EVENTS, FLOORS, GUESTS, RIVALS, ROOM, ROOMS, SHOP, STAFF, STAFF_MAX, cityMult, cityName } from '../casino/data';
+import { CASH_SECONDS, CITIES, EVENTS, FLOORS, FRANCHISE, GUESTS, RIVALS, ROOM, ROOMS, SHOP, STAFF, STAFF_MAX, cityMult, cityName } from '../gym/data';
 import {
   C, ROOM_MAX, S, UPG_MAX, advertise, affordable, buy, claimQuest, claimVip, collect, collectAll, costN, decoCost, decorate, equip, floorCost, guestsOpen,
-  hire, load, lv, mgrCost, mktCost, money, moveCity, openFloor, persist, quest, rivalFame, staffCost, stars, takeOffline, targetSlots, tick, toggleTarget, train, upgrade, useCasino, wipe,
-} from '../casino/sim';
-import { CasinoScene } from '../casino/scene';
+  hire, load, lv, mgrCost, mktCost, money, moveCity, openFloor, persist, quest, rivalFame, staffCost, stars, takeOffline, targetSlots, tick, toggleTarget, train, upgrade, useGym, wipe,
+} from '../gym/sim';
+import { GymScene } from '../gym/scene';
 import { toggleFullscreen, useWakeLock } from '../hooks/useDevice';
 import { checkNow, isInstalled, useUpdate } from '../hooks/useUpdate';
 import { sound } from '../utils/audio';
 import { Button } from './common/Button';
 import { Modal } from './common/Modal';
 import { Action, Bar, Row } from './common/Kit';
-import { AdminLogin, useAdmin } from './CasinoMods';
+import { AdminLogin, useAdmin } from './GymMods';
 import { BackupModal } from './BackupModal';
 
-type Panel = 'marketing' | 'equipe' | 'decoracao' | 'ranking' | 'loja' | 'mais' | 'ajuda' | null;
+type Panel = 'marketing' | 'equipe' | 'decoracao' | 'rede' | 'loja' | 'mais' | 'ajuda' | null;
 const NAV: [Exclude<Panel, null>, string, string][] = [
-  ['marketing', '📣', 'Marketing'], ['equipe', '🤵', 'Equipe'], ['decoracao', '🌴', 'Decorar'], ['ranking', '🏆', 'Ranking'], ['loja', '💎', 'Loja'], ['mais', '☰', 'Mais'],
+  ['marketing', '📣', 'Marketing'], ['equipe', '🧑‍🏫', 'Equipe'], ['decoracao', '🛠️', 'Estrutura'], ['rede', '🗺️', 'Rede'], ['loja', '🏅', 'Loja'], ['mais', '☰', 'Mais'],
 ];
-const HQ_KEY = 'PLAY_ONLINE_CASSINO_HQ';
+const HQ_KEY = 'PLAY_ONLINE_ACADEMIA_HQ';
 const hqDefault = () => localStorage.getItem(HQ_KEY) ? localStorage.getItem(HQ_KEY) === '1' : !matchMedia('(pointer: coarse)').matches;
 const starsText = (n: number) => '★'.repeat(n) + '☆'.repeat(5 - n);
 
-export const CasinoScreen: React.FC = () => {
-  useCasino((s) => s.v);
+export const GymScreen: React.FC = () => {
+  useGym((s) => s.v);
   useWakeLock();
-  const { offline, toast, quest: questReady } = useCasino();
+  const { offline, toast, quest: questReady, won } = useGym();
   const canvas = useRef<HTMLCanvasElement>(null);
   const overlay = useRef<HTMLDivElement>(null);
-  const view = useRef<CasinoScene | null>(null);
+  const view = useRef<GymScene | null>(null);
   const [room, setRoom] = useState<string | null>(null);
   const [floorAsk, setFloorAsk] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
@@ -39,7 +39,7 @@ export const CasinoScreen: React.FC = () => {
 
   useEffect(() => {
     load();
-    const v = new CasinoScene(canvas.current!, overlay.current!, (id, f) => {
+    const v = new GymScene(canvas.current!, overlay.current!, (id, f) => {
       if (f !== undefined) return setFloorAsk(true);
       setRoom(id);
       if (id) sound.playClick();
@@ -98,13 +98,13 @@ export const CasinoScreen: React.FC = () => {
           <span className="text-lg font-black truncate">{money(C.money)}</span>
           <span className="text-[11px] text-emerald-300 font-bold shrink-0">+{money(S.income)}/s</span>
         </div>
-        <button onClick={() => setPanel('loja')} className="cz-pill pointer-events-auto font-black text-sm">💎 {Math.floor(C.gems)}</button>
+        <button onClick={() => setPanel('loja')} className="cz-pill pointer-events-auto font-black text-sm">🏅 {Math.floor(C.gems)}</button>
       </header>
 
       {(ev || C.dobro > 0) && (
         <div className="absolute top-[3.6rem] inset-x-0 flex flex-col items-center gap-1 pointer-events-none">
           {ev && (
-            <button onClick={() => ev.id === 'vip' && claimVip()} className={`cz-event pointer-events-auto ${ev.id === 'vip' ? 'cz-pulse' : ''}`}>
+            <button onClick={() => ev.id === 'famoso' && claimVip()} className={`cz-event pointer-events-auto ${ev.id === 'famoso' ? 'cz-pulse' : ''}`}>
               {EVENTS[ev.id].icon} <b>{EVENTS[ev.id].name}{ev.room ? ` de ${ROOM[ev.room].name}` : ''}</b> · {EVENTS[ev.id].text} · {Math.ceil(ev.left)}s
             </button>
           )}
@@ -135,7 +135,7 @@ export const CasinoScreen: React.FC = () => {
               <b className="block truncate">{q.text}</b>
               <Bar value={qv / q.need} color={questReady ? 'bg-emerald-400' : 'bg-amber-400'} />
             </span>
-            <span className="text-xs font-black shrink-0">{questReady ? `Pegar +${q.gems}💎` : `${q.need > 999 ? money(qv) : qv}/${q.need > 999 ? money(q.need) : q.need}`}</span>
+            <span className="text-xs font-black shrink-0">{questReady ? `Pegar +${q.gems}🏅` : `${q.need > 999 ? money(qv) : qv}/${q.need > 999 ? money(q.need) : q.need}`}</span>
           </button>
         )}
         {room ? <RoomCard id={room} onClose={() => setRoom(null)} /> : (
@@ -153,13 +153,20 @@ export const CasinoScreen: React.FC = () => {
       {toast && <p role="status" className="cz-toast toast-in">{toast}</p>}
 
       <Modal isOpen={offline > 0} onClose={() => takeOffline(false)} maxWidth="sm" title="🌙 Enquanto você esteve fora">
-        <p className="text-sm text-slate-300">Seus gerentes cuidaram do resort e lucraram:</p>
+        <p className="text-sm text-slate-300">Seus gerentes e a rede de academias lucraram:</p>
         <p className="text-4xl font-black text-center text-emerald-300 py-2">{money(offline)}</p>
         <div className="grid grid-cols-2 gap-2">
           <Button variant="secondary" onClick={() => takeOffline(false)}>Receber</Button>
-          <Button variant="gold" disabled={C.gems < 6} onClick={() => takeOffline(true)}>Dobrar (6 💎)</Button>
+          <Button variant="gold" disabled={C.gems < 6} onClick={() => takeOffline(true)}>Dobrar (6 🏅)</Button>
         </div>
         <p className="text-[11px] text-slate-500 text-center">Rende até 4 horas fora. Salas sem gerente só enchem o caixa.</p>
+      </Modal>
+
+      <Modal isOpen={won} onClose={() => useGym.setState({ won: false })} maxWidth="sm" title="🏆 Você zerou o Magnata Fitness!">
+        <p className="text-sm text-slate-300">Da academia pequena de Fortaleza até a maior rede do Ceará, com academias em {CITIES.length} cidades.</p>
+        <Row label="Lucro total">{money(C.earned)}</Row>
+        <Row label="Tempo de jogo">{Math.floor(C.played / 3600)}h {Math.floor((C.played % 3600) / 60)}min</Row>
+        <Button fullWidth variant="gold" onClick={() => useGym.setState({ won: false })}>Continuar crescendo</Button>
       </Modal>
 
       <Modal isOpen={floorAsk} onClose={() => setFloorAsk(false)} maxWidth="sm" title={C.floors < FLOORS.length ? `🏗️ ${FLOORS[C.floors].name}` : 'Prédio completo'}>
@@ -199,18 +206,18 @@ const RoomCard: React.FC<{ id: string; onClose: () => void }> = ({ id, onClose }
       {locked ? <p className="text-sm text-slate-300">Abra o andar {FLOORS[d.floor].name} primeiro.</p> : <>
         {l > 0 && d.kind === 'lobby' && (
           <div className="grid gap-1 text-xs">
-            <Row label="Hóspedes chegando">{(S.arrivals * 60).toFixed(0)}/min</Row>
+            <Row label="Alunos chegando">{(S.arrivals * 60).toFixed(0)}/min</Row>
             <Row label="Satisfação" tone={S.sat >= 1 ? 'text-emerald-300' : 'text-amber-300'}>{Math.round(S.sat * 100)}%</Row>
-            <p className="text-slate-400">Cada nível traz 20% mais hóspedes. Salas vazias? Melhore aqui.</p>
+            <p className="text-slate-400">Cada nível traz 20% mais alunos. Salas vazias? Melhore aqui.</p>
           </div>
         )}
         {l > 0 && st && (
           <div className="grid gap-1 text-xs">
             <Row label="Lucro" tone="text-emerald-300">{money(st.income)}/s</Row>
-            <Row label={`${d.game ? 'Mesas e máquinas' : 'Lugares'}`}>{equip(d, l)}/{d.max}{nextEq ? ` · mais no nível ${nextEq}` : ''}</Row>
+            <Row label={d.game ? 'Aparelhos' : 'Lugares'}>{equip(d, l)}/{d.max}{nextEq ? ` · mais no nível ${nextEq}` : ''}</Row>
             <div className="flex items-center gap-2"><span className="text-slate-400 shrink-0">Ocupação</span><Bar value={st.served / Math.max(1e-9, st.cap)} color={st.demand > st.cap ? 'bg-rose-400' : 'bg-emerald-400'} /></div>
             <p className={st.demand > st.cap ? 'text-rose-300' : 'text-slate-400'}>
-              {st.demand > st.cap ? `Lotado! ${Math.round((1 - st.cap / st.demand) * 100)}% dos hóspedes vão embora. Melhore para caber mais gente.` : 'Tem lugar sobrando: chame mais hóspedes na Recepção, no Marketing e na Decoração.'}
+              {st.demand > st.cap ? `Lotado! ${Math.round((1 - st.cap / st.demand) * 100)}% dos alunos vão embora. Melhore para caber mais gente.` : 'Tem lugar sobrando: chame mais alunos na Recepção, no Marketing e na Estrutura.'}
             </p>
             {l < ROOM_MAX && <p className="text-amber-200">⭐ Nível {next25}: lucro em dobro</p>}
           </div>
@@ -245,12 +252,12 @@ const Panels: React.FC<{ panel: Panel; setPanel: (p: Panel) => void; hq: boolean
   const close = () => { setPanel(null); setSure(false); };
   const open = guestsOpen().map((g) => g.id);
   const fame = S.income;
-  const list = [...RIVALS.map((r, i) => ({ name: r.name, icon: r.icon, fame: rivalFame(i), me: false })), { name: 'Seu resort', icon: '🏨', fame, me: true }].sort((a, b) => b.fame - a.fame);
+  const list = [...RIVALS.map((r, i) => ({ name: r.name, icon: r.icon, fame: rivalFame(i), me: false })), { name: 'Sua academia', icon: '💪', fame, me: true }].sort((a, b) => b.fame - a.fame);
   return (
     <>
       <Modal isOpen={panel === 'marketing'} onClose={close} maxWidth="lg" title="📣 Marketing" subtitle="Escolha quem você quer atrair">
-        <Action icon="📺" title={`Propaganda nível ${C.mkt}`} text={`+6% de hóspedes por nível · ${targetSlots()} de 3 campanhas`} button={C.mkt >= UPG_MAX ? 'Máximo' : money(mktCost(C.mkt))} variant="gold" disabled={C.mkt >= UPG_MAX || C.money < mktCost(C.mkt)} onClick={advertise} />
-        <p className="text-xs text-slate-400">Campanha triplica a chegada daquele tipo de hóspede. Vagas: nível 1, 8 e 20.</p>
+        <Action icon="📺" title={`Propaganda nível ${C.mkt}`} text={`+6% de alunos por nível · ${targetSlots()} de 3 campanhas`} button={C.mkt >= UPG_MAX ? 'Máximo' : money(mktCost(C.mkt))} variant="gold" disabled={C.mkt >= UPG_MAX || C.money < mktCost(C.mkt)} onClick={advertise} />
+        <p className="text-xs text-slate-400">Campanha triplica a chegada daquele tipo de aluno. Vagas: nível 1, 8 e 20.</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {GUESTS.map((g) => {
             const on = C.targets.includes(g.id), ok = open.includes(g.id);
@@ -261,7 +268,7 @@ const Panels: React.FC<{ panel: Panel; setPanel: (p: Panel) => void; hq: boolean
                 <span className="text-[10px] text-slate-300">{ok ? g.text : `Precisa de ${g.stars + 1} estrelas`}</span>
                 <span className="text-[11px]">💰 gasta {g.spend}x</span>
                 <span className="text-sm">{g.likes.map((x) => ROOM[x].icon).join(' ')}</span>
-                {ok && <span className="text-[10px] text-amber-200">{Math.round((S.mix[g.id] ?? 0) * 100)}% dos hóspedes</span>}
+                {ok && <span className="text-[10px] text-amber-200">{Math.round((S.mix[g.id] ?? 0) * 100)}% dos alunos</span>}
               </button>
             );
           })}
@@ -272,23 +279,34 @@ const Panels: React.FC<{ panel: Panel; setPanel: (p: Panel) => void; hq: boolean
           <Action key={s.id} icon={s.icon} title={`${s.name} · nível ${C.staff[s.id]}`} text={s.text} button={C.staff[s.id] >= STAFF_MAX ? 'Máximo' : money(staffCost(s.id, C.staff[s.id]))} variant="gold"
             disabled={C.staff[s.id] >= STAFF_MAX || C.money < staffCost(s.id, C.staff[s.id])} onClick={() => train(s.id)} />
         ))}
-        <Row label="Satisfação dos hóspedes" tone={S.sat >= 1 ? 'text-emerald-300' : 'text-amber-300'}>{Math.round(S.sat * 100)}%</Row>
+        <Row label="Satisfação dos alunos" tone={S.sat >= 1 ? 'text-emerald-300' : 'text-amber-300'}>{Math.round(S.sat * 100)}%</Row>
       </Modal>
-      <Modal isOpen={panel === 'decoracao'} onClose={close} maxWidth="md" title="🌴 Decoração" subtitle="Plantas, estátuas e mais charme">
-        <Action icon="🌴" title={`Decoração nível ${C.deco}`} text="+5% de hóspedes e +1% de satisfação por nível. Aparece no prédio." button={C.deco >= UPG_MAX ? 'Máximo' : money(decoCost(C.deco))} variant="gold"
+      <Modal isOpen={panel === 'decoracao'} onClose={close} maxWidth="md" title="🛠️ Estrutura" subtitle="Ar-condicionado, som, plantas e estátuas">
+        <Action icon="❄️" title={`Estrutura nível ${C.deco}`} text="+5% de alunos e +1% de satisfação por nível. Aparece no prédio." button={C.deco >= UPG_MAX ? 'Máximo' : money(decoCost(C.deco))} variant="gold"
           disabled={C.deco >= UPG_MAX || C.money < decoCost(C.deco)} onClick={decorate} />
       </Modal>
-      <Modal isOpen={panel === 'ranking'} onClose={close} maxWidth="md" title={`🏆 Ranking de ${cityName(C.city)}`} subtitle="A fama é o lucro por segundo">
+      <Modal isOpen={panel === 'rede'} onClose={close} maxWidth="md" title="🗺️ Sua rede de academias" subtitle={`${C.units.length + 1} de ${CITIES.length} cidades do Ceará`}>
+        <div className="grid grid-cols-4 gap-1.5">
+          {CITIES.map((c, i) => {
+            const u = C.units.find((x) => x.city % CITIES.length === i && x.city < CITIES.length);
+            const here = C.city === i;
+            return <div key={c} className={`rounded-xl p-1.5 text-center text-[10px] leading-tight ${here ? 'bg-cyan-400/25 border border-cyan-300' : u ? 'bg-emerald-500/20 border border-emerald-400/60' : 'bg-white/5 opacity-60'}`}>
+              <span className="block text-lg">{here ? '🏗️' : u ? '💪' : '🔒'}</span>{c}{u && <span className="block text-emerald-300 font-bold">{money(u.income)}/s</span>}
+            </div>;
+          })}
+        </div>
+        {C.units.length > 0 && <Row label="As outras unidades mandam" tone="text-emerald-300">{money(S.network)}/s</Row>}
+        <h4 className="font-bold pt-1">🏆 Ranking de {cityName(C.city)}</h4>
         {list.map((x, i) => (
           <div key={x.name} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm ${x.me ? 'bg-amber-400/20 border border-amber-400' : 'bg-white/5'}`}>
             <b className="w-6">{i + 1}º</b><span className="text-xl">{x.icon}</span><span className="flex-1">{x.name}</span><span className="font-mono text-xs">{money(x.fame)}/s</span>
           </div>
         ))}
-        <p className="text-xs text-slate-400">Passar cada rival dá diamantes. Passe todos para abrir um resort novo em outra cidade do Ceará, com tudo rendendo {cityMult(C.city + 1)}x (você recomeça a construção e guarda os diamantes).</p>
-        <Button fullWidth variant="gold" disabled={C.beaten < RIVALS.length} onClick={() => { moveCity(); close(); }}>✈️ Abrir resort em {cityName(C.city + 1)}</Button>
+        <p className="text-xs text-slate-400">A fama é o lucro por segundo. Passar cada rival dá medalhas. Passe todos para abrir uma academia nova em outra cidade: lá tudo rende {cityMult(C.city + 1)}x, e esta continua mandando {Math.round(FRANCHISE * 100)}% do lucro dela para você, para sempre.</p>
+        <Button fullWidth variant="gold" disabled={C.beaten < RIVALS.length} onClick={() => { moveCity(); close(); }}>🏗️ Abrir academia em {cityName(C.city + 1)}</Button>
       </Modal>
-      <Modal isOpen={panel === 'loja'} onClose={close} maxWidth="md" title="💎 Loja de diamantes" subtitle="Diamantes vêm de missões, rivais, torneios e do prêmio diário">
-        {SHOP.map((s) => <Action key={s.id} icon={s.icon} title={s.name} text={s.text} button={`${s.gems} 💎`} variant="gold" disabled={C.gems < s.gems} onClick={() => buy(s.id)} />)}
+      <Modal isOpen={panel === 'loja'} onClose={close} maxWidth="md" title="🏅 Loja de medalhas" subtitle="Medalhas vêm de missões, rivais, campeonatos e do prêmio diário">
+        {SHOP.map((s) => <Action key={s.id} icon={s.icon} title={s.name} text={s.text} button={`${s.gems} 🏅`} variant="gold" disabled={C.gems < s.gems} onClick={() => buy(s.id)} />)}
         <p className="text-[11px] text-slate-500 text-center">Nada aqui custa dinheiro de verdade.</p>
       </Modal>
       <Modal isOpen={panel === 'mais'} onClose={close} maxWidth="sm" title="☰ Mais">
@@ -308,17 +326,17 @@ const Panels: React.FC<{ panel: Panel; setPanel: (p: Panel) => void; hq: boolean
       </Modal>
       <Modal isOpen={panel === 'ajuda'} onClose={close} maxWidth="md" title="❓ Como jogar">
         {[
-          ['🎰', 'Você é dono de um resort cassino. Cada sala dá lucro sozinha enquanto tem hóspede.'],
+          ['💪', 'Você começa com uma academia pequena em Fortaleza. Cada sala dá lucro sozinha enquanto tem aluno treinando.'],
           ['👆', 'Toque numa sala para melhorar. Nível maior = mais lucro e mais mesas. A cada 25 níveis o lucro dobra.'],
           ['💵', 'Salas sem gerente guardam o dinheiro no caixa: toque no 💵 para recolher. Com gerente, entra sozinho, até com o app fechado.'],
-          ['🛎️', 'A Recepção traz hóspedes. Se as salas têm lugar sobrando, melhore a Recepção, o Marketing ou a Decoração.'],
+          ['🛎️', 'A Recepção traz alunos. Se as salas têm lugar sobrando, melhore a Recepção, o Marketing ou a Estrutura.'],
           ['🔴', 'Barra vermelha na sala = lotada. Melhore a sala para caber mais gente.'],
-          ['📣', 'No Marketing, escolha quem atrair. Cada hóspede gosta de certos jogos e gasta diferente.'],
+          ['📣', 'No Marketing, escolha quem atrair. Cada tipo de aluno gosta de certas salas e paga diferente.'],
           ['🏗️', 'Abra andares novos pelo cadeado do lado direito. Arraste a tela para subir e descer, e use dois dedos para aproximar.'],
-          ['🏆', 'Passe os rivais da cidade no Ranking e leve o resort para outra cidade do Ceará.'],
+          ['🗺️', 'Na Rede, passe as academias rivais e abra unidades em outras cidades. As antigas continuam rendendo. Leve a rede às 8 cidades para zerar o jogo.'],
           ['🎯', 'Siga a missão de baixo: ela sempre mostra o próximo passo e dá diamantes.'],
         ].map(([i, t]) => <p key={t} className="flex gap-2 text-sm"><span className="text-xl">{i}</span><span>{t}</span></p>)}
-        <p className="text-[11px] text-slate-500">Jogo de gerenciamento com dinheiro fictício. Não há apostas de verdade nem compras.</p>
+        <p className="text-[11px] text-slate-500">Jogo de gerenciamento com dinheiro fictício. Não há compras.</p>
       </Modal>
       {backup && <BackupModal onClose={() => setBackup(false)} />}
       {login && <AdminLogin onClose={() => setLogin(false)} />}

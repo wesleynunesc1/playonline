@@ -4,8 +4,9 @@ import { Post } from './post';
 import { FLOORS, FLOOR_H, GUESTS, ROOMS, RoomDef, SLOTS } from './data';
 import { C, S, collect, equip, floorCost, fx, lv, money, roomCost } from './sim';
 
-/** Resort 3D em andares flutuantes, visto de cima na diagonal. Nada aqui muda a economia. */
-type Seat = { p: THREE.Vector3; rot: number; sit: boolean };
+/** Academia 3D em andares flutuantes, visto de cima na diagonal. Nada aqui muda a economia. */
+type Act = 'sit' | 'stand' | 'run' | 'lift' | 'bike' | 'dance';
+type Seat = { p: THREE.Vector3; rot: number; act: Act };
 interface Ctx { g: THREE.Group; seats: Seat[]; spin: { m: THREE.Object3D; s: number }[] }
 interface Agent { floor: number; path: THREE.Vector3[]; seg: number; wait: number; seat: Seat | null; leave: boolean; visits: number; speed: number; phase: number; dir: number; color: THREE.Color; skin: THREE.Color; hair: THREE.Color; pos: THREE.Vector3 }
 
@@ -49,31 +50,6 @@ const marble = canvas(128, 128, (g) => {
   g.strokeStyle = 'rgba(0,0,0,.25)';
   g.strokeRect(0, 0, 128, 128);
 });
-const SYMBOLS = ['🍒', '🍋', '🔔', '⭐', '7', '💎', '🍉', '🍀'];
-const reel = canvas(64, 512, (g) => {
-  g.fillStyle = '#fff8e7';
-  g.fillRect(0, 0, 64, 512);
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.font = 'bold 40px sans-serif';
-  SYMBOLS.forEach((s, i) => {
-    g.fillStyle = s === '7' ? '#d00000' : '#222';
-    g.fillText(s, 32, 32 + i * 64);
-  });
-});
-const wheel = canvas(256, 256, (g) => {
-  for (let i = 0; i < 37; i++) {
-    g.fillStyle = i === 0 ? '#0a8f3c' : i % 2 ? '#c1121f' : '#111';
-    g.beginPath();
-    g.moveTo(128, 128);
-    g.arc(128, 128, 126, (i / 37) * Math.PI * 2, ((i + 1) / 37) * Math.PI * 2);
-    g.fill();
-  }
-  g.fillStyle = '#c9a227';
-  g.beginPath(); g.arc(128, 128, 60, 0, 7); g.fill();
-  g.fillStyle = '#6b4226';
-  g.beginPath(); g.arc(128, 128, 44, 0, 7); g.fill();
-});
 const bill = canvas(64, 32, (g) => {
   g.fillStyle = '#2d9c4a';
   g.fillRect(0, 0, 64, 32);
@@ -100,6 +76,8 @@ const waterC = canvas(128, 128, (g) => {
 });
 const sign = (text: string, color: string) => canvas(512, 96, (g) => {
   g.font = '900 64px sans-serif';
+  const fit = Math.min(1, 480 / g.measureText(text.toUpperCase()).width);
+  g.font = `900 ${Math.floor(64 * fit)}px sans-serif`;
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   g.shadowColor = color;
@@ -132,19 +110,13 @@ const GEO = {
   cone: new THREE.ConeGeometry(0.5, 1, 18),
   plane: new THREE.PlaneGeometry(1, 1),
 };
-const reelTex = [0, 1, 2].map(() => tex(reel, 3, 0.375));
-const horseC = document.createElement('canvas');
-horseC.width = 256;
-horseC.height = 128;
-const bingoC = document.createElement('canvas');
-bingoC.width = 256;
-bingoC.height = 128;
-const horseT = tex(horseC);
-const bingoT = tex(bingoC);
+const tvC = document.createElement('canvas');
+tvC.width = 256;
+tvC.height = 144;
+const tvT = tex(tvC);
+const tvM = texMat(tvT, 1.1, 0.4);
 const waterT = tex(waterC, 2, 2);
-const wheelM = texMat(tex(wheel), 0.15, 0.4);
 const billM = new THREE.SpriteMaterial({ map: tex(bill), depthWrite: false });
-const screenM = reelTex.map((t) => texMat(t, 0.9, 0.3));
 
 function part(c: Ctx, g: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number, ry = 0) {
   const o = new THREE.Mesh(g, m);
@@ -177,7 +149,7 @@ const chair = (c: Ctx, x: number, z: number, rot: number, color: string) => {
   part(c, GEO.box, mat(color), x - Math.sin(rot) * 0.22, 0.75, z - Math.cos(rot) * 0.22, 0.46, 0.6, 0.08, rot);
   part(c, GEO.box, mat('#2b2b2b'), x, 0.2, z, 0.36, 0.4, 0.36, rot);
 };
-const seat = (c: Ctx, x: number, z: number, rot: number, sit = true) => c.seats.push({ p: new THREE.Vector3(x, 0, z), rot, sit });
+const seat = (c: Ctx, x: number, z: number, rot: number, act: Act = 'sit') => c.seats.push({ p: new THREE.Vector3(x, 0, z), rot, act });
 const plant = (c: Ctx, x: number, z: number, s = 1) => {
   part(c, GEO.cyl, mat('#b08d57', { r: 0.4, m: 0.3 }), x, 0.3 * s, z, 0.5 * s, 0.6 * s, 0.5 * s);
   part(c, GEO.cyl, mat('#6b4423'), x, 1.1 * s, z, 0.08 * s, 1.4 * s, 0.08 * s);
@@ -198,110 +170,204 @@ function grid(n: number, max: number, cols: number, w: number, d: number, mx = 1
   return out;
 }
 
-// ===== Móveis de cada tipo de sala =====
+// ===== Aparelhos de cada tipo de sala =====
+const IRON = () => mat('#2b2f36', { m: 0.7, r: 0.35 });
+const CHROME = () => mat('#c0c6cf', { m: 0.95, r: 0.18 });
+/** Barra com anilhas */
+const barbell = (c: Ctx, x: number, y: number, z: number, len = 1.8) => {
+  part(c, GEO.cyl, CHROME(), x, y, z, 0.05, len, 0.05).rotation.z = Math.PI / 2;
+  for (const s of [-1, 1]) part(c, GEO.cyl, mat('#111', { r: 0.5 }), x + s * (len / 2 - 0.2), y, z, 0.42, 0.08, 0.42).rotation.z = Math.PI / 2;
+};
+/** Espelho da parede do fundo */
+const mirror = (c: Ctx, w: number, dd: number) => {
+  part(c, GEO.box, mat('#a9d6ec', { m: 0.3, r: 0.08, glow: 0.35 }), 0, 1.5, -dd / 2 + 0.12, w - 1, 2.2, 0.05);
+  part(c, GEO.box, CHROME(), 0, 2.63, -dd / 2 + 0.12, w - 0.9, 0.06, 0.08);
+};
+const tv = (c: Ctx, x: number, y: number, z: number, w = 2.4) => {
+  part(c, GEO.box, mat('#0b0b0f', { r: 0.3 }), x, y, z, w + 0.15, w * 0.6, 0.12);
+  part(c, GEO.plane, tvM, x, y, z + 0.07, w, w * 0.56, 1);
+};
+
 function furnish(c: Ctx, d: RoomDef, n: number, w: number, dd: number, neon: string) {
   const st = d.style ?? 0;
   switch (d.kind) {
     case 'lobby': {
-      part(c, GEO.box, mat('#8b1e2d', { r: 0.9 }), 1.5, 0.02, 0.6, 2, 0.02, dd - 1.5);
       for (let i = 0; i < 5; i++) {
         const a = -0.9 + i * 0.45;
-        part(c, GEO.box, mat(i % 2 ? '#5c3a21' : '#6b4423', { r: 0.4 }), -2.2 + Math.sin(a) * 2.2, 0.55, -2.8 + Math.cos(a) * 1.4, 1.2, 1.1, 0.6, a);
+        part(c, GEO.box, mat(i % 2 ? '#1f2937' : '#334155', { r: 0.4 }), -2.2 + Math.sin(a) * 2.2, 0.55, -2.8 + Math.cos(a) * 1.4, 1.2, 1.1, 0.6, a);
       }
-      part(c, GEO.box, mat('#c9a227', { m: 0.8, r: 0.3 }), -2.2, 1.12, -1.6, 4.2, 0.06, 0.4);
-      person(c, -3, -3.4, 0, '#7a1f2b');
-      person(c, -1.4, -3.4, 0, '#7a1f2b');
-      part(c, GEO.cyl, mat('#d9d9d9', { r: 0.3 }), 2.4, 0.25, -1, 2.6, 0.5, 2.6);
-      part(c, GEO.cyl, texMat(waterT, 0.35, 0.1), 2.4, 0.52, -1, 2.3, 0.06, 2.3);
-      part(c, GEO.cyl, mat('#d9d9d9', { r: 0.3 }), 2.4, 1, -1, 0.3, 1.5, 0.3);
-      part(c, GEO.sph, mat('#9bf6ff', { glow: 0.8, op: 0.7 }), 2.4, 1.85, -1, 0.7, 0.5, 0.7);
+      part(c, GEO.box, mat(neon, { glow: 2 }), -2.2, 1.12, -1.6, 4.2, 0.06, 0.4);
+      person(c, -3, -3.4, 0, neon);
+      person(c, -1.4, -3.4, 0, neon);
+      // Catracas
+      for (let k = 0; k < 3; k++) {
+        const x = 1 + k * 1.3;
+        part(c, GEO.box, CHROME(), x, 0.5, 0.6, 0.25, 1, 0.9);
+        part(c, GEO.box, mat(k === 1 ? '#22c55e' : neon, { glow: 2 }), x, 1.02, 0.6, 0.26, 0.05, 0.3);
+        c.seats.push({ p: new THREE.Vector3(x + 0.6, 0, 1.3), rot: Math.PI, act: 'stand' });
+      }
+      tv(c, 2.5, 2.2, -dd / 2 + 0.3, 3);
       for (let i = 0; i < Math.min(6, Math.floor(lv('recepcao') / 5) + 2); i++) plant(c, (i % 2 ? 1 : -1) * (w / 2 - 0.8), -dd / 2 + 1 + i * 1.6, 0.8);
-      for (let i = 0; i < 6; i++) seat(c, 1.2 + (i % 3) * 0.6 - 1.6, -1.4, Math.PI, false);
       break;
     }
-    case 'slots': {
-      const cab = st ? ['#14213d', '#39d0ff'] : ['#5a189a', '#ff4fd8'];
-      grid(n, d.max, 5, w, dd, 1, 1).forEach(([x, z], i) => {
-        part(c, GEO.box, mat(cab[0], { r: 0.4, m: 0.3 }), x, 0.5, z, 0.95, 1, 0.75);
-        part(c, GEO.box, mat(cab[0], { r: 0.4, m: 0.3 }), x, 1.45, z - 0.1, 0.95, 0.9, 0.55);
-        part(c, GEO.plane, screenM[i % 3], x, 1.45, z + 0.18, 0.78, 0.62, 1);
-        part(c, GEO.box, mat(cab[1], { glow: 2.2 }), x, 2.02, z - 0.1, 0.98, 0.22, 0.6);
-        part(c, GEO.box, mat('#c9a227', { m: 0.9, r: 0.25 }), x, 1.02, z + 0.3, 0.95, 0.06, 0.25);
-        part(c, GEO.cyl, mat('#c0c0c0', { m: 0.9, r: 0.2 }), x + 0.55, 1.4, z, 0.06, 0.6, 0.06);
-        part(c, GEO.sph, mat('#d00000', { glow: 0.6 }), x + 0.55, 1.72, z, 0.16, 0.16, 0.16);
-        stool(c, x, z + 0.95, cab[1]);
-        seat(c, x, z + 0.95, Math.PI);
-      });
-      break;
-    }
-    case 'cartas': {
-      const felt = ['#0f6b3a', '#7a1f45', '#0f6b3a', '#4a148c'][st];
-      const rim = st === 3 ? mat('#c9a227', { m: 0.9, r: 0.25 }) : mat('#5c3a21', { r: 0.35 });
-      grid(n, d.max, 3, w, dd, 0.6, 0.8).forEach(([x, z]) => {
-        const sx = st === 1 || st === 3 ? 1.5 : 1;
-        if (st === 0) {
-          part(c, GEO.half, rim, x, 0.78, z - 0.3, 2.5, 0.12, 2.5);
-          part(c, GEO.half, mat(felt, { r: 0.95 }), x, 0.85, z - 0.3, 2.25, 0.04, 2.25);
+    case 'pesos': {
+      const accent = st ? '#facc15' : '#f97316';
+      mirror(c, w, dd);
+      grid(n, d.max, 5, w, dd, 0.8, 1.4).forEach(([x, z], i) => {
+        const kind = i % 3;
+        if (kind === 0) {
+          // Supino: banco, suportes e barra
+          part(c, GEO.box, mat(accent, { r: 0.5 }), x, 0.45, z, 0.4, 0.12, 1.3);
+          part(c, GEO.box, IRON(), x, 0.22, z, 0.2, 0.44, 1.1);
+          for (const s of [-1, 1]) part(c, GEO.box, IRON(), x + s * 0.45, 0.65, z - 0.5, 0.08, 1.3, 0.08);
+          barbell(c, x, 1.2, z - 0.5);
+          c.seats.push({ p: new THREE.Vector3(x, 0, z), rot: 0, act: 'sit' });
+        } else if (kind === 1) {
+          // Gaiola de agachamento
+          for (const sx of [-1, 1]) for (const sz of [-1, 1]) part(c, GEO.box, IRON(), x + sx * 0.6, 1.1, z + sz * 0.5, 0.09, 2.2, 0.09);
+          for (const sz of [-1, 1]) part(c, GEO.box, IRON(), x, 2.2, z + sz * 0.5, 1.3, 0.09, 0.09);
+          part(c, GEO.box, mat(accent, { glow: 0.6 }), x, 0.02, z, 1.3, 0.03, 1.1);
+          barbell(c, x, 1.45, z, 2);
+          c.seats.push({ p: new THREE.Vector3(x, 0, z + 0.1), rot: Math.PI, act: 'lift' });
         } else {
-          part(c, GEO.cyl, rim, x, 0.78, z, 2 * sx, 0.12, 2);
-          part(c, GEO.cyl, mat(felt, { r: 0.95 }), x, 0.85, z, 1.8 * sx, 0.04, 1.8);
-        }
-        part(c, GEO.cyl, mat('#2b1b12'), x, 0.38, z, 0.5, 0.76, 0.5);
-        for (let k = 0; k < 4; k++) part(c, GEO.cyl, mat(['#d00000', '#1d4ed8', '#f5f5f5', '#111'][k]), x - 0.45 + k * 0.3, 0.9, z - 0.05, 0.14, 0.08 + k * 0.03, 0.14);
-        if (st === 3) part(c, GEO.sph, mat('#ffe8a3', { glow: 2 }), x, 3, z, 0.5, 0.3, 0.5);
-        person(c, x, z - (st === 0 ? 0.6 : 1.25), 0, '#f5f5f5', '#111');
-        const seats = st === 2 ? 6 : 5;
-        for (let k = 0; k < seats; k++) {
-          const a = st === 2 ? Math.PI * 0.35 + (k / (seats - 1)) * Math.PI * 1.3 : Math.PI * 0.2 + (k / (seats - 1)) * Math.PI * 0.6;
-          const rx = (st === 0 ? 1.45 : 1.25) * (st === 1 || st === 3 ? 1.35 : 1), rz = st === 0 ? 1.45 : 1.25;
-          const px = x + Math.cos(a) * rx, pz = z + Math.sin(a) * rz - (st === 0 ? 0.3 : 0);
-          const rot = Math.atan2(x - px, z - pz);
-          chair(c, px, pz, rot + Math.PI, st === 3 ? '#4a148c' : '#7a1f2b');
-          seat(c, px, pz, rot);
+          // Prateleira de halteres
+          part(c, GEO.box, IRON(), x, 0.35, z, 1.6, 0.08, 0.55);
+          part(c, GEO.box, IRON(), x, 0.18, z, 1.5, 0.36, 0.1);
+          for (let k = 0; k < 5; k++) for (const s of [-0.12, 0.12]) part(c, GEO.cyl, mat(st ? '#facc15' : '#111', { m: st ? 0.9 : 0.2, r: 0.4 }), x - 0.6 + k * 0.3, 0.47, z + s, 0.12 + k * 0.015, 0.2, 0.12 + k * 0.015).rotation.z = Math.PI / 2;
+          c.seats.push({ p: new THREE.Vector3(x, 0, z + 0.8), rot: Math.PI, act: 'lift' });
         }
       });
       break;
     }
-    case 'roleta': {
-      grid(n, d.max, 3, w, dd, 0.6, 0.8).forEach(([x, z]) => {
-        part(c, GEO.box, mat('#5c3a21', { r: 0.35 }), x, 0.8, z, 3, 0.12, 1.4);
-        part(c, GEO.box, mat('#0f6b3a', { r: 0.95 }), x + 0.35, 0.87, z, 2.1, 0.03, 1.2);
-        part(c, GEO.box, mat('#2b1b12'), x, 0.38, z, 2.4, 0.76, 0.8);
-        part(c, GEO.cyl, mat('#3a2412', { r: 0.4 }), x - 1.05, 0.95, z, 1.1, 0.2, 1.1);
-        const w = part(c, GEO.cyl, wheelM, x - 1.05, 1.07, z, 0.95, 0.06, 0.95);
-        c.spin.push({ m: w, s: 2.5 + Math.random() });
-        person(c, x - 0.4, z - 1.15, 0, '#f5f5f5', '#111');
-        for (let k = 0; k < 4; k++) {
-          const px = x - 0.6 + k * 0.7, pz = z + 1.15;
-          chair(c, px, pz, 0, '#7a1f2b');
-          seat(c, px, pz, Math.PI);
+    case 'cardio': {
+      if (!st) tv(c, 0, 2.3, -dd / 2 + 0.25, 3.2);
+      else for (let k = 0; k < 6; k++) part(c, GEO.box, mat(['#fb923c', '#e879f9', '#22d3ee'][k % 3], { glow: 2.4 }), -w / 2 + 1 + k * ((w - 2) / 5), 0.03, -dd / 2 + 0.4, 1.2, 0.04, 0.1);
+      grid(n, d.max, st ? 6 : 4, w, dd, 0.7, 0.5, st ? 0 : 0.6).forEach(([x, z]) => {
+        if (!st) {
+          // Esteira virada para a parede
+          part(c, GEO.box, IRON(), x, 0.15, z, 0.85, 0.22, 1.9);
+          part(c, GEO.box, mat('#111', { r: 0.9 }), x, 0.27, z + 0.05, 0.62, 0.03, 1.6);
+          for (const s of [-1, 1]) part(c, GEO.box, CHROME(), x + s * 0.38, 0.8, z - 0.75, 0.06, 1.2, 0.06);
+          part(c, GEO.box, IRON(), x, 1.38, z - 0.78, 0.8, 0.3, 0.12);
+          part(c, GEO.plane, mat(neon, { glow: 1.6 }), x, 1.4, z - 0.71, 0.5, 0.18, 1);
+          c.seats.push({ p: new THREE.Vector3(x, 0.28, z + 0.1), rot: Math.PI, act: 'run' });
+        } else {
+          // Bicicleta de spinning
+          part(c, GEO.box, IRON(), x, 0.05, z, 0.5, 0.1, 1.1);
+          part(c, GEO.cyl, mat('#94a3b8', { m: 0.9, r: 0.2 }), x, 0.5, z - 0.4, 0.55, 0.1, 0.55).rotation.z = Math.PI / 2;
+          part(c, GEO.box, IRON(), x, 0.6, z + 0.15, 0.1, 1.1, 0.1).rotation.x = -0.25;
+          part(c, GEO.box, mat('#111'), x, 1.12, z + 0.25, 0.26, 0.08, 0.4);
+          part(c, GEO.box, mat(neon, { glow: 1.5 }), x, 1.15, z - 0.5, 0.5, 0.06, 0.08);
+          c.seats.push({ p: new THREE.Vector3(x, 0.35, z + 0.25), rot: Math.PI, act: 'bike' });
         }
       });
+      if (st) person(c, 0, -dd / 2 + 0.9, 0, neon);
       break;
     }
-    case 'corrida':
-    case 'bingo': {
-      const race = d.kind === 'corrida';
-      part(c, GEO.box, mat('#111', { r: 0.3, m: 0.5 }), 0, 2.5, -dd / 2 + 0.35, w - 2, 3.4, 0.25);
-      part(c, GEO.plane, texMat(race ? horseT : bingoT, 1.1, 0.4), 0, 2.5, -dd / 2 + 0.49, w - 2.4, 3, 1);
-      part(c, GEO.box, mat(neon, { glow: 2.4 }), 0, 4.25, -dd / 2 + 0.35, w - 2, 0.1, 0.3);
-      if (race) {
-        for (let r = 0; r < n; r++) for (let k = 0; k < 7; k++) {
-          const px = -w / 2 + 1.4 + k * ((w - 2.8) / 6), pz = -dd / 2 + 3 + r * 1.35;
-          chair(c, px, pz, Math.PI, r % 2 ? '#1b4332' : '#2d6a4f');
-          seat(c, px, pz, Math.PI);
-        }
-      } else {
-        grid(n, d.max, 4, w, dd, 0.6, 0.6, 2.2).forEach(([x, z]) => {
-          part(c, GEO.box, mat('#e9e3d5', { r: 0.6 }), x, 0.75, z, 2.2, 0.08, 0.8);
-          part(c, GEO.box, mat('#3a2412'), x, 0.36, z, 2, 0.72, 0.5);
-          for (const s of [-0.55, 0.55]) {
-            part(c, GEO.plane, mat('#fff8e7'), x + s, 0.8, z, 0.45, 0.35, 1).rotation.x = -Math.PI / 2;
-            chair(c, x + s, z + 0.75, Math.PI, '#5a189a');
-            seat(c, x + s, z + 0.75, Math.PI);
-          }
-        });
+    case 'vestiario': {
+      for (let k = 0; k < 9; k++) {
+        const x = -w / 2 + 0.9 + k * 0.78;
+        part(c, GEO.box, mat(k % 2 ? '#3b82f6' : '#2563eb', { r: 0.4, m: 0.3 }), x, 1.1, -dd / 2 + 0.45, 0.72, 2.2, 0.6);
+        part(c, GEO.box, CHROME(), x + 0.25, 1.1, -dd / 2 + 0.76, 0.04, 0.2, 0.04);
       }
+      for (let k = 0; k < 3; k++) {
+        const x = w / 2 - 1 - k * 1.2;
+        part(c, GEO.box, mat('#bae6fd', { op: 0.35, r: 0.05 }), x - 0.55, 1.1, -dd / 2 + 1, 0.05, 2.2, 1.6);
+        part(c, GEO.cyl, CHROME(), x, 2.1, -dd / 2 + 0.4, 0.2, 0.06, 0.2);
+      }
+      grid(n, d.max, 3, w - 4, dd, 0.4, 0.3, 1.5).forEach(([x, z]) => {
+        x -= 2;
+        part(c, GEO.box, mat('#a16207', { r: 0.6 }), x, 0.45, z, 1.6, 0.08, 0.4);
+        part(c, GEO.box, IRON(), x, 0.22, z, 1.4, 0.44, 0.1);
+        c.seats.push({ p: new THREE.Vector3(x, 0, z), rot: Math.PI, act: 'sit' });
+      });
+      break;
+    }
+    case 'funcional': {
+      if (st) {
+        // Quadra de areia com rede
+        for (const s of [-1, 1]) part(c, GEO.cyl, CHROME(), s * (w / 2 - 1), 1.2, 0, 0.1, 2.4, 0.1);
+        part(c, GEO.box, mat('#f8fafc', { op: 0.55 }), 0, 1.9, 0, w - 2, 0.9, 0.04);
+        part(c, GEO.sph, mat('#fde047', { r: 0.6 }), 1.5, 2.6, -1, 0.3, 0.3, 0.3);
+        grid(n * 2, d.max * 2, 4, w, dd, 1, 0.8).forEach(([x, z], i) => c.seats.push({ p: new THREE.Vector3(x, 0, z + (i < 4 ? -0.6 : 0.6)), rot: z < 0 ? 0 : Math.PI, act: 'run' }));
+        break;
+      }
+      for (const [x, y] of [[-w / 2 + 1, 0], [w / 2 - 1, 0]]) {
+        part(c, GEO.box, IRON(), x, 1.3, -dd / 2 + 0.6 + y, 0.12, 2.6, 0.12);
+      }
+      part(c, GEO.box, IRON(), 0, 2.55, -dd / 2 + 0.6, w - 2, 0.1, 0.1);
+      grid(n, d.max, 3, w, dd, 0.8, 0.6, 1).forEach(([x, z], i) => {
+        if (i % 2) {
+          for (let k = 0; k < 3; k++) part(c, GEO.box, mat('#b45309', { r: 0.7 }), x - 0.5 + k * 0.5, 0.25 + k * 0.12, z - 0.3, 0.45, 0.5 + k * 0.24, 0.45);
+          for (let k = 0; k < 3; k++) part(c, GEO.sph, mat(['#ef4444', '#3b82f6', '#22c55e'][k], { r: 0.4 }), x - 0.4 + k * 0.4, 0.18, z + 0.4, 0.3, 0.34, 0.3);
+        } else {
+          for (const s of [-0.15, 0.15]) part(c, GEO.box, mat('#1c1917', { r: 0.9 }), x + s, 0.04, z, 0.07, 0.07, 2);
+          part(c, GEO.box, IRON(), x, 0.3, z - 1, 0.3, 0.6, 0.3);
+        }
+        c.seats.push({ p: new THREE.Vector3(x, 0, z + 0.9), rot: Math.PI, act: i % 2 ? 'run' : 'lift' });
+      });
+      break;
+    }
+    case 'ringue': {
+      const rx = -w / 2 + 3.3, rz = -dd / 2 + 3.3;
+      part(c, GEO.box, mat('#1e40af', { r: 0.8 }), rx, 0.35, rz, 5.6, 0.7, 5.6);
+      for (const [sx, sz, col] of [[-1, -1, '#ef4444'], [1, 1, '#3b82f6'], [1, -1, '#f8fafc'], [-1, 1, '#f8fafc']] as const) part(c, GEO.cyl, mat(col, { r: 0.4 }), rx + sx * 2.6, 1.3, rz + sz * 2.6, 0.18, 1.3, 0.18);
+      for (let k = 0; k < 3; k++) {
+        const y = 1 + k * 0.32, rope = mat(k === 1 ? '#f8fafc' : '#ef4444', { r: 0.5 });
+        for (const s of [-1, 1]) {
+          part(c, GEO.box, rope, rx, y, rz + s * 2.6, 5.2, 0.05, 0.05);
+          part(c, GEO.box, rope, rx + s * 2.6, y, rz, 0.05, 0.05, 5.2);
+        }
+      }
+      person(c, rx - 0.6, rz, Math.PI / 2, '#ef4444', '#111', 0.7);
+      person(c, rx + 0.6, rz, -Math.PI / 2, '#3b82f6', '#111', 0.7);
+      for (let k = 0; k < n; k++) {
+        const x = w / 2 - 1.2 - (k % 2) * 1.6, z = -dd / 2 + 1.2 + Math.floor(k / 2) * 2.6;
+        part(c, GEO.cyl, IRON(), x, 2.6, z, 0.04, 0.6, 0.04);
+        part(c, GEO.cyl, mat(k % 2 ? '#7f1d1d' : '#111827', { r: 0.6 }), x, 1.6, z, 0.55, 1.4, 0.55);
+        c.seats.push({ p: new THREE.Vector3(x - 0.75, 0, z + 0.2), rot: Math.PI / 2, act: 'lift' });
+      }
+      break;
+    }
+    case 'estudio': {
+      mirror(c, w, dd);
+      const teacher = st === 0 ? '#e879f9' : st === 1 ? '#fcd34d' : '#22d3ee';
+      person(c, 0, -dd / 2 + 1, 0, teacher);
+      if (st === 0) {
+        for (let k = 0; k < 3; k++) {
+          const ball = new THREE.Mesh(GEO.sph, mat('#e9d5ff', { m: 1, r: 0.1, glow: 0.4 }));
+          ball.position.set(-3 + k * 3, 3.2, 0);
+          ball.scale.setScalar(0.45);
+          ball.userData.keep = 1;
+          c.g.add(ball);
+          c.spin.push({ m: ball, s: 2 });
+        }
+        for (const s of [-1, 1]) part(c, GEO.box, mat('#111', { r: 0.4 }), s * (w / 2 - 0.6), 0.7, -dd / 2 + 0.6, 0.6, 1.4, 0.5);
+      }
+      grid(n * (st === 2 ? 1 : 2), d.max * (st === 2 ? 1 : 2), st === 2 ? 3 : 4, w, dd, 0.8, 0.6, 1.4).forEach(([x, z]) => {
+        if (st === 1) part(c, GEO.box, mat(['#a78bfa', '#f472b6', '#34d399', '#fbbf24'][Math.abs(Math.round(x * 3)) % 4], { r: 0.9 }), x, 0.02, z, 0.7, 0.03, 1.7);
+        if (st === 2) {
+          part(c, GEO.box, mat('#e2e8f0', { m: 0.6, r: 0.3 }), x, 0.3, z, 0.75, 0.12, 2.2);
+          part(c, GEO.box, mat('#0f172a', { r: 0.7 }), x, 0.42, z + 0.2, 0.65, 0.1, 0.9);
+          for (const s of [-1, 1]) part(c, GEO.box, CHROME(), x, 0.55, z + s * 1, 0.7, 0.5, 0.06);
+        }
+        c.seats.push({ p: new THREE.Vector3(x, st === 2 ? 0.25 : 0, z), rot: Math.PI, act: st === 0 ? 'dance' : 'sit' });
+      });
+      break;
+    }
+    case 'macas': {
+      if (st) for (let k = 0; k < 2; k++) {
+        part(c, GEO.cyl, mat('#e0f2fe', { r: 0.2, m: 0.3 }), w / 2 - 1.3, 0.45, -dd / 2 + 1 + k * 1.8, 1.4, 0.9, 1.4);
+        part(c, GEO.cyl, mat('#7dd3fc', { glow: 0.5, op: 0.85 }), w / 2 - 1.3, 0.85, -dd / 2 + 1 + k * 1.8, 1.2, 0.05, 1.2);
+      }
+      grid(n, d.max, 4, st ? w - 2.5 : w, dd, 0.5, 0.5).forEach(([x, z]) => {
+        x -= st ? 1.25 : 0;
+        part(c, GEO.box, mat(st ? '#e0f2fe' : '#38bdf8', { r: 0.6 }), x, 0.7, z, 0.75, 0.12, 1.9);
+        for (const s of [-1, 1]) part(c, GEO.box, CHROME(), x, 0.32, z + s * 0.75, 0.6, 0.64, 0.06);
+        part(c, GEO.box, mat('#f8fafc', { r: 0.9 }), x, 0.8, z - 0.75, 0.5, 0.08, 0.3);
+        c.seats.push({ p: new THREE.Vector3(x + 0.6, 0, z), rot: -Math.PI / 2, act: 'stand' });
+      });
+      person(c, -w / 2 + 1, -dd / 2 + 0.7, Math.PI / 4, '#f8fafc', '#38bdf8');
       break;
     }
     case 'mesas': {
@@ -356,30 +422,8 @@ function furnish(c: Ctx, d: RoomDef, n: number, w: number, dd: number, neon: str
         x -= 1.5;
         part(c, GEO.box, mat('#e9ecef', { r: 0.5 }), x, 0.9, z, 2.2, 1.8, 0.5);
         for (let k = 0; k < 9; k++) part(c, GEO.box, mat(['#e63946', '#ffb703', '#219ebc', '#8338ec', '#06d6a0'][k % 5]), x - 0.8 + (k % 3) * 0.8, 0.5 + Math.floor(k / 3) * 0.55, z + 0.2, 0.4, 0.3, 0.2);
-        seat(c, x, z + 0.75, Math.PI, false);
+        seat(c, x, z + 0.75, Math.PI, 'stand');
       });
-      break;
-    }
-    case 'teatro': {
-      part(c, GEO.box, mat('#3a2412', { r: 0.5 }), 0, 0.35, -dd / 2 + 1.7, w - 1.2, 0.7, 3);
-      part(c, GEO.box, mat('#8b0000', { r: 0.95 }), -w / 2 + 1, 2.4, -dd / 2 + 0.6, 1, 4.2, 0.4);
-      part(c, GEO.box, mat('#8b0000', { r: 0.95 }), w / 2 - 1, 2.4, -dd / 2 + 0.6, 1, 4.2, 0.4);
-      part(c, GEO.box, mat('#8b0000', { r: 0.95 }), 0, 4.3, -dd / 2 + 0.6, w - 1, 0.7, 0.4);
-      part(c, GEO.box, mat('#ffba08', { glow: 2.5 }), 0, 0.72, -dd / 2 + 3.2, w - 1.2, 0.05, 0.08);
-      ['#ff4fd8', '#ffd60a', '#39d0ff'].forEach((s, k) => person(c, -2 + k * 2, -dd / 2 + 1.6, 0, s, '#222', 0.7));
-      for (let k = 0; k < 3; k++) {
-        const beam = new THREE.Mesh(GEO.cone, mat(['#ff4fd8', '#ffd60a', '#39d0ff'][k], { glow: 1.5, op: 0.13 }));
-        beam.position.set(-3 + k * 3, 3.2, -dd / 2 + 2.4);
-        beam.scale.set(1.6, 4, 1.6);
-        beam.userData.keep = 1;
-        c.g.add(beam);
-        c.spin.push({ m: beam, s: -(0.5 + k * 0.2) });
-      }
-      for (let r = 0; r < n; r++) for (let k = 0; k < 8; k++) {
-        const px = -w / 2 + 1.5 + k * ((w - 3) / 7), pz = -dd / 2 + 4.6 + r * 1.15;
-        chair(c, px, pz, Math.PI, '#8b0000');
-        seat(c, px, pz, Math.PI);
-      }
       break;
     }
     case 'agua': {
@@ -402,17 +446,6 @@ function furnish(c: Ctx, d: RoomDef, n: number, w: number, dd: number, neon: str
         plant(c, -w / 2 + 0.7, -dd / 2 + 0.7);
         plant(c, w / 2 - 0.7, -dd / 2 + 0.7);
       }
-      break;
-    }
-    case 'hotel': {
-      grid(n, d.max, 4, w, dd, 0.3, 0.4).forEach(([x, z]) => {
-        part(c, GEO.box, mat('#f5ebe0', { r: 0.9 }), x, 0.35, z, 1.4, 0.4, 2);
-        part(c, GEO.box, mat('#c9a227', { r: 0.6 }), x, 0.58, z + 0.3, 1.42, 0.06, 1.2);
-        part(c, GEO.box, mat('#ffffff', { r: 0.9 }), x, 0.6, z - 0.7, 1.1, 0.15, 0.4);
-        part(c, GEO.box, mat('#4a3b2b'), x, 0.8, z - 1.05, 1.5, 1.2, 0.12);
-        part(c, GEO.sph, mat('#ffd6a5', { glow: 1.4 }), x + 0.9, 0.9, z - 0.8, 0.2, 0.25, 0.2);
-        seat(c, x, z, Math.PI);
-      });
       break;
     }
   }
@@ -443,7 +476,7 @@ function bake(g: THREE.Group) {
 
 // ===== Cena =====
 const MAX_AGENTS = 150;
-export class CasinoScene {
+export class GymScene {
   private r: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
@@ -482,7 +515,7 @@ export class CasinoScene {
     this.r.toneMappingExposure = 1.05;
     const bg = canvas2bg();
     this.scene.background = bg;
-    this.scene.add(new THREE.HemisphereLight('#ffe9f5', '#2a1440', 1.4));
+    this.scene.add(new THREE.HemisphereLight('#eef8ff', '#12303a', 1.4));
     this.sun.position.set(14, 30, 18);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
@@ -511,7 +544,7 @@ export class CasinoScene {
     for (let i = 0; i < 900; i++) pts.set([(Math.random() - 0.5) * 110, -15 + Math.random() * 120, (Math.random() - 0.5) * 110], i * 3);
     const pg = new THREE.BufferGeometry();
     pg.setAttribute('position', new THREE.BufferAttribute(pts, 3));
-    this.sparks = new THREE.Points(pg, new THREE.PointsMaterial({ color: '#ffd6f5', size: 2, sizeAttenuation: false, transparent: true, opacity: 0.7 }));
+    this.sparks = new THREE.Points(pg, new THREE.PointsMaterial({ color: '#bdf4ff', size: 2, sizeAttenuation: false, transparent: true, opacity: 0.7 }));
     this.scene.add(this.sparks);
     this.setQuality(quality);
     this.resize();
@@ -595,7 +628,7 @@ export class CasinoScene {
     part(c, GEO.box, mat(def.neon, { glow: 2.6 }), 0, 3.55, -10.22, 28, 0.08, 0.08);
     part(c, GEO.box, mat(def.neon, { glow: 2.6 }), -13.72, 3.55, 0, 0.08, 0.08, 21);
     for (const x of [-13.9, -7, 7, 13.9]) part(c, GEO.box, mat('#c9a227', { m: 0.8, r: 0.3 }), x, 1.8, -10.25, 0.35, 3.7, 0.35);
-    const s = new THREE.Mesh(GEO.plane, new THREE.MeshBasicMaterial({ map: tex(sign(f ? def.name : 'Magnata Resort', def.neon)), transparent: true, toneMapped: false, depthWrite: false }));
+    const s = new THREE.Mesh(GEO.plane, new THREE.MeshBasicMaterial({ map: tex(sign(f ? def.name : 'Magnata Fitness', def.neon)), transparent: true, toneMapped: false, depthWrite: false }));
     s.position.set(-6.5, 2.6, -10.2);
     s.scale.set(8, 1.5, 1);
     s.userData.keep = 1;
@@ -619,7 +652,7 @@ export class CasinoScene {
     if (!f) {
       // Entrada com arco de luz
       for (const x of [-3, 3]) part(c, GEO.box, mat('#c9a227', { m: 0.8, r: 0.3 }), x, 1.6, 10.6, 0.4, 3.2, 0.4);
-      part(c, GEO.box, mat('#ff4fd8', { glow: 2.5 }), 0, 3.3, 10.6, 6.4, 0.35, 0.4);
+      part(c, GEO.box, mat('#fb923c', { glow: 2.5 }), 0, 3.3, 10.6, 6.4, 0.35, 0.4);
     }
     bake(g);
     this.world.add(g);
@@ -784,10 +817,11 @@ export class CasinoScene {
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(), p = new THREE.Vector3();
     let n = 0;
     this.agents = this.agents.filter((a) => {
-      let sitting = false;
+      let act: Act | 'walk' = 'walk';
       if (a.wait > 0) {
         a.wait -= dt;
-        sitting = !!a.seat?.sit;
+        act = a.seat?.act ?? 'stand';
+        a.phase += dt * (act === 'lift' ? 3 : 8);
         if (a.wait <= 0) {
           a.visits++;
           const here = a.pos.clone();
@@ -825,13 +859,17 @@ export class CasinoScene {
         }
       }
       if (n >= MAX_AGENTS) return true;
-      const walking = a.wait <= 0;
-      const bob = walking ? Math.abs(Math.sin(a.phase)) * 0.06 : 0;
-      const base = a.pos.y + (sitting ? 0.25 : 0);
+      const walking = act === 'walk';
+      const sitting = act === 'sit' || act === 'bike';
+      const sn = Math.sin(a.phase);
+      const bob = walking ? Math.abs(sn) * 0.06 : act === 'run' ? Math.abs(sn) * 0.1 : act === 'dance' ? Math.abs(sn) * 0.14 : act === 'lift' ? (sn + 1) * 0.07 : 0;
+      const lift = walking || !a.seat ? 0 : a.seat.p.y - a.floor * FLOOR_H;
+      const base = a.pos.y + lift + (sitting ? 0.25 : 0);
+      if (act === 'dance' && a.seat) a.dir = a.seat.rot + Math.sin(a.phase * 0.4) * 0.8;
       e.set(0, a.dir, 0);
       q.setFromEuler(e);
       for (const side of [-1, 1]) {
-        const swing = walking ? Math.sin(a.phase) * 0.6 * side : sitting ? -1.3 : 0;
+        const swing = walking ? sn * 0.6 * side : act === 'run' ? sn * 0.95 * side : act === 'bike' ? -1.3 + sn * 0.45 * side : sitting ? -1.3 : act === 'dance' ? sn * 0.3 * side : 0;
         e.set(swing, a.dir, 0, 'YXZ');
         const lq = new THREE.Quaternion().setFromEuler(e);
         const off = new THREE.Vector3(side * 0.1, 0, 0).applyQuaternion(q);
@@ -860,54 +898,35 @@ export class CasinoScene {
     }
   }
 
-  // ===== Telas animadas (cavalos, bingo, rolos) =====
+  // ===== TVs com batimentos e água mexendo =====
   private screens(dt: number) {
-    reelTex.forEach((t, i) => (t.offset.y = (t.offset.y + dt * (1.5 + i * 0.4) * (C.event?.id === 'jackpot' ? 3 : 1)) % 1));
     waterT.offset.x = (waterT.offset.x + dt * 0.03) % 1;
     waterT.offset.y = (waterT.offset.y + dt * 0.02) % 1;
-    if ((this.texAcc += dt) < 0.08) return;
+    if ((this.texAcc += dt) < 0.1) return;
     this.texAcc = 0;
-    const h = horseC.getContext('2d')!;
-    h.fillStyle = '#2d6a4f';
-    h.fillRect(0, 0, 256, 128);
-    h.fillStyle = '#b08968';
-    for (let i = 0; i < 6; i++) h.fillRect(0, 14 + i * 19, 256, 14);
-    h.fillStyle = '#fff';
-    h.fillRect(236, 10, 4, 118);
-    h.font = '16px sans-serif';
-    h.textBaseline = 'middle';
-    const lap = (this.t * 0.09) % 1.3;
-    for (let i = 0; i < 6; i++) {
-      const x = Math.min(1, lap * (0.75 + ((i * 37) % 10) / 30 + Math.sin(this.t * 2 + i) * 0.03)) * 220;
-      h.save();
-      h.translate(x + 8, 21 + i * 19);
-      h.scale(-1, 1);
-      h.fillText('🏇', -8, 0);
-      h.restore();
+    const g = tvC.getContext('2d')!;
+    g.fillStyle = '#04121a';
+    g.fillRect(0, 0, 256, 144);
+    g.strokeStyle = 'rgba(34,211,238,.15)';
+    for (let x = 0; x < 256; x += 16) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 144); g.stroke(); }
+    g.strokeStyle = '#22d3ee';
+    g.lineWidth = 3;
+    g.beginPath();
+    for (let x = 0; x <= 256; x += 4) {
+      const t = this.t * 1.6 + x / 60;
+      const k = t % 1;
+      const y = 90 - (k > 0.45 && k < 0.5 ? 55 : k > 0.5 && k < 0.55 ? -25 : Math.sin(t * 6) * 3);
+      if (x) g.lineTo(x, y);
+      else g.moveTo(x, y);
     }
-    h.fillStyle = '#ffd60a';
-    h.font = 'bold 12px sans-serif';
-    h.fillText('CORRIDA AO VIVO', 6, 7);
-    horseT.needsUpdate = true;
-    if (Math.floor(this.t * 12) % 10 === 0) {
-      const b = bingoC.getContext('2d')!;
-      b.fillStyle = '#240046';
-      b.fillRect(0, 0, 256, 128);
-      b.font = 'bold 11px sans-serif';
-      b.textAlign = 'center';
-      b.textBaseline = 'middle';
-      const lit = Math.floor(this.t / 1.5);
-      for (let i = 0; i < 75; i++) {
-        const x = 12 + (i % 15) * 16.5, y = 12 + Math.floor(i / 15) * 21;
-        const on = ((i * 7919 + lit * 31) % 75) < 22;
-        b.fillStyle = on ? '#ffd60a' : '#3c096c';
-        b.beginPath(); b.arc(x, y, 7.5, 0, 7); b.fill();
-        b.fillStyle = on ? '#240046' : '#9d4edd';
-        b.fillText(String(i + 1), x, y + 0.5);
-      }
-      b.textAlign = 'start';
-      bingoT.needsUpdate = true;
-    }
+    g.stroke();
+    g.fillStyle = '#f97316';
+    g.font = 'bold 26px sans-serif';
+    g.fillText(`${118 + Math.round(Math.sin(this.t) * 12)} BPM`, 12, 32);
+    g.fillStyle = '#e2e8f0';
+    g.font = 'bold 14px sans-serif';
+    g.fillText(C.event ? 'EVENTO AO VIVO' : 'TREINO DO DIA', 150, 28);
+    tvT.needsUpdate = true;
   }
 
   private loop = (now: number) => {
@@ -1038,9 +1057,9 @@ export class CasinoScene {
 function canvas2bg() {
   const t = new THREE.CanvasTexture(canvas(4, 256, (g) => {
     const gr = g.createLinearGradient(0, 0, 0, 256);
-    gr.addColorStop(0, '#2a0a4a');
-    gr.addColorStop(0.55, '#5b1a7a');
-    gr.addColorStop(1, '#1a0630');
+    gr.addColorStop(0, '#07202b');
+    gr.addColorStop(0.55, '#0f4252');
+    gr.addColorStop(1, '#041016');
     g.fillStyle = gr;
     g.fillRect(0, 0, 4, 256);
   }));

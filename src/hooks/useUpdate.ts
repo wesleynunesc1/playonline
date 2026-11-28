@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { create } from 'zustand';
-import { persist as save, say } from '../casino/sim';
+import { persist as save, say } from '../gym/sim';
 
 const CHECK_MS = 5 * 60_000;
 const SCRIPT = /\/assets\/index-[\w-]+\.js/;

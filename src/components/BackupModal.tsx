@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { persist as save, say } from '../casino/sim';
+import { persist as save, say } from '../gym/sim';
 import { Button } from './common/Button';
 import { Modal } from './common/Modal';
 
 /** Leva todo o progresso para outro aparelho por um código ou arquivo */
-const KEYS = ['PLAY_ONLINE_CASSINO', 'PLAY_ONLINE_CASSINO_HQ'];
+const KEYS = ['PLAY_ONLINE_ACADEMIA', 'PLAY_ONLINE_ACADEMIA_HQ'];
 const PREFIX = 'PO1.';
 
 async function pipe(data: Uint8Array, stream: CompressionStream | DecompressionStream) {
