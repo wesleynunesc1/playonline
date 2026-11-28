@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { create } from 'zustand';
 import { X } from 'lucide-react';
-import { EVENTS, EventId, FLOORS, RIVALS, ROOMS, STAFF, STAFF_MAX } from '../gym/data';
-import { ROOM_MAX, S, UPG_MAX, cheat, mod, say, startEvent, useGym } from '../gym/sim';
+import { PLOTS, STAFF, ZONE } from '../gym/data';
+import { DECO_MAX, RECEP_MAX, U, cheat, mod, money, need, say, skipDays, useGym } from '../gym/sim';
 import { Modal } from './common/Modal';
 import { Button } from './common/Button';
 
@@ -65,29 +65,20 @@ export const GymMods: React.FC = () => {
             <section className="mod-box">
               <b className="mod-title">💰 Dinheiro</b>
               <div className="grid grid-cols-2 gap-1.5">
-                {[1e6, 1e9, 1e12, 1e15].map((n) => <Btn key={n} onClick={() => cheat((c) => { c.money += n; })}>+ {n.toExponential(0).replace('e+', 'e')}</Btn>)}
-                <Btn onClick={() => cheat((c) => { c.gems += 100; })}>+100 🏅</Btn>
+                {[100_000, 1_000_000, 10_000_000].map((n) => <Btn key={n} onClick={() => cheat((c) => { c.money += n; })}>+ {money(n)}</Btn>)}
+                <Btn onClick={() => cheat((c) => { c.loan = 0; })}>Quitar empréstimo</Btn>
                 <Btn on={mod.free} onClick={() => flip(() => { mod.free = !mod.free; })}>🆓 Tudo de graça</Btn>
-                <Btn on={mod.income > 1} onClick={() => flip(() => { mod.income = mod.income > 1 ? 1 : 10; })}>📈 Lucro x10</Btn>
-                <Btn onClick={() => cheat((c) => { c.dobro += 3600; })}>⚡ 1h de dobro</Btn>
               </div>
             </section>
             <section className="mod-box">
-              <b className="mod-title">🏗️ Academia</b>
+              <b className="mod-title">🏗️ Academia atual</b>
               <div className="grid grid-cols-2 gap-1.5">
-                <Btn onClick={() => cheat((c) => { c.floors = FLOORS.length; })}>Abrir todos os andares</Btn>
-                <Btn onClick={() => cheat((c) => { for (const d of ROOMS) if (d.floor < c.floors) c.rooms[d.id] = { lv: Math.min(ROOM_MAX, (c.rooms[d.id]?.lv ?? 0) + 10), cash: c.rooms[d.id]?.cash ?? 0, mgr: c.rooms[d.id]?.mgr ?? false }; })}>Salas +10 níveis</Btn>
-                <Btn onClick={() => cheat((c) => { for (const id in c.rooms) c.rooms[id].mgr = true; })}>Gerente em tudo</Btn>
-                <Btn onClick={() => cheat((c) => { for (const s of STAFF) c.staff[s.id] = STAFF_MAX; c.deco = UPG_MAX; c.mkt = UPG_MAX; })}>Equipe, decoração e marketing no máximo</Btn>
-                <Btn onClick={() => cheat((c) => { c.beaten = RIVALS.length; })}>Passar todos os rivais</Btn>
-                <Btn onClick={() => cheat((c) => { c.units.push({ city: c.units.length + c.city + 1, income: S.income }); })}>+1 academia na rede</Btn>
-                <Btn onClick={() => cheat((c) => { c.money += S.income * 3600; c.earned += S.income * 3600; })}>Receber 1 hora de lucro</Btn>
-              </div>
-            </section>
-            <section className="mod-box">
-              <b className="mod-title">🎉 Eventos</b>
-              <div className="grid grid-cols-2 gap-1.5">
-                {(Object.keys(EVENTS) as EventId[]).map((id) => <Btn key={id} onClick={() => startEvent(id)}>{EVENTS[id].icon} {EVENTS[id].name}</Btn>)}
+                <Btn onClick={() => cheat(() => { const u = U(); PLOTS.forEach((_, i) => { u.spaces[i] ??= { zone: '', n: 0 }; }); })}>Alugar o galpão inteiro</Btn>
+                <Btn onClick={() => cheat(() => { for (const sp of U().spaces) if (sp?.zone && sp.zone !== 'recepcao') sp.n = ZONE[sp.zone].max; })}>Encher os salões de aparelhos</Btn>
+                <Btn onClick={() => cheat(() => { const u = U(); for (const st of STAFF) if (st.ratio) u.staff[st.id] = need(u, st.id); })}>Equipe completa</Btn>
+                <Btn onClick={() => cheat(() => { const u = U(); u.members += 500; })}>+500 alunos</Btn>
+                <Btn onClick={() => cheat(() => { const u = U(); u.rep = 5; u.deco = DECO_MAX; u.recep = RECEP_MAX; })}>Fama e estrutura no máximo</Btn>
+                <Btn onClick={() => skipDays(30)}>⏩ Passar 1 mês</Btn>
               </div>
             </section>
           </div>

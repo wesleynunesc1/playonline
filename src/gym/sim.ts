@@ -1,433 +1,487 @@
 import { create } from 'zustand';
 import { sound } from '../utils/audio';
 import {
-  CASH_SECONDS, CITIES, EVENTS, EventId, FLOORS, GUESTS, GuestId, OFFLINE_MAX, RIVALS, ROOM, ROOMS, RoomDef, SHOP, STAFF, STAFF_MAX, STARS, StaffId, TUNE, cityMult, cityName,
+  BUDGETS, CITIES, DAY, EVENTS, EventId, GUESTS, GuestId, LOAN_RATE, MONTHS, OFFLINE_DAYS, OVERDRAFT_RATE, PLOTS, RIVALS, SEASON, STAFF, START, StaffId, TAX, ZONE, ZONES, ZoneDef, neighbors, rivalMembers,
 } from './data';
 
-/** Economia do Magnata Fitness. Tudo roda no aparelho e continua rendendo com o app fechado. */
-export interface Room { lv: number; cash: number; mgr: boolean }
-export interface Gym {
-  v: 1; money: number; gems: number; earned: number; city: number; floors: number;
-  rooms: Record<string, Room>; staff: Record<StaffId, number>; deco: number; mkt: number; targets: GuestId[];
-  dobro: number; event: { id: EventId; left: number; room?: string } | null; nextEvent: number;
-  quest: number; beaten: number; collects: number; day: string; streak: number; t: number; played: number;
-  /** Unidades já abertas da rede (lucro que tinham ao passar a vez) */
-  units: { city: number; income: number }[]; won: boolean;
-  /** Pedido dos alunos: subir uma sala até um nível antes do prazo */
-  request: { room: string; target: number; left: number; cash: number } | null; nextReq: number;
+/**
+ * Economia do Magnata Fitness, como uma academia de verdade:
+ * entra dinheiro das mensalidades e das vendas; sai aluguel, salários, luz, manutenção, marketing, impostos e juros.
+ * Alunos entram pela procura da cidade e saem quando estão insatisfeitos. Todas as unidades da rede funcionam ao mesmo tempo.
+ */
+/** Salão alugado no galpão: zona '' = ainda vazio; n = aparelhos comprados */
+export interface Space { zone: string; n: number }
+export interface Unit {
+  city: number; spaces: (Space | null)[]; recep: number; staff: Record<StaffId, number>;
+  deco: number; price: number; budget: number; targets: GuestId[];
+  members: number; mix: Record<string, number>; rep: number;
 }
-const KEY = 'PLAY_ONLINE_ACADEMIA';
+export interface Report { month: string; revenue: number; costs: Record<string, number>; profit: number; joins: number; quits: number }
+export interface Gym {
+  v: 3; money: number; loan: number; day: number; units: Unit[]; active: number;
+  event: { id: EventId; unit: number; left: number } | null; nextEvent: number;
+  request: { unit: number; space: number; target: number; left: number } | null; nextReq: number;
+  month: Report; last: Report | null; quest: number; won: boolean; t: number; played: number; earned: number;
+}
+const KEY = 'PLAY_ONLINE_ACADEMIA3';
 try {
-  localStorage.removeItem('PLAY_ONLINE_CASSINO'); // o cassino deu lugar à academia
+  for (const k of ['PLAY_ONLINE_CASSINO', 'PLAY_ONLINE_ACADEMIA', 'PLAY_ONLINE_ACADEMIA2']) localStorage.removeItem(k); // saves antigos, de outra economia
 } catch { /* armazenamento indisponível */ }
-const fresh = (city = 0, gems = 0, streak = 0, day = '', units: Gym['units'] = [], won = false): Gym => ({
-  v: 1, money: 30, gems, earned: 0, city, floors: 1,
-  rooms: { recepcao: { lv: 1, cash: 0, mgr: true }, musculacao: { lv: 1, cash: 0, mgr: false } },
-  staff: { professor: 0, atendente: 0, personal: 0, limpeza: 0 }, deco: 0, mkt: 0, targets: [],
-  dobro: 0, event: null, nextEvent: 60, quest: 0, beaten: 0, collects: 0, day, streak, t: Date.now(), played: 0, units, won, request: null, nextReq: 90,
+
+const emptyReport = (day: number): Report => ({ month: monthName(day), revenue: 0, costs: {}, profit: 0, joins: 0, quits: 0 });
+const newUnit = (city: number): Unit => {
+  const spaces: (Space | null)[] = PLOTS.map(() => null);
+  for (const [i, zone, n] of START) spaces[i] = { zone, n: zone === 'musculacao' && city ? 4 : n };
+  return {
+  city, spaces, recep: 1, staff: { professor: city ? 1 : 2, atendente: 1, limpeza: 1, personal: 0 },
+  deco: 0, price: 99, budget: 0, targets: [], members: city ? 0 : 200, mix: { iniciante: 1 }, rep: 3,
+  };
+};
+const fresh = (): Gym => ({
+  v: 3, money: 40_000, loan: 0, day: 0, units: [newUnit(0)], active: 0, event: null, nextEvent: 25, request: null, nextReq: 12,
+  month: emptyReport(0), last: null, quest: 0, won: false, t: Date.now(), played: 0, earned: 0,
 });
 export let C: Gym = fresh();
 /** Trapaças do mod menu (não ficam salvas) */
-export const mod = { income: 1, free: false };
+export const mod = { free: false };
 
-// ===== Fórmulas =====
-export const lv = (id: string) => C.rooms[id]?.lv ?? 0;
-export const equip = (d: RoomDef, l: number) => (l > 0 ? Math.min(d.max, 1 + Math.floor(l / TUNE.equipEvery)) : 0);
-export const ticket = (d: RoomDef) => Math.max(5, (d.cost / 100) * (d.svc / d.seats));
-export const capacity = (d: RoomDef, l: number) => (equip(d, l) * d.seats) / d.svc;
-/** Preços sobem a cada cidade nova, um pouco menos que o lucro */
-const cc = () => Math.pow(TUNE.costCity, C.city);
-export const roomCost = (d: RoomDef, l: number) => cc() * (d.kind === 'lobby' ? 40 * Math.pow(TUNE.lobbyGrow, l) : l === 0 ? d.cost : Math.max(d.cost, 20) * Math.pow(TUNE.grow, l));
-export const ROOM_MAX = 100;
-export const costN = (d: RoomDef, l: number, n: number) => {
-  let s = 0;
-  for (let i = 0; i < n && l + i < ROOM_MAX; i++) s += roomCost(d, l + i);
-  return s;
+// ===== Leitura =====
+export const U = () => C.units[C.active];
+/** Aparelhos de um tipo de zona somando todos os salões (recepção: nível da fachada) */
+export const lv = (id: string, u = U()) => (id === 'recepcao' ? u.recep : u.spaces.reduce((s, x) => s + (x?.zone === id ? x.n : 0), 0));
+export function monthName(day: number) {
+  return `${MONTHS[Math.floor(day / 30) % 12]} ${2026 + Math.floor(day / 360)}`;
+}
+export const dateText = () => `Dia ${(C.day % 30) + 1} · ${monthName(C.day)}`;
+export const recepCost = (l: number) => 4_000 * Math.pow(1.8, l - 1);
+export const decoCost = (l: number) => 6_000 * Math.pow(1.7, l);
+export const RECEP_MAX = 10;
+export const DECO_MAX = 10;
+const rentMult = (u = U()) => CITIES[u.city].rent;
+/** Alugar e reformar um salão vizinho */
+export const plotCost = (i: number, u = U()) => PLOTS[i].cost * rentMult(u);
+export const plotRent = (i: number, u = U()) => PLOTS[i].rent * rentMult(u);
+export const canRent = (i: number, u = U()) => !u.spaces[i] && neighbors(i).some((j) => u.spaces[j]);
+/** Montar a zona (piso, espelho, som) com o primeiro aparelho, ou comprar mais um */
+export const zoneCost = (d: ZoneDef, n: number) => (n ? d.unit : d.build + d.unit);
+export const machines = (u: Unit) => u.spaces.reduce((s, x) => s + (x && x.zone !== 'recepcao' ? x.n : 0), 0);
+export const equipValue = (u: Unit) => u.spaces.reduce((s, x) => s + (x?.zone ? x.n * ZONE[x.zone].unit : 0), 0);
+export const capacity = (u: Unit) => u.spaces.reduce((s, x) => s + (x?.zone && ZONE[x.zone].train ? x.n * ZONE[x.zone].per : 0), 0);
+export const need = (u: Unit, id: StaffId) => {
+  const st = STAFF.find((s) => s.id === id)!;
+  if (id === 'limpeza') return Math.max(1, Math.ceil(machines(u) / st.ratio));
+  return st.ratio ? Math.max(1, Math.ceil(u.members / st.ratio)) : 0;
 };
-export const mgrCost = (d: RoomDef) => cc() * Math.max(400, d.cost * 12);
-export const staffCost = (id: StaffId, l: number) => cc() * STAFF.find((s) => s.id === id)!.base * Math.pow(TUNE.staffGrow, l);
-export const decoCost = (l: number) => cc() * 800 * Math.pow(TUNE.staffGrow, l);
-export const mktCost = (l: number) => cc() * 600 * Math.pow(TUNE.staffGrow, l);
-export const UPG_MAX = 40;
-export const targetSlots = () => (C.mkt >= 20 ? 3 : C.mkt >= 8 ? 2 : C.mkt >= 1 ? 1 : 0);
-export const floorCost = (f: number) => cc() * (FLOORS[f]?.cost ?? Infinity);
-export const levelsSum = () => ROOMS.reduce((s, d) => s + (d.kind === 'lobby' ? 0 : lv(d.id)), 0);
-export const stars = () => STARS.filter((t) => levelsSum() >= t).length;
-export const rivalFame = (i: number) => RIVALS[i].fame * Math.pow(TUNE.rivalCity, C.city);
-export const guestsOpen = () => GUESTS.filter((g) => stars() >= g.stars + 1 || g.stars === 0);
+/** Tipos de aluno que encontram ao menos uma sala de que gostam */
+export const guestsOpen = (u = U()) => GUESTS.filter((g) => g.likes.some((id) => lv(id, u) > 0));
+export const loanLimit = () => 30_000 + 6 * Math.max(0, C.last?.revenue ?? 0);
+export const rank = (u: Unit) => RIVALS.filter((_, i) => rivalMembers(i, u.city) > u.members).length + 1;
+export const beaten = (u: Unit) => RIVALS.filter((_, i) => rivalMembers(i, u.city) < u.members).length;
 
-export interface RoomStat { demand: number; cap: number; served: number; income: number; spend: number }
-export interface Stats { brand: number; arrivals: number; sat: number; income: number; rooms: Record<string, RoomStat>; mix: Record<string, number> }
-export let S: Stats = { brand: 1, arrivals: 0, sat: 1, income: 0, rooms: {}, mix: {} };
-
-/** Calcula alunos, ocupação e lucro de cada sala */
-export function compute(): Stats {
-  const open = guestsOpen();
+/** Números de uma unidade por mês: o que entra, o que sai e por quê */
+export interface Flow {
+  cap: number; crowd: number; sat: number; joins: number; quits: number; revenue: number; plans: number; sales: number; personal: number;
+  costs: Record<string, number>; profit: number; why: string[]; mix: Record<string, number>; avgPlan: number;
+}
+export function flow(u: Unit, day = C.day): Flow {
+  const cap = capacity(u);
+  const M = u.members;
+  const crowd = cap ? M / cap : 2;
+  const why: string[] = [];
+  const ratio = (id: StaffId) => Math.min(1, u.staff[id] / need(u, id));
+  const shower = lv('vestiario', u) * ZONE.vestiario.per;
+  const open = guestsOpen(u);
+  const ev = C.event?.unit === C.units.indexOf(u) ? C.event : null;
+  let sat = 0.6 + 0.025 * u.deco + 0.15 * (open.length / GUESTS.length) + (lv('sauna', u) ? 0.04 : 0) + (ev?.id === 'aulao' ? 0.1 : 0);
+  const pen = (v: number, text: string) => {
+    if (v > 0.02) why.push(text);
+    sat -= v;
+  };
+  pen(Math.max(0, crowd - 0.9) * 1.2, 'Lotada: faltam aparelhos');
+  pen((1 - ratio('professor')) * 0.3, 'Faltam professores');
+  pen((1 - ratio('atendente')) * 0.15, 'Fila na recepção');
+  pen((1 - ratio('limpeza')) * 0.25, 'Academia suja: falta limpeza');
+  pen(M > shower ? 0.2 * (1 - shower / M) : 0, 'Vestiário pequeno');
+  pen(Math.max(0, u.price / 99 - 1) * 0.15, 'Mensalidade cara');
+  sat = Math.min(1, Math.max(0, sat));
+  // Procura: gente da cidade que quer treinar e ainda não treina em lugar nenhum
+  const rivals = RIVALS.reduce((s, _, i) => s + rivalMembers(i, u.city), 0);
+  const market = Math.max(0, CITIES[u.city].pop * 0.045 - rivals * 0.6 - M);
+  const look = 0.08 + 0.05 * lv('recepcao', u) + [0, 0.08, 0.18, 0.32, 0.5, 0.8][u.budget];
+  const price = Math.pow(99 / u.price, 1.6);
+  // Em cidade pequena há menos opções e todo mundo fica sabendo: a procura proporcional é maior
+  const town = Math.sqrt(CITIES[0].pop / CITIES[u.city].pop);
+  const joins = open.length ? market * 0.0007 * town * (0.25 + (0.75 * u.rep) / 5) * look * price * SEASON[Math.floor(day / 30) % 12] * (ev?.id === 'influencer' ? 2 : 1) * 30 : 0;
+  const quits = M * (0.0025 + 0.03 * (1 - sat) ** 2) * 30;
+  // Quem entra segue o perfil da propaganda; só vem quem acha a sala de que gosta
   const mix: Record<string, number> = {};
   let tot = 0;
-  for (const g of open) tot += mix[g.id] = C.targets.includes(g.id) ? 3 : 1;
+  for (const g of open) tot += mix[g.id] = u.targets.includes(g.id) ? 3 : 1;
   for (const g of open) mix[g.id] /= tot;
-  const ev = C.event;
-  const sat0 = 1 + 0.03 * (C.staff.personal + C.staff.limpeza) + 0.01 * C.deco + (ev?.id === 'aulao' ? 0.3 : 0);
-  const arrivals = 0.45 * (1 + 0.2 * (lv('recepcao') - 1)) * (1 + 0.05 * C.deco) * (1 + 0.06 * C.mkt) * (ev?.id === 'verao' ? 2 : 1) * (1 + 0.15 * C.units.length);
-  const rooms: Record<string, RoomStat> = {};
-  let want = 0, lost = 0;
-  const pass: { d: RoomDef; demand: number; spend: number }[] = [];
-  for (const d of ROOMS) {
-    if (d.kind === 'lobby' || !lv(d.id)) continue;
-    let demand = 0, spend = 0;
-    for (const g of open) {
-      const p = mix[g.id] * (g.likes.includes(d.id) ? 1 : 0.25);
-      demand += p;
-      spend += p * g.spend;
-    }
-    pass.push({ d, demand, spend: demand ? spend / demand : 1 });
-  }
-  for (const { d, demand } of pass) {
-    const cap = capacity(d, lv(d.id));
-    want += demand * arrivals;
-    lost += Math.max(0, demand * arrivals - cap);
-  }
-  const sat = Math.min(1.8, Math.max(0.6, sat0 - (want ? (0.3 * lost) / want : 0)));
-  let income = 0;
-  for (const { d, demand, spend } of pass) {
-    const l = lv(d.id);
-    const cap = capacity(d, l);
-    const dem = demand * arrivals * sat;
-    const served = Math.min(dem, cap);
-    const staff = 1 + 0.06 * (d.game ? C.staff.professor : C.staff.atendente);
-    const evm = (ev?.id === 'promo' && d.id === 'musculacao' ? 3 : 1) * (ev?.id === 'campeonato' && ev.room === d.id ? 2 : 1);
-    const inc = served * ticket(d) * l * Math.pow(2, Math.floor(l / 25)) * spend * staff * cityMult(C.city) * (C.dobro > 0 ? 2 : 1) * evm * brand() * mod.income;
-    rooms[d.id] = { demand: dem, cap, served, income: inc, spend };
-    income += inc;
-  }
-  return (S = { brand: brand(), arrivals: arrivals * sat, sat, income, rooms, mix });
+  const avgPlan = GUESTS.reduce((s, g) => s + (u.mix[g.id] ?? 0) * g.plan, 0) || 1;
+  const plans = M * u.price * avgPlan;
+  const sales = ZONES.reduce((s, d) => s + (d.sale ? Math.min(M, lv(d.id, u) * d.per) * d.sale : 0), 0);
+  const premium = M * ((u.mix.executivo ?? 0) + (u.mix.fisiculturista ?? 0) + (u.mix.influencer ?? 0));
+  const personal = Math.min(u.staff.personal * 5_500, premium * 0.25 * 220);
+  const revenue = plans + sales + personal;
+  const costs: Record<string, number> = {
+    Aluguel: u.spaces.reduce((s, x, i) => s + (x ? plotRent(i, u) : 0), 0),
+    Salários: STAFF.reduce((s, st) => s + u.staff[st.id] * st.salary, 0),
+    'Luz e água': u.spaces.reduce((s, x) => s + (x ? 150 + (x.zone ? x.n * ZONE[x.zone].power : 0) : 0), 0),
+    Manutenção: equipValue(u) * 0.008,
+    Marketing: BUDGETS[u.budget],
+    Impostos: revenue * TAX,
+  };
+  const profit = revenue - Object.values(costs).reduce((a, b) => a + b, 0);
+  return { cap, crowd, sat, joins, quits, revenue, plans, sales, personal, costs, profit, why, mix, avgPlan };
 }
 
-/** Cada academia da rede deixa a marca mais forte: mais lucro e mais alunos em todas */
-export const brand = () => 1 + TUNE.brand * C.units.length;
+export interface Stats { flows: Flow[]; profit: number; revenue: number; members: number; interest: number }
+export let S: Stats = { flows: [], profit: 0, revenue: 0, members: 0, interest: 0 };
+export function compute(): Stats {
+  const flows = C.units.map((u) => flow(u));
+  const interest = C.loan * LOAN_RATE + Math.max(0, -C.money) * OVERDRAFT_RATE;
+  return (S = {
+    flows, interest, revenue: flows.reduce((s, f) => s + f.revenue, 0), members: C.units.reduce((s, u) => s + u.members, 0),
+    profit: flows.reduce((s, f) => s + f.profit, 0) - interest,
+  });
+}
+/** Lucro do mês da unidade ativa, para a tela */
+export const F = () => S.flows[C.active] ?? flow(U());
 
 // ===== Loja reativa da interface =====
-export const useGym = create<{ v: number; offline: number; toast: string; quest: boolean; won: boolean }>(() => ({ v: 0, offline: 0, toast: '', quest: false, won: false }));
+export const useGym = create<{ v: number; offline: Report | null; toast: string; won: boolean; report: Report | null }>(() => ({ v: 0, offline: null, toast: '', won: false, report: null }));
 const bump = () => useGym.setState((s) => ({ v: s.v + 1 }));
 let toastTimer: ReturnType<typeof setTimeout>;
 export function say(text: string) {
   clearTimeout(toastTimer);
   useGym.setState({ toast: text });
-  toastTimer = setTimeout(() => useGym.setState({ toast: '' }), 3200);
+  toastTimer = setTimeout(() => useGym.setState({ toast: '' }), 3600);
 }
-/** Ganchos para a cena 3D reagir (dinheiro voando, festa) */
-export const fx = { collect: (_id: string, _amount: number) => {}, rebuild: () => {}, level: (_id: string, _lv: number, _milestone: boolean) => {} };
+/** Ganchos para a cena 3D */
+export const fx = { rebuild: () => {}, level: (_space: number, _lv: number, _big: boolean) => {}, join: (_n: number) => {} };
 
-// ===== Ações =====
-const pay = (n: number) => {
+// ===== Ações (tudo custa dinheiro de verdade) =====
+const pay = (n: number, what: string) => {
   if (mod.free) return true;
-  if (C.money < n) return false;
+  if (C.money < n) {
+    say(`Falta dinheiro para ${what}. Veja o empréstimo em Finanças.`);
+    return false;
+  }
   C.money -= n;
   return true;
 };
-const payGems = (n: number) => {
-  if (mod.free) return true;
-  if (C.gems < n) return false;
-  C.gems -= n;
-  return true;
-};
-export function upgrade(id: string, n: number) {
-  const d = ROOM[id];
-  const l = lv(id);
-  if (d.floor >= C.floors) return say('Abra este andar primeiro');
-  const steps = Math.min(n, ROOM_MAX - l);
-  if (steps <= 0) return;
-  if (!pay(costN(d, l, steps))) return say('Falta dinheiro');
-  C.rooms[id] = { lv: l + steps, cash: C.rooms[id]?.cash ?? 0, mgr: C.rooms[id]?.mgr ?? false };
+export function rentPlot(i: number) {
+  const u = U();
+  if (!canRent(i)) return say('Só dá para alugar o salão vizinho de um que você já tem');
+  if (!pay(plotCost(i), 'alugar e reformar o salão')) return;
+  u.spaces[i] = { zone: '', n: 0 };
+  sound.playTechUnlocked();
+  say(`🏗️ Salão alugado! Aluguel: +${money(plotRent(i))}/mês. Escolha o que montar nele.`);
+  changed(true);
+}
+/** Monta uma zona num salão vazio (já com o primeiro aparelho) */
+export function setZone(i: number, zone: string) {
+  const sp = U().spaces[i];
+  const d = ZONE[zone];
+  if (!sp || sp.zone) return;
+  if (!pay(zoneCost(d, 0), `montar ${d.name}`)) return;
+  sp.zone = zone;
+  sp.n = 1;
   sound.playBuy();
-  if (!l) say(`${d.icon} ${d.name} inaugurado!`);
-  const milestone = Math.floor((l + steps) / 25) > Math.floor(l / 25);
-  if (milestone) {
-    sound.playTechUnlocked();
-    say(`⭐ ${d.name} nível ${Math.floor((l + steps) / 25) * 25}: lucro em dobro!`);
+  say(`${d.icon} ${d.name} montado!`);
+  fx.level(i, 1, false);
+  changed(true);
+}
+/** Compra aparelhos para o salão (ou melhora a fachada, na recepção) */
+export function buyMachine(i: number, n = 1) {
+  const u = U();
+  const sp = u.spaces[i];
+  if (!sp?.zone) return;
+  const d = ZONE[sp.zone];
+  let done = 0;
+  for (let k = 0; k < n; k++) {
+    if (sp.zone === 'recepcao') {
+      if (u.recep >= RECEP_MAX || !pay(recepCost(u.recep + 1), 'reformar a fachada')) break;
+      u.recep++;
+    } else {
+      if (sp.n >= d.max || !pay(d.unit, `mais um(a) ${d.unitName}`)) break;
+      sp.n++;
+    }
+    done++;
   }
-  fx.level(id, l + steps, milestone);
-  done();
-}
-/** Quantos níveis dá para comprar agora (botão MÁX) */
-export function affordable(id: string) {
-  const d = ROOM[id];
-  let l = lv(id), s = 0, n = 0;
-  while (l < ROOM_MAX && n < 100) {
-    s += roomCost(d, l);
-    if (s > C.money && !mod.free) break;
-    l++; n++;
-  }
-  return n;
-}
-export function hire(id: string) {
-  const d = ROOM[id];
-  if (!lv(id) || C.rooms[id].mgr) return;
-  if (!pay(mgrCost(d))) return say('Falta dinheiro');
-  C.rooms[id].mgr = true;
-  collect(id);
-  sound.playRecruit();
-  say(`🧑‍💼 Gerente cuidando do ${d.name}`);
-  done();
-}
-export function collect(id: string) {
-  const r = C.rooms[id];
-  if (!r || r.cash < 0.5) return 0;
-  const a = r.cash;
-  C.money += a;
-  C.earned += a;
-  r.cash = 0;
-  C.collects++;
-  fx.collect(id, a);
+  if (!done) return;
   sound.playBuy();
-  bump();
-  return a;
+  fx.level(i, sp.zone === 'recepcao' ? u.recep : sp.n, sp.n >= d.max);
+  changed(true);
 }
-export function collectAll() {
-  let s = 0;
-  for (const id in C.rooms) s += collect(id);
-  return s;
+/** Quantos aparelhos cabem no caixa agora (botão MÁX) */
+export function affordable(i: number) {
+  const sp = U().spaces[i];
+  if (!sp?.zone || sp.zone === 'recepcao') return 1;
+  const d = ZONE[sp.zone];
+  return Math.max(1, Math.min(d.max - sp.n, mod.free ? 99 : Math.floor(C.money / d.unit)));
 }
-export function train(id: StaffId) {
-  const l = C.staff[id];
-  if (l >= STAFF_MAX) return;
-  if (!pay(staffCost(id, l))) return say('Falta dinheiro');
-  C.staff[id] = l + 1;
-  sound.playBuy();
-  done();
+export function hire(id: StaffId, delta: 1 | -1) {
+  const u = U();
+  if (delta < 0 && u.staff[id] <= (id === 'personal' ? 0 : 1)) return say('Precisa de pelo menos um');
+  u.staff[id] += delta;
+  sound.playClick();
+  say(delta > 0 ? `Contratou: ${STAFF.find((s) => s.id === id)!.name.toLowerCase()} (+salário no mês)` : 'Demitido: a rescisão foi paga');
+  if (delta < 0) C.money -= STAFF.find((s) => s.id === id)!.salary; // rescisão
+  changed();
 }
 export function decorate() {
-  if (C.deco >= UPG_MAX) return;
-  if (!pay(decoCost(C.deco))) return say('Falta dinheiro');
-  C.deco++;
+  const u = U();
+  if (u.deco >= DECO_MAX || !pay(decoCost(u.deco), 'melhorar a estrutura')) return;
+  u.deco++;
   sound.playBuy();
-  done(true);
+  changed(true);
 }
-export function advertise() {
-  if (C.mkt >= UPG_MAX) return;
-  if (!pay(mktCost(C.mkt))) return say('Falta dinheiro');
-  C.mkt++;
-  sound.playBuy();
-  done();
-}
-export function toggleTarget(g: GuestId) {
-  if (C.targets.includes(g)) C.targets = C.targets.filter((x) => x !== g);
-  else if (C.targets.length < targetSlots()) C.targets = [...C.targets, g];
-  else return say(targetSlots() ? 'Todas as vagas de campanha estão usadas' : 'Melhore o marketing para fazer campanhas');
+export function setBudget(b: number) {
+  U().budget = b;
   sound.playClick();
-  done();
+  changed();
 }
-export function openFloor() {
-  const f = C.floors;
-  if (f >= FLOORS.length) return;
-  if (!pay(floorCost(f))) return say('Falta dinheiro');
-  C.floors++;
-  sound.playTechUnlocked();
-  say(`🏗️ ${FLOORS[f].name} aberto!`);
-  done(true);
+export function setPrice(p: number) {
+  U().price = Math.round(Math.min(249, Math.max(59, p)));
+  changed();
 }
-export function buy(id: (typeof SHOP)[number]['id']) {
-  const item = SHOP.find((s) => s.id === id)!;
-  if (!payGems(item.gems)) return say('Faltam diamantes');
-  if (id === 'dobro') C.dobro += 600;
-  if (id === 'verao') startEvent('verao');
-  if (id === 'aulao') startEvent('aulao');
-  if (id === 'cofre') {
-    const a = compute().income * 7200;
+export const targetSlots = (u = U()) => (u.budget >= 4 ? 3 : u.budget >= 2 ? 2 : u.budget >= 1 ? 1 : 0);
+export function toggleTarget(g: GuestId) {
+  const u = U();
+  if (u.targets.includes(g)) u.targets = u.targets.filter((x) => x !== g);
+  else if (u.targets.length < targetSlots()) u.targets = [...u.targets, g];
+  else return say(targetSlots() ? 'Todas as campanhas estão em uso: aumente a verba' : 'Defina uma verba de marketing primeiro');
+  sound.playClick();
+  changed();
+}
+/** Abre uma unidade nova em outra cidade: reforma do térreo, 4 aparelhos e equipe mínima */
+export function openUnit(city: number) {
+  if (C.units.some((u) => u.city === city) || !pay(CITIES[city].open, `abrir em ${CITIES[city].name}`)) return;
+  C.units.push(newUnit(city));
+  C.active = C.units.length - 1;
+  sound.playVictory();
+  say(`🏗️ Academia de ${CITIES[city].name} aberta! Agora ela precisa de alunos.`);
+  changed(true);
+}
+export function setActive(i: number) {
+  C.active = i;
+  changed(true);
+}
+export function borrow(n: number) {
+  if (C.loan + n > loanLimit()) return say(`O banco libera até ${money(loanLimit())} para você`);
+  C.loan += n;
+  C.money += n;
+  sound.playBuy();
+  say(`🏦 Empréstimo de ${money(n)} a ${(LOAN_RATE * 100).toFixed(1).replace('.', ',')}% ao mês`);
+  changed();
+}
+export function repay(n: number) {
+  n = Math.min(n, C.loan);
+  if (!n || !pay(n, 'pagar o empréstimo')) return;
+  C.loan -= n;
+  sound.playBuy();
+  changed();
+}
+function startEvent(id: EventId, unit: number) {
+  const u = C.units[unit];
+  const name = CITIES[u.city].name;
+  if (id === 'campeonato') {
+    const a = 6_000 + u.members * 4;
     C.money += a;
     C.earned += a;
-  }
-  sound.playVictory();
-  done();
-}
-export function claimVip() {
-  if (C.event?.id !== 'famoso') return;
-  const a = Math.max(50, compute().income * 60);
-  C.money += a;
-  C.earned += a;
-  C.gems += 1;
-  C.event = null;
-  sound.playVictory();
-  say(`🤩 Patrocínio de ${money(a)} e 1 🏅`);
-  done();
-}
-/** Abre a próxima unidade da rede em outra cidade. A atual vira franquia e continua rendendo */
-export function moveCity() {
-  if (C.beaten < RIVALS.length) return;
-  const units = [...C.units, { city: C.city, income: compute().income }];
-  const next = fresh(C.city + 1, C.gems + 25, C.streak, C.day, units, C.won);
-  next.quest = C.quest;
-  C = next;
-  sound.playVictory();
-  say(`🏗️ Academia de ${cityName(C.city)} aberta! A marca agora dá +${Math.round((brand() - 1) * 100)}% de lucro`);
-  done(true);
-}
-export function startEvent(id: EventId) {
-  const games = ROOMS.filter((d) => d.game && lv(d.id));
-  const room = id === 'campeonato' ? games[Math.floor(Math.random() * games.length)]?.id : undefined;
-  C.event = { id, left: EVENTS[id].time, room };
-  sound.playSonar();
-  say(`${EVENTS[id].icon} ${EVENTS[id].name}${room ? ' de ' + ROOM[room].name : ''}!`);
-  bump();
-}
-
-// ===== Missões =====
-/** go: sala alvo, ou o que a seta deve mostrar ('mgr', 'up', 'cash', 'p:painel', 'floor') */
-interface Quest { text: string; need: number; get: () => number; gems: number; cash: number; go: string }
-const q = (text: string, need: number, get: () => number, gems: number, cash = 0, go = 'up'): Quest => ({ text, need, get, gems, cash, go });
-const mgrs = () => ROOMS.filter((d) => d.kind !== 'lobby' && C.rooms[d.id]?.mgr).length;
-const QUESTS: Quest[] = [
-  q('Melhore a Musculação ao nível 5', 5, () => lv('musculacao'), 2, 60, 'musculacao'),
-  q('Melhore a Recepção ao nível 3', 3, () => lv('recepcao'), 2, 100, 'recepcao'),
-  q('Construa as Esteiras', 1, () => lv('esteiras'), 3, 200, 'esteiras'),
-  q('Recolha o dinheiro das salas 10 vezes', 10, () => C.collects, 2, 300, 'cash'),
-  q('Contrate um gerente', 1, mgrs, 5, 500, 'mgr'),
-  q('Construa o Vestiário', 1, () => lv('vestiario'), 3, 800, 'vestiario'),
-  q('Melhore a estrutura (nível 2)', 2, () => C.deco, 3, 1_000, 'p:decoracao'),
-  q('Faça marketing (nível 1)', 1, () => C.mkt, 3, 1_000, 'p:marketing'),
-  q('Musculação no nível 25', 25, () => lv('musculacao'), 5, 3_000, 'musculacao'),
-  q('Abra o Andar Funcional', 2, () => C.floors, 5, 5_000, 'floor'),
-  q('Construa o Spinning', 1, () => lv('spinning'), 4, 8_000, 'spinning'),
-  q('Treine os professores (nível 3)', 3, () => C.staff.professor, 4, 10_000, 'p:equipe'),
-  q('Construa o Funcional', 1, () => lv('funcional'), 4, 15_000, 'funcional'),
-  q('Ganhe 2 estrelas', 2, stars, 6, 20_000, 'up'),
-  q(`Passe a ${RIVALS[0].name} no ranking`, 1, () => C.beaten, 6, 30_000, 'p:rede'),
-  q('Gerente em 4 salas', 4, mgrs, 6, 50_000, 'mgr'),
-  q('Abra o andar de Lutas e Dança', 3, () => C.floors, 8, 100_000, 'floor'),
-  q('Construa o Ringue de Lutas', 1, () => lv('ringue'), 6, 200_000, 'ringue'),
-  q('Ganhe 3 estrelas', 3, stars, 8, 400_000, 'up'),
-  q(`Passe a ${RIVALS[2].name} no ranking`, 3, () => C.beaten, 8, 800_000, 'p:rede'),
-  q('Abra o andar Bem-estar', 4, () => C.floors, 10, 2_000_000, 'floor'),
-  q('Construa a Natação', 1, () => lv('natacao'), 8, 5_000_000, 'natacao'),
-  q('Ganhe 4 estrelas', 4, stars, 10, 10_000_000, 'up'),
-  q('Abra a Cobertura Premium', 5, () => C.floors, 12, 40_000_000, 'floor'),
-  q('Construa o Personal VIP', 1, () => lv('vip'), 10, 80_000_000, 'vip'),
-  q('Ganhe 5 estrelas', 5, stars, 15, 200_000_000, 'up'),
-  q('Seja a academia número 1 da cidade', RIVALS.length, () => C.beaten, 20, 500_000_000, 'p:rede'),
-  q('Abra a segunda unidade da rede', 1, () => C.units.length, 25, 0, 'p:rede'),
-  q('Tenha 4 academias na rede', 3, () => C.units.length, 30, 0, 'p:rede'),
-  q(`Tenha ${CITIES.length} academias na rede`, CITIES.length - 1, () => C.units.length, 50, 0, 'p:rede'),
-];
-export function quest() {
-  if (C.quest < QUESTS.length) return QUESTS[C.quest];
-  const n = C.quest - QUESTS.length + 1;
-  const goal = 1e9 * Math.pow(10, n) * cityMult(C.city);
-  return q(`Lucre ${money(goal)} no total`, goal, () => C.earned, 10, 0, 'up');
-}
-export function claimQuest() {
-  const k = quest();
-  if (k.get() < k.need) return;
-  C.gems += k.gems;
-  C.money += k.cash * cityMult(C.city);
-  C.quest++;
-  sound.playTechUnlocked();
-  say(`🎯 Missão cumprida: +${k.gems} 🏅`);
-  done();
-}
-
-/** Para onde a seta do guia aponta agora: id da sala, 'p:painel' ou 'floor' */
-export function guide(): string {
-  const go = quest().go;
-  const built = ROOMS.filter((d) => d.floor < C.floors && lv(d.id) && d.kind !== 'lobby');
-  if (go === 'mgr') return built.find((d) => !C.rooms[d.id].mgr)?.id ?? 'p:equipe';
-  if (go === 'cash') return built.slice().sort((a, b) => C.rooms[b.id].cash - C.rooms[a.id].cash)[0]?.id ?? 'musculacao';
-  if (go === 'up') return built.slice().sort((a, b) => roomCost(a, lv(a.id)) - roomCost(b, lv(b.id)))[0]?.id ?? 'musculacao';
-  if (go === 'floor' && C.floors >= FLOORS.length) return 'p:rede';
-  return go;
-}
-
-/** Pedidos dos alunos: aparecem de tempos em tempos e dão prêmio se cumpridos no prazo */
-function requests(dt: number) {
-  const r = C.request;
-  if (r) {
-    if (lv(r.room) >= r.target) {
-      C.money += r.cash;
-      C.earned += r.cash;
-      C.gems += 2;
-      C.request = null;
-      C.nextReq = 120 + Math.random() * 120;
-      sound.playVictory();
-      say(`🙌 Pedido atendido! +${money(r.cash)} e 2 🏅`);
-    } else if ((r.left -= dt) <= 0) {
-      C.request = null;
-      C.nextReq = 120 + Math.random() * 120;
-      say('😕 O pedido dos alunos não foi atendido a tempo');
+    say(`🥊 Campeonato em ${name}: patrocínio de ${money(a)}`);
+  } else if (id === 'fiscal') {
+    if (u.staff.limpeza < need(u, 'limpeza')) {
+      C.money -= 4_000;
+      u.rep = Math.max(0, u.rep - 0.4);
+      say(`🧾 Multa de ${money(4_000)} em ${name}: falta gente na limpeza`);
+    } else {
+      u.rep = Math.min(5, u.rep + 0.15);
+      say(`🧾 ${name} passou na fiscalização sem problema`);
     }
-    return;
-  }
-  if ((C.nextReq -= dt) > 0) return;
-  const pool = ROOMS.filter((d) => d.floor < C.floors && d.kind !== 'lobby' && lv(d.id) && lv(d.id) < ROOM_MAX);
-  const d = pool[Math.floor(Math.random() * pool.length)];
-  if (!d) return;
-  const l = lv(d.id);
-  let n = 2 + Math.floor(Math.random() * 5);
-  while (n > 1 && costN(d, l, n) > C.money + S.income * 120) n--;
-  const cost = costN(d, l, n);
-  C.request = { room: d.id, target: Math.min(ROOM_MAX, l + n), left: 150, cash: Math.max(50, cost * 0.6 + S.income * 30) };
+  } else if (id === 'quebra') {
+    const ds = ZONES.filter((d) => d.unit && lv(d.id, u) > 0);
+    const d = ds[Math.floor(Math.random() * ds.length)];
+    if (!d) return;
+    const a = Math.round(d.unit * 0.12);
+    C.money -= a;
+    say(`🔧 Quebrou um(a) ${d.unitName} em ${name}: conserto de ${money(a)}`);
+  } else if (id === 'aulao') {
+    C.money -= 1_500;
+    say(`🎉 Aulão em ${name} (DJ e frutas: ${money(1_500)}). Alunos mais felizes!`);
+  } else say(`📱 Uma influenciadora postou a academia de ${name}: dobro de procura por 7 dias`);
+  C.event = { id, unit, left: EVENTS[id].days };
   sound.playSonar();
-  say(`📣 Os alunos pedem: ${d.name} no nível ${l + n}!`);
+}
+
+// ===== Objetivos (guiam o caminho; o lucro vem da academia) =====
+interface Quest { text: string; need: number; get: () => number; go: string }
+const q = (text: string, need: number, get: () => number, go = 'up'): Quest => ({ text, need, get, go });
+const first = () => C.units[0];
+const QUESTS: Quest[] = [
+  q('Compre mais uma máquina de musculação', 7, () => lv('musculacao', first()), 'musculacao'),
+  q('Alugue o salão vizinho', 4, () => first().spaces.filter(Boolean).length, 'rent'),
+  q('Monte uma área de Cardio', 1, () => lv('cardio', first()), 'cardio'),
+  q('Chegue a 150 alunos', 150, () => first().members, 'p:marketing'),
+  q('Contrate o segundo professor', 2, () => first().staff.professor, 'p:equipe'),
+  q('Melhore a fachada da Recepção (nível 3)', 3, () => first().recep, 'recepcao'),
+  q('Faça marketing todo mês', 1, () => first().budget, 'p:marketing'),
+  q('Monte o Peso Livre', 1, () => lv('pesolivre', first()), 'pesolivre'),
+  q('Monte a Lanchonete Fit', 1, () => lv('lanchonete', first()), 'lanchonete'),
+  q('Chegue a 500 alunos', 500, () => first().members, 'up'),
+  q('Tenha 8 salões no galpão', 8, () => first().spaces.filter(Boolean).length, 'rent'),
+  q(`Passe a ${RIVALS[1].name}`, 2, () => beaten(first()), 'up'),
+  q('Chegue a 1.000 alunos', 1_000, () => first().members, 'up'),
+  q('Abra a segunda academia da rede', 2, () => C.units.length, 'p:rede'),
+  q('Monte a Piscina', 1, () => lv('natacao', first()), 'natacao'),
+  q('Tenha 4 academias na rede', 4, () => C.units.length, 'p:rede'),
+  q('Ocupe o galpão inteiro em Fortaleza', PLOTS.length, () => first().spaces.filter(Boolean).length, 'rent'),
+  q('Seja a maior academia de Fortaleza', RIVALS.length, () => beaten(first()), 'up'),
+  q(`Tenha academias nas ${CITIES.length} cidades`, CITIES.length, () => C.units.length, 'p:rede'),
+  q(`Seja a número 1 nas ${CITIES.length} cidades`, CITIES.length, () => C.units.filter((u) => beaten(u) >= RIVALS.length).length, 'p:rede'),
+];
+export const quest = (): Quest | null => QUESTS[C.quest] ?? null;
+/** Salão onde está uma zona (o primeiro) */
+export const spaceOf = (zone: string, u = U()) => u.spaces.findIndex((x) => x?.zone === zone);
+/** Salão vizinho mais barato para alugar */
+export const nextPlot = (u = U()) => PLOTS.map((_, i) => i).filter((i) => canRent(i, u)).sort((a, b) => plotCost(a, u) - plotCost(b, u))[0] ?? -1;
+/** Para onde a seta do guia aponta: número do salão ('3'), 'p:painel' ou '' */
+export function guide(): string {
+  const u = U();
+  const go = quest()?.go ?? 'up';
+  if (go.startsWith('p:')) return go;
+  const empty = u.spaces.findIndex((x) => x && !x.zone);
+  if (go === 'rent') return String(empty >= 0 ? empty : nextPlot(u));
+  if (go !== 'up') {
+    const at = spaceOf(go, u);
+    return String(at >= 0 ? at : empty >= 0 ? empty : nextPlot(u));
+  }
+  const f = flow(u);
+  if (f.crowd > 0.9) {
+    const at = u.spaces.findIndex((x) => x?.zone && ZONE[x.zone].train && x.n < ZONE[x.zone].max);
+    return String(at >= 0 ? at : empty >= 0 ? empty : nextPlot(u));
+  }
+  if (f.why.length) return 'p:equipe';
+  return 'p:marketing';
 }
 
 // ===== Tempo =====
-export const STEP = 0.25;
 let acc = 0, saveAt = 0;
+/** Avança o relógio: dinheiro e alunos mudam aos poucos, o fechamento é no fim do mês */
 export function tick(dt: number) {
-  acc += Math.min(dt, 1);
-  while (acc >= STEP) {
-    acc -= STEP;
-    step(STEP);
-  }
-}
-function step(dt: number) {
-  const s = compute();
+  dt = Math.min(dt, 1);
   C.played += dt;
-  for (const id in s.rooms) {
-    const r = C.rooms[id];
-    const inc = s.rooms[id].income * dt;
-    if (r.mgr) {
-      C.money += inc;
-      C.earned += inc;
-    } else r.cash = Math.min(Math.max(r.cash, s.rooms[id].income * CASH_SECONDS), r.cash + inc);
+  const frac = dt / DAY / 30;
+  compute();
+  apply(frac);
+  acc += dt;
+  while (acc >= DAY) {
+    acc -= DAY;
+    newDay();
   }
-  if (C.dobro > 0) C.dobro = Math.max(0, C.dobro - dt);
-  requests(dt);
-  const ev = C.event;
-  if (ev && (ev.left -= dt) <= 0) {
-    if (ev.id === 'campeonato' && ev.room) {
-      const g = 2 + Math.floor(lv(ev.room) / 20);
-      C.gems += g;
-      say(`🏆 Campeonato encerrado: +${g} 🏅`);
-    }
-    C.event = null;
-  }
-  if (!C.event && (C.nextEvent -= dt) <= 0) {
-    C.nextEvent = 70 + Math.random() * 80;
-    const pool: EventId[] = ['verao', 'famoso', 'aulao', 'promo'];
-    if (C.floors > 1 && ROOMS.some((d) => d.game && d.floor > 0 && lv(d.id))) pool.push('campeonato');
-    startEvent(pool[Math.floor(Math.random() * pool.length)]);
-  }
-  while (C.beaten < RIVALS.length && s.income >= rivalFame(C.beaten)) {
-    const g = 5 * (C.beaten + 1);
-    C.gems += g;
-    say(`🏆 Você passou a ${RIVALS[C.beaten].name}! +${g} 🏅`);
-    C.beaten++;
-    sound.playVictory();
-  }
-  // Fim da história: a rede chegou a todas as cidades e a última unidade é a número 1
-  if (!C.won && C.units.length >= CITIES.length - 1 && C.beaten >= RIVALS.length) {
-    C.won = true;
-    useGym.setState({ won: true });
-    sound.playVictory();
-  }
-  const k = quest();
-  useGym.setState((u) => ({ v: u.v + 1, quest: k.get() >= k.need }));
   if ((saveAt += dt) >= 5) {
     saveAt = 0;
     persist();
   }
+  useGym.setState((u) => ({ v: u.v + 1 }));
 }
-const done = (scene = false) => {
+/** Aplica uma fração do mês em todas as unidades */
+function apply(frac: number) {
+  let joined = 0;
+  C.units.forEach((u, i) => {
+    const f = S.flows[i];
+    const j = f.joins * frac, out = f.quits * frac;
+    if (u.members + j > 0) for (const g of GUESTS) u.mix[g.id] = ((u.mix[g.id] ?? 0) * u.members + (f.mix[g.id] ?? 0) * j) / (u.members + j);
+    u.members = Math.max(0, u.members + j - out);
+    C.month.joins += j;
+    C.month.quits += out;
+    if (i === C.active) joined += j;
+    C.money += f.profit * frac;
+    C.month.revenue += f.revenue * frac;
+    for (const k in f.costs) C.month.costs[k] = (C.month.costs[k] ?? 0) + f.costs[k] * frac;
+    C.earned += Math.max(0, f.revenue) * frac;
+  });
+  const interest = S.interest * frac;
+  C.money -= interest;
+  if (interest) C.month.costs.Juros = (C.month.costs.Juros ?? 0) + interest;
+  joinAcc += joined;
+  if (joinAcc >= 1) {
+    fx.join(Math.floor(joinAcc));
+    joinAcc %= 1;
+  }
+}
+let joinAcc = 0;
+function newDay() {
+  C.day++;
+  C.units.forEach((u, i) => {
+    u.rep += ((S.flows[i]?.sat ?? 0.6) * 5 - u.rep) * 0.04;
+  });
+  const ev = C.event;
+  if (ev && --ev.left <= 0) C.event = null;
+  if (!C.event && --C.nextEvent <= 0) {
+    C.nextEvent = 20 + Math.random() * 25;
+    const unit = Math.floor(Math.random() * C.units.length);
+    const pool: EventId[] = ['influencer', 'fiscal', 'quebra', 'aulao'];
+    if (lv('ringue', C.units[unit])) pool.push('campeonato');
+    startEvent(pool[Math.floor(Math.random() * pool.length)], unit);
+  }
+  requests();
+  const k = quest();
+  if (k && k.get() >= k.need) {
+    C.quest++;
+    sound.playTechUnlocked();
+    say(`🎯 Objetivo cumprido: ${k.text}`);
+  }
+  if (!C.won && C.units.length >= CITIES.length && C.units.every((u) => beaten(u) >= RIVALS.length)) {
+    C.won = true;
+    useGym.setState({ won: true });
+    sound.playVictory();
+  }
+  if (C.day % 30 === 0) closeMonth();
+}
+/** Fechamento do mês: relatório com o que entrou e o que saiu */
+function closeMonth() {
+  const m = C.month;
+  m.profit = m.revenue - Object.values(m.costs).reduce((a, b) => a + b, 0);
+  C.last = m;
+  C.month = emptyReport(C.day);
+  useGym.setState({ report: m });
+  if (C.money < 0) say(`⚠️ Fechou ${m.month} no vermelho: o banco cobra ${(OVERDRAFT_RATE * 100).toFixed(0)}% ao mês do saldo negativo`);
+}
+/** Pedidos dos alunos: se atender no prazo, a fama da academia sobe; se não, cai */
+function requests() {
+  const r = C.request;
+  if (r) {
+    const u = C.units[r.unit];
+    if (!u) return void (C.request = null);
+    if ((u.spaces[r.space]?.n ?? 0) >= r.target) {
+      u.rep = Math.min(5, u.rep + 0.3);
+      C.request = null;
+      C.nextReq = 20 + Math.random() * 20;
+      sound.playVictory();
+      say('🙌 Pedido atendido! Os alunos estão elogiando a academia');
+    } else if (--r.left <= 0) {
+      u.rep = Math.max(0, u.rep - 0.2);
+      C.request = null;
+      C.nextReq = 20 + Math.random() * 20;
+      say('😕 O pedido dos alunos não foi atendido a tempo');
+    }
+    return;
+  }
+  if (--C.nextReq > 0) return;
+  const u = U();
+  const pool = u.spaces.map((x, i) => [x, i] as const).filter(([x]) => x?.zone && ZONE[x.zone].train && x.n < ZONE[x.zone].max);
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+  if (!pick) return;
+  const [sp, i] = pick;
+  const d = ZONE[sp!.zone];
+  C.request = { unit: C.active, space: i, target: Math.min(d.max, sp!.n + 1 + Math.floor(Math.random() * 2)), left: 20 };
+  sound.playSonar();
+  say(`📣 Os alunos pedem mais ${d.unitName}s em ${d.name}`);
+}
+const changed = (scene = false) => {
   compute();
   if (scene) fx.rebuild();
   bump();
@@ -441,60 +495,55 @@ export function persist() {
     localStorage.setItem(KEY, JSON.stringify(C));
   } catch { /* sem espaço */ }
 }
-const today = () => new Date().toISOString().slice(0, 10);
-/** Carrega a academia, paga o que rendeu com o app fechado e dá o prêmio do dia */
+/** Carrega e roda os dias que passaram com o app fechado (até um mês) */
 export function load() {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Gym | null;
-    C = raw?.v === 1 ? { ...fresh(), ...raw } : fresh();
+    C = raw?.v === 3 ? { ...fresh(), ...raw } : fresh();
   } catch {
     C = fresh();
   }
-  const away = Math.min(OFFLINE_MAX, Math.max(0, (Date.now() - C.t) / 1000));
-  const s = compute();
-  let gain = 0;
-  if (away > 30) for (const id in s.rooms) {
-    const r = C.rooms[id];
-    const inc = s.rooms[id].income * away;
-    if (r.mgr) gain += inc;
-    else r.cash = Math.min(Math.max(r.cash, s.rooms[id].income * CASH_SECONDS), r.cash + inc);
+  const days = Math.min(OFFLINE_DAYS, Math.floor((Date.now() - C.t) / 1000 / DAY));
+  if (days >= 1) {
+    const money0 = C.money, members0 = C.units.reduce((s, u) => s + u.members, 0);
+    for (let i = 0; i < days; i++) {
+      compute();
+      apply(1 / 30);
+      newDay();
+    }
+    const away = emptyReport(C.day);
+    away.month = `${days} dia${days > 1 ? 's' : ''}`;
+    away.profit = C.money - money0;
+    away.joins = C.units.reduce((s, u) => s + u.members, 0) - members0;
+    useGym.setState({ offline: away });
   }
-  const d = today();
-  if (C.day !== d) {
-    const y = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
-    C.streak = C.day === y ? C.streak + 1 : 1;
-    C.day = d;
-    const g = Math.min(15, 2 + C.streak);
-    C.gems += g;
-    setTimeout(() => say(`📅 Prêmio do dia ${C.streak}: +${g} 🏅`), 1500);
-  }
-  useGym.setState({ offline: gain > 1 ? gain : 0 });
+  compute();
   persist();
-}
-export function takeOffline(double: boolean) {
-  let a = useGym.getState().offline;
-  if (double && payGems(6)) a *= 2;
-  C.money += a;
-  C.earned += a;
-  useGym.setState({ offline: 0 });
-  sound.playVictory();
-  bump();
 }
 export function wipe() {
   C = fresh();
-  done(true);
+  changed(true);
 }
-/** Mod menu: mexe direto na academia */
+/** Mod menu: mexe direto na rede */
 export function cheat(f: (c: Gym) => void) {
   f(C);
-  done(true);
+  changed(true);
+}
+/** Avança dias de uma vez (mod e testes) */
+export function skipDays(n: number) {
+  for (let i = 0; i < n; i++) {
+    compute();
+    apply(1 / 30);
+    newDay();
+  }
+  changed(true);
 }
 
+/** Dinheiro em reais, como no banco: R$ 12.345 · R$ 1,2 mi */
 export function money(n: number) {
-  const a = Math.abs(n);
-  const u = ['', 'mil', 'mi', 'bi', 'tri', 'qa', 'qi'];
-  let i = 0, v = a;
-  while (v >= 1000 && i < u.length - 1) { v /= 1000; i++; }
-  const t = i === 0 ? Math.floor(v).toString() : v.toFixed(v < 10 ? 2 : v < 100 ? 1 : 0).replace('.', ',');
-  return `${n < 0 ? '-' : ''}$${t}${i ? ' ' + u[i] : ''}`;
+  const a = Math.abs(n), s = n < 0 ? '-' : '';
+  if (a >= 1e9) return `${s}R$ ${(a / 1e9).toFixed(2).replace('.', ',')} bi`;
+  if (a >= 1e6) return `${s}R$ ${(a / 1e6).toFixed(2).replace('.', ',')} mi`;
+  return `${s}R$ ${Math.round(a).toLocaleString('pt-BR')}`;
 }
+export const people = (n: number) => Math.round(n).toLocaleString('pt-BR');

@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Maximize, RefreshCw, Volume2, VolumeX, X } from 'lucide-react';
-import { CASH_SECONDS, CITIES, EVENTS, FLOORS, GUESTS, RIVALS, ROOM, ROOMS, SHOP, STAFF, STAFF_MAX, TUNE, cityName } from '../gym/data';
+import { BUDGETS, CITIES, EVENTS, GUESTS, LOAN_RATE, RIVALS, STAFF, ZONE, ZONES, rivalMembers } from '../gym/data';
 import {
-  C, ROOM_MAX, S, UPG_MAX, advertise, affordable, buy, claimQuest, claimVip, collect, collectAll, costN, decoCost, decorate, equip, floorCost, guestsOpen,
-  guide, hire, load, lv, mgrCost, mktCost, money, moveCity, openFloor, persist, quest, rivalFame, staffCost, stars, takeOffline, targetSlots, tick, toggleTarget, train, upgrade, useGym, wipe,
+  C, DECO_MAX, F, RECEP_MAX, S, U, affordable, beaten, borrow, buyMachine, canRent, dateText, decoCost, decorate, flow, guestsOpen, guide, hire, load, loanLimit,
+  money, need, openUnit, people, persist, plotCost, plotRent, quest, rank, recepCost, rentPlot, repay, setActive, setBudget, setPrice, setZone, targetSlots, tick,
+  toggleTarget, useGym, wipe,
 } from '../gym/sim';
 import { GymScene } from '../gym/scene';
 import { toggleFullscreen, useWakeLock } from '../hooks/useDevice';
@@ -15,34 +16,31 @@ import { Action, Bar, Row } from './common/Kit';
 import { AdminLogin, useAdmin } from './GymMods';
 import { BackupModal } from './BackupModal';
 
-type Panel = 'marketing' | 'equipe' | 'decoracao' | 'rede' | 'loja' | 'mais' | 'ajuda' | null;
+type Panel = 'marketing' | 'equipe' | 'academia' | 'financas' | 'rede' | 'mais' | 'ajuda' | null;
 const NAV: [Exclude<Panel, null>, string, string][] = [
-  ['marketing', '📣', 'Marketing'], ['equipe', '🧑‍🏫', 'Equipe'], ['decoracao', '🛠️', 'Estrutura'], ['rede', '🗺️', 'Rede'], ['loja', '🏅', 'Loja'], ['mais', '☰', 'Mais'],
+  ['marketing', '📣', 'Marketing'], ['equipe', '🧑‍🏫', 'Equipe'], ['academia', '🏢', 'Academia'], ['financas', '💰', 'Finanças'], ['rede', '🗺️', 'Rede'], ['mais', '☰', 'Mais'],
 ];
 const HQ_KEY = 'PLAY_ONLINE_ACADEMIA_HQ';
-const hqDefault = () => localStorage.getItem(HQ_KEY) ? localStorage.getItem(HQ_KEY) === '1' : !matchMedia('(pointer: coarse)').matches;
-const starsText = (n: number) => '★'.repeat(n) + '☆'.repeat(5 - n);
+const hqDefault = () => (localStorage.getItem(HQ_KEY) ? localStorage.getItem(HQ_KEY) === '1' : !matchMedia('(pointer: coarse)').matches);
+const stars = (r: number) => '★'.repeat(Math.round(r)) + '☆'.repeat(5 - Math.round(r));
 
 export const GymScreen: React.FC = () => {
   useGym((s) => s.v);
   useWakeLock();
-  const { offline, toast, quest: questReady, won } = useGym();
+  const { offline, toast, won } = useGym();
   const canvas = useRef<HTMLCanvasElement>(null);
   const overlay = useRef<HTMLDivElement>(null);
   const view = useRef<GymScene | null>(null);
-  const [room, setRoom] = useState<string | null>(null);
-  const [floorAsk, setFloorAsk] = useState(false);
+  const [plot, setPlot] = useState<number | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [hq, setHq] = useState(hqDefault);
-  const [floor, setFloor] = useState(0);
   const [soundOn, setSoundOn] = useState(sound.enabled);
 
   useEffect(() => {
     load();
-    const v = new GymScene(canvas.current!, overlay.current!, (id, f) => {
-      if (f !== undefined) return setFloorAsk(true);
-      setRoom(id);
-      if (id) sound.playClick();
+    const v = new GymScene(canvas.current!, overlay.current!, (i) => {
+      setPlot(i);
+      if (i !== null) sound.playClick();
     }, hq);
     view.current = v;
     let acc = 0;
@@ -51,10 +49,9 @@ export const GymScreen: React.FC = () => {
       if ((acc += dt) > 0.25) {
         acc = 0;
         v.texts();
-        setFloor((f) => (f === v.floorAt ? f : v.floorAt));
       }
     };
-    // Volta do segundo plano: paga o tempo fora como se o app estivesse fechado
+    // Volta do segundo plano: os dias que passaram são simulados
     const vis = () => {
       if (document.hidden) persist();
       else {
@@ -73,89 +70,69 @@ export const GymScreen: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => view.current?.setQuality(hq), [hq]);
-  useEffect(() => view.current?.select(room), [room]);
+  useEffect(() => view.current?.select(plot), [plot]);
 
-  const go = (f: number) => {
-    view.current?.focus(f);
-    setFloor(f);
-  };
-  /** Seta do guia: leva até a sala ou abre o painel certo */
+  /** Seta do guia: leva até o salão ou abre o painel certo */
   const goGuide = () => {
     const g = guide();
     sound.playClick();
-    if (g === 'floor') return setFloorAsk(true);
     if (g.startsWith('p:')) return setPanel(g.slice(2) as Panel);
-    go(ROOM[g].floor);
-    setRoom(g);
+    const i = Number(g);
+    if (i >= 0) {
+      view.current?.focus(i);
+      setPlot(i);
+    }
   };
-  const req = C.request;
-  const q = quest();
-  const qv = Math.min(q.need, q.get());
+  const u = U();
+  const f = F();
+  const k = quest();
   const ev = C.event;
-  const unclaimed = ROOMS.reduce((s, d) => s + (C.rooms[d.id] && !C.rooms[d.id].mgr ? C.rooms[d.id].cash : 0), 0);
+  const req = C.request;
+  const profit = S.profit;
 
   return (
     <div className="cz relative w-full h-full overflow-hidden">
       <canvas ref={canvas} className="absolute inset-0 w-full h-full touch-none" />
       <div ref={overlay} className="absolute inset-0 pointer-events-none overflow-hidden" />
 
-      {/* Topo: dinheiro, diamantes e estrelas */}
       <header className="absolute top-2 inset-x-2 flex items-start gap-2 pointer-events-none">
-        <div className="cz-pill flex-col !items-start">
-          <span className="text-[10px] text-amber-200/90 font-bold tracking-wider">{cityName(C.city).toUpperCase()}</span>
-          <span className="text-amber-300 text-sm leading-none">{starsText(stars())}</span>
-        </div>
+        <button onClick={() => setPanel('rede')} className="cz-pill flex-col !items-start pointer-events-auto">
+          <span className="text-[10px] text-amber-200/90 font-bold tracking-wider">{CITIES[u.city].name.toUpperCase()}</span>
+          <span className="text-[11px] text-slate-200 leading-none">{dateText()}</span>
+        </button>
         <div className="cz-pill cz-money flex-1 justify-center min-w-0">
-          <span className="text-lg font-black truncate">{money(C.money)}</span>
-          <span className="text-[11px] text-emerald-300 font-bold shrink-0">+{money(S.income)}/s</span>
+          <span className={`text-lg font-black truncate ${C.money < 0 ? 'text-rose-300' : ''}`}>{money(C.money)}</span>
+          <span className={`text-[11px] font-bold shrink-0 ${profit >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{profit >= 0 ? '+' : ''}{money(profit)}/mês</span>
         </div>
-        <button onClick={() => setPanel('loja')} className="cz-pill pointer-events-auto font-black text-sm">🏅 {Math.floor(C.gems)}</button>
+        <button onClick={() => setPanel('academia')} className="cz-pill flex-col pointer-events-auto">
+          <span className="font-black text-sm">👥 {people(u.members)}</span>
+          <span className="text-amber-300 text-[11px] leading-none">{stars(u.rep)}</span>
+        </button>
       </header>
 
-      {(ev || C.dobro > 0 || req) && (
-        <div className="absolute top-[3.6rem] inset-x-0 flex flex-col items-center gap-1 pointer-events-none">
-          {ev && (
-            <button onClick={() => ev.id === 'famoso' && claimVip()} className={`cz-event pointer-events-auto ${ev.id === 'famoso' ? 'cz-pulse' : ''}`}>
-              {EVENTS[ev.id].icon} <b>{EVENTS[ev.id].name}{ev.room ? ` de ${ROOM[ev.room].name}` : ''}</b> · {EVENTS[ev.id].text} · {Math.ceil(ev.left)}s
-            </button>
-          )}
-          {C.dobro > 0 && <span className="cz-event">⚡ Lucro em dobro · {Math.ceil(C.dobro / 60)} min</span>}
-          {req && (
-            <button onClick={() => { go(ROOM[req.room].floor); setRoom(req.room); }} className="cz-event cz-req pointer-events-auto">
-              📣 <b>Pedido:</b> {ROOM[req.room].icon} {ROOM[req.room].name} nível {req.target} · ganha {money(req.cash)} + 2🏅 · {Math.ceil(req.left)}s
+      {(ev || req) && (
+        <div className="absolute top-[3.8rem] inset-x-0 flex flex-col items-center gap-1 pointer-events-none">
+          {ev && <span className="cz-event">{EVENTS[ev.id].icon} <b>{EVENTS[ev.id].name}</b> · {CITIES[C.units[ev.unit]?.city ?? 0].name} · {Math.ceil(ev.left)} dia{ev.left > 1 ? 's' : ''}</span>}
+          {req && C.units[req.unit] && (
+            <button onClick={() => { setActive(req.unit); view.current?.focus(req.space); setPlot(req.space); }} className="cz-event cz-req pointer-events-auto">
+              📣 <b>Pedido dos alunos:</b> {ZONE[C.units[req.unit].spaces[req.space]?.zone ?? 'musculacao'].name} com {req.target} · {req.left} dias
             </button>
           )}
         </div>
       )}
 
-      {/* Andares */}
-      <nav className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col-reverse gap-1.5">
-        {FLOORS.slice(0, Math.min(FLOORS.length, C.floors + 1)).map((f, i) => (
-          <button key={f.name} onClick={() => (i >= C.floors ? setFloorAsk(true) : go(i))} aria-label={f.name}
-            className={`cz-floor ${floor === i ? 'on' : ''}`} style={{ ['--n' as string]: f.neon }}>
-            {i >= C.floors ? '🔒' : i + 1}
-          </button>
-        ))}
-      </nav>
-
-      {unclaimed >= 1 && !room && (
-        <button onClick={() => collectAll()} className="cz-collect absolute left-2 top-1/2 -translate-y-1/2">💵<span>{money(unclaimed)}</span></button>
-      )}
-
-      {/* Base: missão e menu */}
       <footer className="absolute bottom-2 inset-x-2 flex flex-col gap-2 items-center">
-        {!room && (
-          <button onClick={questReady ? claimQuest : goGuide} className={`cz-quest ${questReady ? 'ready' : ''}`}>
+        {plot === null && k && (
+          <button onClick={goGuide} className="cz-quest">
             <span className="text-lg">🎯</span>
             <span className="flex-1 min-w-0 text-left">
-              <b className="block truncate">{q.text}</b>
-              <Bar value={qv / q.need} color={questReady ? 'bg-emerald-400' : 'bg-amber-400'} />
+              <b className="block truncate">{k.text}</b>
+              <Bar value={Math.min(1, k.get() / k.need)} color="bg-amber-400" />
             </span>
-            <span className="text-xs font-black shrink-0">{questReady ? `Pegar +${q.gems}🏅` : `${q.need > 999 ? money(qv) : qv}/${q.need > 999 ? money(q.need) : q.need}`}</span>
-            {!questReady && <span className="cz-go">Ir 👉</span>}
+            <span className="cz-go">Ir 👉</span>
           </button>
         )}
-        {room ? <RoomCard id={room} onClose={() => setRoom(null)} /> : (
+        {plot !== null ? <PlotCard i={plot} onClose={() => setPlot(null)} /> : (
           <div className="cz-nav">
             {NAV.map(([id, icon, label]) => (
               <button key={id} onClick={() => { sound.playClick(); setPanel(id); }}>
@@ -168,163 +145,214 @@ export const GymScreen: React.FC = () => {
       </footer>
 
       {toast && <p role="status" className="cz-toast toast-in">{toast}</p>}
+      {f.why.length > 0 && plot === null && <button onClick={() => setPanel('equipe')} className="cz-warn">⚠️ {f.why[0]}</button>}
 
-      <Modal isOpen={offline > 0} onClose={() => takeOffline(false)} maxWidth="sm" title="🌙 Enquanto você esteve fora">
-        <p className="text-sm text-slate-300">Seus gerentes cuidaram da academia e lucraram:</p>
-        <p className="text-4xl font-black text-center text-emerald-300 py-2">{money(offline)}</p>
-        <div className="grid grid-cols-2 gap-2">
-          <Button variant="secondary" onClick={() => takeOffline(false)}>Receber</Button>
-          <Button variant="gold" disabled={C.gems < 6} onClick={() => takeOffline(true)}>Dobrar (6 🏅)</Button>
-        </div>
-        <p className="text-[11px] text-slate-500 text-center">Rende até 4 horas fora. Salas sem gerente só enchem o caixa.</p>
+      <Modal isOpen={!!offline} onClose={() => useGym.setState({ offline: null })} maxWidth="sm" title={`🌙 ${offline?.month} sem você`}>
+        <p className="text-sm text-slate-300">A rede continuou funcionando enquanto o app estava fechado.</p>
+        <Row label="Saldo mudou" tone={(offline?.profit ?? 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}>{money(offline?.profit ?? 0)}</Row>
+        <Row label="Alunos">{(offline?.joins ?? 0) >= 0 ? '+' : ''}{people(offline?.joins ?? 0)}</Row>
+        <Button fullWidth onClick={() => useGym.setState({ offline: null })}>Continuar</Button>
       </Modal>
-
       <Modal isOpen={won} onClose={() => useGym.setState({ won: false })} maxWidth="sm" title="🏆 Você zerou o Magnata Fitness!">
-        <p className="text-sm text-slate-300">Da academia pequena de Fortaleza até a maior rede do Ceará, com academias em {CITIES.length} cidades.</p>
-        <Row label="Lucro total">{money(C.earned)}</Row>
-        <Row label="Tempo de jogo">{Math.floor(C.played / 3600)}h {Math.floor((C.played % 3600) / 60)}min</Row>
+        <p className="text-sm text-slate-300">Da academia de bairro em Fortaleza à maior rede do Ceará: número 1 nas {CITIES.length} cidades.</p>
+        <Row label="Alunos na rede">{people(S.members)}</Row>
+        <Row label="Faturamento total">{money(C.earned)}</Row>
         <Button fullWidth variant="gold" onClick={() => useGym.setState({ won: false })}>Continuar crescendo</Button>
       </Modal>
-
-      <Modal isOpen={floorAsk} onClose={() => setFloorAsk(false)} maxWidth="sm" title={C.floors < FLOORS.length ? `🏗️ ${FLOORS[C.floors].name}` : 'Prédio completo'}>
-        {C.floors < FLOORS.length && <>
-          <p className="text-sm text-slate-300">Um andar novo com {ROOMS.filter((d) => d.floor === C.floors).map((d) => d.icon + ' ' + d.name).join(', ')}.</p>
-          <Button fullWidth variant="gold" disabled={C.money < floorCost(C.floors)} onClick={() => { openFloor(); setFloorAsk(false); go(C.floors - 1); }}>Abrir por {money(floorCost(C.floors))}</Button>
-        </>}
-      </Modal>
-
-      <Panels panel={panel} setPanel={setPanel} hq={hq} setHq={(v) => { localStorage.setItem(HQ_KEY, v ? '1' : '0'); setHq(v); }} soundOn={soundOn} setSoundOn={setSoundOn} />
+      <Panels panel={panel} setPanel={setPanel} hq={hq} setHq={(v) => { localStorage.setItem(HQ_KEY, v ? '1' : '0'); setHq(v); }} soundOn={soundOn} setSoundOn={setSoundOn}
+        onCity={() => { setPlot(null); view.current?.build(); }} />
     </div>
   );
 };
 
-/** Ficha da sala tocada: melhorar, gerente e caixa */
-const RoomCard: React.FC<{ id: string; onClose: () => void }> = ({ id, onClose }) => {
-  const [step, setStep] = useState<1 | 10 | 0>(1);
-  const d = ROOM[id];
-  const l = lv(id);
-  const r = C.rooms[id];
-  const st = S.rooms[id];
-  const locked = d.floor >= C.floors;
-  const n = step === 0 ? Math.max(1, affordable(id)) : Math.min(step, ROOM_MAX - l);
-  const cost = costN(d, l, n);
-  const next25 = (Math.floor(l / 25) + 1) * 25;
-  const nextEq = equip(d, l) < d.max ? (Math.floor(l / TUNE.equipEvery) + 1) * TUNE.equipEvery : 0;
+/** Ficha do salão tocado: alugar, escolher o que montar ou comprar aparelhos */
+const PlotCard: React.FC<{ i: number; onClose: () => void }> = ({ i, onClose }) => {
+  const [step, setStep] = useState<1 | 5 | 0>(1);
+  const u = U();
+  const sp = u.spaces[i];
+  const f = flow(u);
+  const head = (icon: string, title: string, text: string) => (
+    <header className="flex items-center gap-2">
+      <span className="text-3xl">{icon}</span>
+      <div className="flex-1 min-w-0">
+        <b className="block text-base leading-tight">{title}</b>
+        <span className="text-xs text-slate-300">{text}</span>
+      </div>
+      <button onClick={onClose} aria-label="Fechar" className="w-10 h-10 grid place-items-center rounded-xl bg-white/10"><X size={18} /></button>
+    </header>
+  );
+  if (!sp) return (
+    <section className="cz-card animate-in">
+      {head('🔑', 'Salão vizinho', 'Espaço de 10 x 8 m colado no galpão')}
+      {canRent(i) ? <>
+        <Row label="Reforma e entrada (uma vez)">{money(plotCost(i))}</Row>
+        <Row label="Aluguel" tone="text-rose-300">+{money(plotRent(i))}/mês</Row>
+        <p className="text-[11px] text-slate-400">Depois de alugar, você escolhe o que montar nele. Salão vazio só dá despesa.</p>
+        <Button variant="gold" disabled={C.money < plotCost(i)} onClick={() => rentPlot(i)}>Alugar · {money(plotCost(i))}</Button>
+      </> : <p className="text-sm text-slate-300">Só dá para alugar salões colados no que você já tem.</p>}
+    </section>
+  );
+  if (!sp.zone) return (
+    <section className="cz-card animate-in max-h-[60dvh] overflow-y-auto">
+      {head('➕', 'O que montar aqui?', 'Escolha pensando nos seus alunos')}
+      {C.money < 15_000 && <p className="text-[11px] text-amber-200">Sem dinheiro? Espere o lucro dos próximos meses ou pegue um empréstimo em Finanças.</p>}
+      <div className="grid grid-cols-2 gap-1.5">
+        {ZONES.filter((d) => d.id !== 'recepcao').map((d) => {
+          const cost = d.build + d.unit;
+          return (
+            <button key={d.id} disabled={C.money < cost} onClick={() => setZone(i, d.id)} className="cz-zone">
+              <b>{d.icon} {d.name}</b>
+              <span>{money(cost)}</span>
+              <small>{d.train ? `+${d.per} alunos por ${d.unitName}` : d.sale ? `${money(d.sale)} por aluno/mês` : `banho para ${d.per} alunos por box`}</small>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+  const d = ZONE[sp.zone];
+  if (sp.zone === 'recepcao') return (
+    <section className="cz-card animate-in">
+      {head(d.icon, 'Recepção e fachada', `Nível ${u.recep} de ${RECEP_MAX}`)}
+      <p className="text-xs text-slate-300">Fachada iluminada, catracas e balcão maiores fazem mais gente da rua entrar para conhecer.</p>
+      {u.recep < RECEP_MAX && <Button variant="gold" disabled={C.money < recepCost(u.recep + 1)} onClick={() => buyMachine(i)}>Reformar · {money(recepCost(u.recep + 1))}</Button>}
+    </section>
+  );
+  const n = step === 0 ? affordable(i) : Math.min(step, d.max - sp.n);
   return (
     <section className="cz-card animate-in">
-      <header className="flex items-center gap-2">
-        <span className="text-3xl">{d.icon}</span>
-        <div className="flex-1 min-w-0">
-          <b className="block text-base leading-tight">{d.name}</b>
-          <span className="text-xs text-slate-300">{l ? `Nível ${l}/${ROOM_MAX}` : d.text}</span>
+      {head(d.icon, d.name, `${sp.n} de ${d.max} ${d.unitName}${d.max > 1 ? 's' : ''}`)}
+      <div className="grid gap-1 text-xs">
+        {d.train ? <>
+          <Row label="Este salão atende">{people(sp.n * d.per)} alunos</Row>
+          <div className="flex items-center gap-2"><span className="text-slate-400 shrink-0">Lotação da academia</span><Bar value={f.crowd} color={f.crowd > 0.9 ? 'bg-rose-400' : 'bg-emerald-400'} /></div>
+          <p className={f.crowd > 0.9 ? 'text-rose-300' : 'text-slate-400'}>{f.crowd > 0.9 ? 'Lotada! Cada aparelho novo cabe mais alunos.' : 'Tem lugar: chame mais alunos no Marketing e na Recepção.'}</p>
+        </> : <Row label="Vende por mês" tone="text-emerald-300">{money(Math.min(u.members, sp.n * d.per) * d.sale)}</Row>}
+        <Row label={`Luz de cada ${d.unitName}`} tone="text-rose-300">{money(d.power)}/mês</Row>
+        <p className="text-slate-400">{d.text}</p>
+      </div>
+      {sp.n < d.max ? (
+        <div className="flex gap-2">
+          <div className="cz-steps">{([1, 5, 0] as const).map((s) => <button key={s} className={step === s ? 'on' : ''} onClick={() => setStep(s)}>{s === 0 ? 'MÁX' : `x${s}`}</button>)}</div>
+          <Button className="flex-1" variant="gold" disabled={C.money < d.unit} onClick={() => buyMachine(i, n)}>Comprar {n} · {money(d.unit * n)}</Button>
         </div>
-        <button onClick={onClose} aria-label="Fechar" className="w-10 h-10 grid place-items-center rounded-xl bg-white/10"><X size={18} /></button>
-      </header>
-      {locked ? <p className="text-sm text-slate-300">Abra o andar {FLOORS[d.floor].name} primeiro.</p> : <>
-        {l > 0 && d.kind === 'lobby' && (
-          <div className="grid gap-1 text-xs">
-            <Row label="Alunos chegando">{(S.arrivals * 60).toFixed(0)}/min</Row>
-            <Row label="Satisfação" tone={S.sat >= 1 ? 'text-emerald-300' : 'text-amber-300'}>{Math.round(S.sat * 100)}%</Row>
-            <p className="text-slate-400">Cada nível traz 20% mais alunos. Salas vazias? Melhore aqui.</p>
-          </div>
-        )}
-        {l > 0 && st && (
-          <div className="grid gap-1 text-xs">
-            <Row label="Lucro" tone="text-emerald-300">{money(st.income)}/s</Row>
-            <Row label={d.game ? 'Aparelhos' : 'Lugares'}>{equip(d, l)}/{d.max}{nextEq ? ` · mais no nível ${nextEq}` : ''}</Row>
-            <div className="flex items-center gap-2"><span className="text-slate-400 shrink-0">Ocupação</span><Bar value={st.served / Math.max(1e-9, st.cap)} color={st.demand > st.cap ? 'bg-rose-400' : 'bg-emerald-400'} /></div>
-            <p className={st.demand > st.cap ? 'text-rose-300' : 'text-slate-400'}>
-              {st.demand > st.cap ? `Lotado! ${Math.round((1 - st.cap / st.demand) * 100)}% dos alunos vão embora. Melhore para caber mais gente.` : 'Tem lugar sobrando: chame mais alunos na Recepção, no Marketing e na Estrutura.'}
-            </p>
-            {l < ROOM_MAX && <p className="text-amber-200">⭐ Nível {next25}: lucro em dobro</p>}
-          </div>
-        )}
-        {l > 0 && d.kind !== 'lobby' && !r?.mgr && (
-          <div className="grid grid-cols-2 gap-2">
-            <Button size="sm" variant="secondary" disabled={!r || r.cash < 1} onClick={() => collect(id)}>💵 Recolher {money(r?.cash ?? 0)}</Button>
-            <Button size="sm" variant="secondary" disabled={C.money < mgrCost(d)} onClick={() => hire(id)}>🧑‍💼 Gerente {money(mgrCost(d))}</Button>
-          </div>
-        )}
-        {r?.mgr && d.kind !== 'lobby' && <p className="text-[11px] text-emerald-300">🧑‍💼 O gerente recolhe sozinho, até com o app fechado.</p>}
-        {!r?.mgr && l > 0 && d.kind !== 'lobby' && <p className="text-[11px] text-slate-400">Sem gerente, o caixa enche em {Math.round(CASH_SECONDS / 60 * 10) / 10} min e para.</p>}
-        {l < ROOM_MAX && (
-          <div className="flex gap-2">
-            {l > 0 && <div className="cz-steps">{([1, 10, 0] as const).map((s) => <button key={s} className={step === s ? 'on' : ''} onClick={() => setStep(s)}>{s === 0 ? 'MÁX' : `x${s}`}</button>)}</div>}
-            <Button className="flex-1" variant="gold" disabled={C.money < cost} onClick={() => upgrade(id, l ? n : 1)}>
-              {l ? `Melhorar +${n}` : 'Construir'} · {money(l ? cost : costN(d, 0, 1))}
-            </Button>
-          </div>
-        )}
-      </>}
+      ) : <p className="text-xs text-emerald-300">Salão completo. Para crescer, alugue outro salão.</p>}
     </section>
   );
 };
 
-const Panels: React.FC<{ panel: Panel; setPanel: (p: Panel) => void; hq: boolean; setHq: (v: boolean) => void; soundOn: boolean; setSoundOn: (v: boolean) => void }> = ({ panel, setPanel, hq, setHq, soundOn, setSoundOn }) => {
+const Panels: React.FC<{ panel: Panel; setPanel: (p: Panel) => void; hq: boolean; setHq: (v: boolean) => void; soundOn: boolean; setSoundOn: (v: boolean) => void; onCity: () => void }> = ({ panel, setPanel, hq, setHq, soundOn, setSoundOn, onCity }) => {
   const [backup, setBackup] = useState(false);
   const [login, setLogin] = useState(false);
   const [sure, setSure] = useState(false);
   const admin = useAdmin((s) => s.on);
   const updating = useUpdate((s) => s.busy);
   const close = () => { setPanel(null); setSure(false); };
+  const u = U();
+  const f = F();
   const open = guestsOpen().map((g) => g.id);
-  const fame = S.income;
-  const list = [...RIVALS.map((r, i) => ({ name: r.name, icon: r.icon, fame: rivalFame(i), me: false })), { name: 'Sua academia', icon: '💪', fame, me: true }].sort((a, b) => b.fame - a.fame);
+  const rep = C.last;
+  const list = [...RIVALS.map((r, i) => ({ name: r.name, icon: r.icon, members: rivalMembers(i, u.city), me: false })), { name: 'Sua academia', icon: '💪', members: u.members, me: true }].sort((a, b) => b.members - a.members);
   return (
     <>
-      <Modal isOpen={panel === 'marketing'} onClose={close} maxWidth="lg" title="📣 Marketing" subtitle="Escolha quem você quer atrair">
-        <Action icon="📺" title={`Propaganda nível ${C.mkt}`} text={`+6% de alunos por nível · ${targetSlots()} de 3 campanhas`} button={C.mkt >= UPG_MAX ? 'Máximo' : money(mktCost(C.mkt))} variant="gold" disabled={C.mkt >= UPG_MAX || C.money < mktCost(C.mkt)} onClick={advertise} />
-        <p className="text-xs text-slate-400">Campanha triplica a chegada daquele tipo de aluno. Vagas: nível 1, 8 e 20.</p>
+      <Modal isOpen={panel === 'marketing'} onClose={close} maxWidth="lg" title="📣 Marketing" subtitle={`${CITIES[u.city].name} · verba por mês`}>
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+          {BUDGETS.map((b, i) => <button key={b} onClick={() => setBudget(i)} className={`cz-chip ${u.budget === i ? 'on' : ''}`}>{b ? money(b) : 'Nada'}</button>)}
+        </div>
+        <Row label="Chegam por mês">{people(f.joins)} alunos</Row>
+        <Row label="Saem por mês">{people(f.quits)} alunos</Row>
+        <p className="text-xs text-slate-400">Com verba, dá para mirar a campanha num público ({targetSlots()} de 3): ele passa a vir três vezes mais.</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {GUESTS.map((g) => {
-            const on = C.targets.includes(g.id), ok = open.includes(g.id);
+            const on = u.targets.includes(g.id), ok = open.includes(g.id);
             return (
               <button key={g.id} disabled={!ok} onClick={() => toggleTarget(g.id)} className={`cz-guest ${on ? 'on' : ''}`} style={{ ['--c' as string]: g.color }}>
                 <span className="text-3xl">{ok ? g.icon : '🔒'}</span>
                 <b>{g.name}</b>
-                <span className="text-[10px] text-slate-300">{ok ? g.text : `Precisa de ${g.stars + 1} estrelas`}</span>
-                <span className="text-[11px]">💰 gasta {g.spend}x</span>
-                <span className="text-sm">{g.likes.map((x) => ROOM[x].icon).join(' ')}</span>
-                {ok && <span className="text-[10px] text-amber-200">{Math.round((S.mix[g.id] ?? 0) * 100)}% dos alunos</span>}
+                <span className="text-[10px] text-slate-300">{ok ? g.text : `Precisa de: ${g.likes.map((x) => ZONE[x].name).join(' ou ')}`}</span>
+                <span className="text-[11px]">💳 {money(u.price * g.plan)}/mês</span>
+                {ok && <span className="text-[10px] text-amber-200">{Math.round((u.mix[g.id] ?? 0) * 100)}% dos alunos</span>}
               </button>
             );
           })}
         </div>
       </Modal>
-      <Modal isOpen={panel === 'equipe'} onClose={close} maxWidth="md" title="🤵 Equipe" subtitle="Treine para lucrar mais e agradar">
-        {STAFF.map((s) => (
-          <Action key={s.id} icon={s.icon} title={`${s.name} · nível ${C.staff[s.id]}`} text={s.text} button={C.staff[s.id] >= STAFF_MAX ? 'Máximo' : money(staffCost(s.id, C.staff[s.id]))} variant="gold"
-            disabled={C.staff[s.id] >= STAFF_MAX || C.money < staffCost(s.id, C.staff[s.id])} onClick={() => train(s.id)} />
-        ))}
-        <Row label="Satisfação dos alunos" tone={S.sat >= 1 ? 'text-emerald-300' : 'text-amber-300'}>{Math.round(S.sat * 100)}%</Row>
+      <Modal isOpen={panel === 'equipe'} onClose={close} maxWidth="md" title="🧑‍🏫 Equipe" subtitle={`${CITIES[u.city].name} · salários entram nos custos do mês`}>
+        {STAFF.map((st) => {
+          const want = need(u, st.id);
+          const short = st.ratio && u.staff[st.id] < want;
+          return (
+            <div key={st.id} className="flex items-center gap-2 bg-slate-900/70 border border-slate-800 rounded-xl p-2.5 text-xs">
+              <span className="text-xl">{st.icon}</span>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold">{st.name}: {u.staff[st.id]}{st.ratio ? <span className={short ? 'text-rose-300' : 'text-emerald-300'}> (precisa {want})</span> : null}</p>
+                <p className="text-slate-400">{st.text} Salário {money(st.salary)}.</p>
+              </div>
+              <Button size="sm" variant="secondary" onClick={() => hire(st.id, -1)}>−</Button>
+              <Button size="sm" variant="gold" onClick={() => hire(st.id, 1)}>+</Button>
+            </div>
+          );
+        })}
+        <Row label="Satisfação dos alunos" tone={f.sat >= 0.7 ? 'text-emerald-300' : 'text-amber-300'}>{Math.round(f.sat * 100)}%</Row>
+        {f.why.map((w) => <p key={w} className="text-xs text-rose-300">⚠️ {w}</p>)}
       </Modal>
-      <Modal isOpen={panel === 'decoracao'} onClose={close} maxWidth="md" title="🛠️ Estrutura" subtitle="Ar-condicionado, som, plantas e estátuas">
-        <Action icon="❄️" title={`Estrutura nível ${C.deco}`} text="+5% de alunos e +1% de satisfação por nível. Aparece no prédio." button={C.deco >= UPG_MAX ? 'Máximo' : money(decoCost(C.deco))} variant="gold"
-          disabled={C.deco >= UPG_MAX || C.money < decoCost(C.deco)} onClick={decorate} />
-      </Modal>
-      <Modal isOpen={panel === 'rede'} onClose={close} maxWidth="md" title="🗺️ Sua rede de academias" subtitle={`${C.units.length + 1} de ${CITIES.length} cidades do Ceará`}>
-        <div className="grid grid-cols-4 gap-1.5">
-          {CITIES.map((c, i) => {
-            const u = C.units.find((x) => x.city % CITIES.length === i && x.city < CITIES.length);
-            const here = C.city === i;
-            return <div key={c} className={`rounded-xl p-1.5 text-center text-[10px] leading-tight ${here ? 'bg-cyan-400/25 border border-cyan-300' : u ? 'bg-emerald-500/20 border border-emerald-400/60' : 'bg-white/5 opacity-60'}`}>
-              <span className="block text-lg">{here ? '🏗️' : u ? '💪' : '🔒'}</span>{c}{u && <span className="block text-emerald-300 font-bold">{money(u.income)}/s</span>}
-            </div>;
-          })}
+      <Modal isOpen={panel === 'academia'} onClose={close} maxWidth="md" title={`🏢 Academia de ${CITIES[u.city].name}`} subtitle={`${stars(u.rep)} · ${people(u.members)} alunos`}>
+        <div className="grid gap-1">
+          <Row label={`Mensalidade básica: ${money(u.price)}`} tone="text-slate-300">{u.price <= 79 ? 'barata' : u.price <= 119 ? 'na média' : 'cara'}</Row>
+          <input type="range" min={59} max={249} step={5} value={u.price} onChange={(e) => setPrice(Number(e.target.value))} aria-label="Mensalidade" />
+          <p className="text-[11px] text-slate-400">Mais cara rende mais por aluno, mas chega menos gente e alguns ficam insatisfeitos.</p>
         </div>
-        {C.units.length > 0 && <Row label="Bônus da marca em todas" tone="text-emerald-300">+{Math.round((S.brand - 1) * 100)}% de lucro</Row>}
-        <h4 className="font-bold pt-1">🏆 Ranking de {cityName(C.city)}</h4>
+        <Row label="Capacidade">{people(f.cap)} alunos</Row>
+        <div className="flex items-center gap-2 text-xs"><span className="text-slate-400 shrink-0">Lotação</span><Bar value={f.crowd} color={f.crowd > 0.9 ? 'bg-rose-400' : 'bg-emerald-400'} /></div>
+        <Action icon="❄️" title={`Estrutura nível ${u.deco}`} text="Ar-condicionado, som, iluminação e plantas: alunos mais satisfeitos." button={u.deco >= DECO_MAX ? 'Máximo' : money(decoCost(u.deco))} variant="gold"
+          disabled={u.deco >= DECO_MAX || C.money < decoCost(u.deco)} onClick={decorate} />
+        <p className="text-[11px] text-slate-400">Alugue salões vizinhos tocando nas áreas com 🔑 no mapa.</p>
+      </Modal>
+      <Modal isOpen={panel === 'financas'} onClose={close} maxWidth="md" title="💰 Finanças da rede" subtitle={`Saldo: ${money(C.money)}`}>
+        <h4 className="font-bold text-sm">Este mês, por mês (estimativa)</h4>
+        <Row label="Mensalidades" tone="text-emerald-300">{money(S.flows.reduce((s, x) => s + x.plans, 0))}</Row>
+        <Row label="Vendas e serviços" tone="text-emerald-300">{money(S.flows.reduce((s, x) => s + x.sales + x.personal, 0))}</Row>
+        {Object.keys(f.costs).map((key) => <Row key={key} label={key} tone="text-rose-300">-{money(S.flows.reduce((s, x) => s + x.costs[key], 0))}</Row>)}
+        {S.interest > 0 && <Row label="Juros" tone="text-rose-300">-{money(S.interest)}</Row>}
+        <Row label="Lucro" tone={S.profit >= 0 ? 'text-emerald-300' : 'text-rose-300'}>{money(S.profit)}</Row>
+        {rep && <>
+          <h4 className="font-bold text-sm pt-2">Fechamento de {rep.month}</h4>
+          <Row label="Entrou" tone="text-emerald-300">{money(rep.revenue)}</Row>
+          <Row label="Saiu" tone="text-rose-300">{money(rep.revenue - rep.profit)}</Row>
+          <Row label="Lucro" tone={rep.profit >= 0 ? 'text-emerald-300' : 'text-rose-300'}>{money(rep.profit)}</Row>
+          <Row label="Alunos">+{people(rep.joins)} / −{people(rep.quits)}</Row>
+        </>}
+        <h4 className="font-bold text-sm pt-2">🏦 Empréstimo ({(LOAN_RATE * 100).toFixed(1).replace('.', ',')}% ao mês)</h4>
+        <Row label="Você deve">{money(C.loan)}</Row>
+        <Row label="O banco libera até">{money(loanLimit())}</Row>
+        <div className="grid grid-cols-3 gap-1.5">
+          <Button size="sm" variant="secondary" onClick={() => borrow(20_000)}>Pegar 20 mil</Button>
+          <Button size="sm" variant="secondary" onClick={() => borrow(100_000)}>Pegar 100 mil</Button>
+          <Button size="sm" variant="gold" disabled={!C.loan} onClick={() => repay(Math.min(C.loan, Math.max(0, C.money)))}>Pagar</Button>
+        </div>
+        <p className="text-[11px] text-slate-400">Saldo negativo vira cheque especial, com juros de 8% ao mês.</p>
+      </Modal>
+      <Modal isOpen={panel === 'rede'} onClose={close} maxWidth="md" title="🗺️ Sua rede de academias" subtitle={`${C.units.length} de ${CITIES.length} cidades · ${people(S.members)} alunos`}>
+        {CITIES.map((city, ci) => {
+          const idx = C.units.findIndex((x) => x.city === ci);
+          const un = C.units[idx];
+          return un ? (
+            <button key={city.name} onClick={() => { setActive(idx); onCity(); close(); }} className={`flex items-center gap-2 w-full rounded-xl p-2.5 text-xs text-left ${idx === C.active ? 'bg-cyan-400/20 border border-cyan-300' : 'bg-white/5'}`}>
+              <span className="text-xl">💪</span>
+              <span className="flex-1"><b>{city.name}</b> · {people(un.members)} alunos · {rank(un)}º lugar</span>
+              <span className={`font-mono ${S.flows[idx]?.profit >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{money(S.flows[idx]?.profit ?? 0)}/mês</span>
+            </button>
+          ) : (
+            <Action key={city.name} icon="🔒" title={city.name} text={`${people(city.pop)} habitantes · aluguel ${Math.round(city.rent * 100)}% de Fortaleza`} button={`Abrir · ${money(city.open)}`} variant="gold" disabled={C.money < city.open} onClick={() => { openUnit(ci); onCity(); close(); }} />
+          );
+        })}
+        <h4 className="font-bold text-sm pt-1">🏆 Academias de {CITIES[u.city].name} (por alunos)</h4>
         {list.map((x, i) => (
-          <div key={x.name} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm ${x.me ? 'bg-amber-400/20 border border-amber-400' : 'bg-white/5'}`}>
-            <b className="w-6">{i + 1}º</b><span className="text-xl">{x.icon}</span><span className="flex-1">{x.name}</span><span className="font-mono text-xs">{money(x.fame)}/s</span>
+          <div key={x.name} className={`flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs ${x.me ? 'bg-amber-400/20 border border-amber-400' : 'bg-white/5'}`}>
+            <b className="w-6">{i + 1}º</b><span className="text-lg">{x.icon}</span><span className="flex-1">{x.name}</span><span className="font-mono">{people(x.members)}</span>
           </div>
         ))}
-        <p className="text-xs text-slate-400">A fama é o lucro por segundo. Passar cada rival dá medalhas. Passe todos para abrir uma academia nova em outra cidade. Cada unidade da rede deixa a marca mais forte: +40% de lucro e +15% de alunos em todas, para sempre. Leve a rede às {CITIES.length} cidades para zerar o jogo.</p>
-        <Button fullWidth variant="gold" disabled={C.beaten < RIVALS.length} onClick={() => { moveCity(); close(); }}>🏗️ Abrir academia em {cityName(C.city + 1)}</Button>
-      </Modal>
-      <Modal isOpen={panel === 'loja'} onClose={close} maxWidth="md" title="🏅 Loja de medalhas" subtitle="Medalhas vêm de missões, rivais, campeonatos e do prêmio diário">
-        {SHOP.map((s) => <Action key={s.id} icon={s.icon} title={s.name} text={s.text} button={`${s.gems} 🏅`} variant="gold" disabled={C.gems < s.gems} onClick={() => buy(s.id)} />)}
-        <p className="text-[11px] text-slate-500 text-center">Nada aqui custa dinheiro de verdade.</p>
+        <p className="text-[11px] text-slate-400">Para zerar: seja a número 1 nas {CITIES.length} cidades. Você já passou {beaten(u)} de {RIVALS.length} aqui.</p>
       </Modal>
       <Modal isOpen={panel === 'mais'} onClose={close} maxWidth="sm" title="☰ Mais">
         <div className="grid grid-cols-2 gap-2">
@@ -336,24 +364,22 @@ const Panels: React.FC<{ panel: Panel; setPanel: (p: Panel) => void; hq: boolean
           <Button variant="secondary" onClick={() => setBackup(true)}>💾 Levar progresso</Button>
         </div>
         <Row label="Tempo de jogo">{Math.floor(C.played / 3600)}h {Math.floor((C.played % 3600) / 60)}min</Row>
-        <Row label="Lucro total">{money(C.earned)}</Row>
-        <Row label="Dias seguidos">🔥 {C.streak}</Row>
+        <Row label="Faturamento total">{money(C.earned)}</Row>
         <Button fullWidth variant={sure ? 'danger' : 'outline'} onClick={() => { if (!sure) return setSure(true); wipe(); close(); }}>{sure ? 'Apaga tudo. Toque de novo' : 'Recomeçar do zero'}</Button>
         {!admin && <button onClick={() => setLogin(true)} aria-label="Administrador" className="block mx-auto p-2 opacity-40">🔒</button>}
       </Modal>
       <Modal isOpen={panel === 'ajuda'} onClose={close} maxWidth="md" title="❓ Como jogar">
         {[
-          ['💪', 'Você começa com uma academia pequena em Fortaleza. Cada sala dá lucro sozinha enquanto tem aluno treinando.'],
-          ['👆', 'Toque numa sala para melhorar. Nível maior = mais lucro e mais mesas. A cada 25 níveis o lucro dobra.'],
-          ['💵', 'Salas sem gerente guardam o dinheiro no caixa: toque no 💵 para recolher. Com gerente, entra sozinho, até com o app fechado.'],
-          ['🛎️', 'A Recepção traz alunos. Se as salas têm lugar sobrando, melhore a Recepção, o Marketing ou a Estrutura.'],
-          ['🔴', 'Barra vermelha na sala = lotada. Melhore a sala para caber mais gente.'],
-          ['📣', 'No Marketing, escolha quem atrair. Cada tipo de aluno gosta de certas salas e paga diferente.'],
-          ['🏗️', 'Abra andares novos pelo cadeado do lado direito. Arraste a tela para subir e descer, e use dois dedos para aproximar.'],
-          ['🗺️', 'Na Rede, passe as academias rivais e abra unidades em outras cidades. As antigas continuam rendendo. Leve a rede às 8 cidades para zerar o jogo.'],
-          ['🎯', 'Siga a missão de baixo: ela sempre mostra o próximo passo e dá diamantes.'],
+          ['🏚️', 'Você começa com uma academia de bairro em Fortaleza: recepção, um salão de musculação e o vestiário. O dinheiro é em reais, como na vida real.'],
+          ['💳', 'Entra dinheiro das mensalidades e das vendas (lanchonete, loja, nutri...). Sai aluguel, salários, luz, manutenção, marketing, impostos e juros.'],
+          ['🔑', 'Para crescer, alugue o salão vizinho (as áreas com 🔑) e escolha o que montar: máquinas, peso livre, cardio, lutas, piscina...'],
+          ['🏋️', 'Cada aparelho atende uns 30 alunos. Academia lotada perde aluno: compre aparelhos antes de lotar.'],
+          ['🧑‍🏫', 'Contrate professores, recepção e limpeza conforme a academia cresce. Faltando gente, os alunos reclamam e cancelam.'],
+          ['📣', 'Marketing traz gente nova. Janeiro é o mês mais cheio (promessa de ano novo); junho e julho são fracos.'],
+          ['🏦', 'Sem dinheiro? Pegue empréstimo em Finanças, mas cuidado com os juros.'],
+          ['🗺️', 'Abra academias em outras cidades do Ceará. Seja a número 1 nas 8 cidades para zerar.'],
         ].map(([i, t]) => <p key={t} className="flex gap-2 text-sm"><span className="text-xl">{i}</span><span>{t}</span></p>)}
-        <p className="text-[11px] text-slate-500">Jogo de gerenciamento com dinheiro fictício. Não há compras.</p>
+        <p className="text-[11px] text-slate-500">Valores de referência aproximados. Jogo de simulação, sem compras.</p>
       </Modal>
       {backup && <BackupModal onClose={() => setBackup(false)} />}
       {login && <AdminLogin onClose={() => setLogin(false)} />}
